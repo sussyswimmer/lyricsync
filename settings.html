@@ -1,3 +1,18 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Undertone settings</title></head>
-<body><main id="app" aria-label="Undertone settings"></main><script type="module" src="/src/settings.ts"></script></body></html>
+<html lang="en" class="ut-settings">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Undertone Settings</title>
+    <style>
+      /* first paint before the stylesheet loads: no white flash in dark mode */
+      html { background: #f2f1ee; }
+      @media (prefers-color-scheme: dark) { html { background: #141519; } }
+    </style>
+  </head>
+  <body>
+    <main id="app" aria-label="Undertone settings"></main>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>
