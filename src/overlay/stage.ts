@@ -8,14 +8,21 @@ import { resolveLook, type Look } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
 import { buildState, type StateKind } from "./states";
+import "../styles/stage.css";
 
 export type StageView = { kind: "none" } | { kind: StateKind } | { kind: "lyrics"; timeline: Timeline };
 
 /** Old song out, then new song in (C6). */
 const FADE_OUT_MS = 250;
 const FADE_IN_MS = 450;
-/** Crossfade between lines for modes that redraw per line, and for everything under reduced motion. */
-const LINE_FADE_MS = 280;
+/**
+ * Crossfade between lines for modes that redraw per line, and for everything under reduced motion.
+ * The old line drops out fast and the new one comes in just behind it, so two different lines are
+ * never both readable in the same place.
+ */
+const LINE_OUT_MS = 170;
+const LINE_IN_MS = 240;
+const LINE_IN_DELAY_MS = 80;
 /**
  * After the last word of a line, wait this long before showing the next line as upcoming. Only matters
  * when the LRC has no empty stamp marking a long instrumental break.
@@ -49,6 +56,8 @@ export function cueMap(timeline: Timeline): CueMap {
   const times = new Set<number>();
   for (const line of all) {
     times.add(line.start);
+    // Unsynced lyrics draw no per-word change and never linger: only line starts matter.
+    if (timeline.unsynced) continue;
     for (const w of line.words) {
       times.add(w.start);
       times.add(w.end);
@@ -67,7 +76,7 @@ export function cueAt(map: CueMap, t: number): Cue {
   if (li >= 0) {
     const line = map.lyrics[li];
     const lastEnd = line?.words[line.words.length - 1]?.end ?? -Infinity;
-    if (!map.unsynced && li + 1 < map.lyrics.length && t > lastEnd + LINGER_MS) return { line: li + 1, waiting: true, t };
+    if (!map.unsynced && li + 1 < map.lyrics.length && t >= lastEnd + LINGER_MS) return { line: li + 1, waiting: true, t };
     return { line: li, waiting: false, t };
   }
   const n = map.nextLyric[i] ?? -1;
@@ -94,6 +103,8 @@ interface Scene {
   key: string;
   mode: ModeRenderer | null;
   cues: CueMap | null;
+  /** performance.now() when the scene appeared; rebuilt state animations resume from here */
+  shownAt: number;
 }
 
 export interface StageOptions {
@@ -102,6 +113,8 @@ export interface StageOptions {
   /** Called when the stage needs a fresh frame on its own (fonts loaded, resized, motion preference flipped). */
   onInvalidate?: () => void;
 }
+
+const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 
 const reducedMotion = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -120,9 +133,19 @@ export class LyricStage {
   private scene: Scene | null = null;
   private lastCue: Cue | null = null;
   private lookKey = "";
+  private fontKey = "";
+  private fontTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
+  /** A face (or a script subset of one, e.g. Vietnamese) finished loading: measured layouts redo themselves. */
+  private readonly onFontsLoaded = (): void => {
+    if (this.fontTimer) return;
+    this.fontTimer = setTimeout(() => {
+      this.fontTimer = null;
+      this.rebuild(true);
+    }, 0);
+  };
 
   constructor(host: HTMLElement, options: StageOptions = {}) {
     this.host = host;
@@ -134,17 +157,19 @@ export class LyricStage {
     this.resize?.observe(host);
     this.motionQuery = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
     this.motionQuery?.addEventListener("change", this.onMotion);
+    if (typeof document !== "undefined" && "fonts" in document) document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
   }
 
   setSettings(settings: Settings): void {
-    const fontChanged = settings.font.family !== this.settings.font.family || settings.font.weight !== this.settings.font.weight;
     this.settings = settings;
     this.root.style.opacity = String(settings.opacity / 100);
-    if (fontChanged) {
-      const family = settings.font.family;
-      void loadFont(fontFor(family), settings.font.weight).then(() => {
-        // Measured layouts (lens, wrapped drift rows) need the real face, so build again once it's in.
-        if (this.settings.font.family === family) this.rebuild(true);
+    const fontKey = `${settings.font.family}/${settings.font.weight}`;
+    if (fontKey !== this.fontKey) {
+      // Measured layouts (lens, arc fitting, wrapped drift rows) need the real face, including the
+      // first one: build again once it's in.
+      this.fontKey = fontKey;
+      void loadFont(fontFor(settings.font.family), settings.font.weight).then(() => {
+        if (this.fontKey === fontKey) this.rebuild(true);
       });
     }
     this.rebuild();
@@ -165,6 +190,7 @@ export class LyricStage {
       key,
       mode: null,
       cues: view.kind === "lyrics" ? cueMap(view.timeline) : null,
+      shownAt: now(),
     };
     this.root.append(scene.el);
     this.scene = scene;
@@ -172,12 +198,12 @@ export class LyricStage {
     this.lookKey = "";
     this.build(scene);
     if (old) {
-      this.fade(old.el, 1, 0, FADE_OUT_MS, 0).then(() => {
+      void this.fade(old.el, 1, 0, FADE_OUT_MS, 0, "ease-in").then(() => {
         old.mode?.destroy();
         old.el.remove();
       });
     }
-    if (view.kind !== "none") void this.fade(scene.el, 0, 1, FADE_IN_MS, old && old.view.kind !== "none" ? FADE_OUT_MS : 0);
+    if (view.kind !== "none") void this.fade(scene.el, 0, 1, FADE_IN_MS, old && old.view.kind !== "none" ? FADE_OUT_MS : 0, "ease-out");
     this.options.onInvalidate?.();
   }
 
@@ -209,6 +235,8 @@ export class LyricStage {
   destroy(): void {
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
+    if (typeof document !== "undefined" && "fonts" in document) document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
+    if (this.fontTimer) clearTimeout(this.fontTimer);
     this.scene?.mode?.destroy();
     this.root.remove();
     this.host.classList.remove("ut-stage", "ut-hidden");
@@ -247,7 +275,7 @@ export class LyricStage {
       scene.mode = createMode(this.settings.mode);
       scene.mode.build(scene.el, cues?.lyrics ?? [], look);
     } else if (view.kind !== "none") {
-      buildState(scene.el, view.kind, look);
+      buildState(scene.el, view.kind, look, now() - scene.shownAt);
     }
   }
 
@@ -257,11 +285,11 @@ export class LyricStage {
     copy.classList.add("ut-ghost");
     copy.setAttribute("aria-hidden", "true");
     el.after(copy);
-    void this.fade(copy, 1, 0, LINE_FADE_MS, 0).then(() => copy.remove());
-    void this.fade(el, 0, 1, LINE_FADE_MS, 0);
+    void this.fade(copy, 1, 0, LINE_OUT_MS, 0, "ease-out").then(() => copy.remove());
+    void this.fade(el, 0, 1, LINE_IN_MS, LINE_IN_DELAY_MS, "ease-out");
   }
 
-  private fade(el: HTMLElement, from: number, to: number, duration: number, delay: number): Promise<void> {
+  private fade(el: HTMLElement, from: number, to: number, duration: number, delay: number, easing: string): Promise<void> {
     if (typeof el.animate !== "function") {
       el.style.opacity = String(to);
       return Promise.resolve();
@@ -269,7 +297,7 @@ export class LyricStage {
     const anim = el.animate([{ opacity: from }, { opacity: to }], {
       duration,
       delay,
-      easing: to > from ? "ease-out" : "ease-in",
+      easing,
       // fading in: hold transparent through the delay, then hand back to the element's own opacity
       fill: to > from ? "backwards" : "forwards",
     });

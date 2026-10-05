@@ -55,8 +55,7 @@ describe("resolveLook: colors", () => {
 });
 
 describe("resolveLook: placement and scaled settings", () => {
-  // Mid-range values only: the extremes (0 and 100) are the it.fails test below, and asserting
-  // y = 0 / y = height here would make that bug impossible to fix without breaking this test.
+  // Mid-range values only: at the extremes the line is kept on screen (next tests).
   it("places the line at yPos percent of the stage height", () => {
     expect(look({ yPos: 46 }).y).toBeCloseTo(496.8, 6);
     expect(look({ yPos: 25 }, { height: 900 }).y).toBe(225);
@@ -70,14 +69,9 @@ describe("resolveLook: placement and scaled settings", () => {
     expect(ys[ys.length - 1]).toBeGreaterThan(ys[0] ?? Infinity);
   });
 
-  // BUG (src/overlay/look.ts resolveLook, y): the settings Height slider allows 0..100 and y is
-  // height * yPos / 100 with no margin, so at 0 the focus line is centered on the top edge and at
-  // 100 on the bottom edge. Every mode then draws half the line (more with an arc bend) off screen,
-  // and drift at 0 stacks the previous line on top of the current one.
-  // Repro: http://localhost:1420/?mock&track=1&t=4500&settings=%7B%22yPos%22%3A0%7D (also 100,
-  // and mode lens/drift). The prototype's slider ran 15..85. The contract allows 0..100, so the
-  // clamp belongs in resolveLook rather than only in the slider.
-  it.fails("keeps the whole focus line on the stage at the Height extremes", () => {
+  // Regression: Height 0 and 100 used to center the focus line on the screen edge, half off screen.
+  // The contract allows 0..100, so resolveLook keeps the line whole rather than the slider limiting it.
+  it("keeps the whole focus line on the stage at the Height extremes", () => {
     for (const yPos of [0, 100]) {
       const l = look({ yPos }, { height: 720 });
       expect(l.y - l.size / 2).toBeGreaterThanOrEqual(0);

@@ -42,12 +42,15 @@ export interface Frame {
 export function resolveLook(settings: Settings, palette: Palette | null, frame: Frame): Look {
   const font = fontFor(settings.font.family);
   const scale = frame.height / (frame.referenceHeight ?? REFERENCE_HEIGHT);
+  const size = Math.max(1, settings.size * scale);
+  // Height runs 0–100, but the focus line always stays whole on screen.
+  const margin = Math.min(size * 0.75, frame.height / 2);
   return {
     colors: settings.autoColor && palette ? palette : settings.colors,
     font: font.stack,
     weight: settings.font.weight || font.weight,
-    size: Math.max(1, settings.size * scale),
-    y: (frame.height * settings.yPos) / 100,
+    size,
+    y: Math.min(frame.height - margin, Math.max(margin, (frame.height * settings.yPos) / 100)),
     width: frame.width,
     height: frame.height,
     curve: settings.curve / 100,

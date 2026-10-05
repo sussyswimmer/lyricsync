@@ -1,7 +1,6 @@
 import "@fontsource/figtree/400.css";
 import "@fontsource/figtree/500.css";
 import "@fontsource/figtree/600.css";
-import "../styles/overlay.css";
 import "../styles/settings.css";
 import { DEFAULT_SETTINGS, type NowPlaying, type Settings } from "../../contract/contract";
 import { connect } from "../bridge";

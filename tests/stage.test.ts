@@ -109,7 +109,7 @@ describe("cueAt: linger", () => {
   const map = cueMap(UNMARKED);
 
   it("holds the sung line for LINGER_MS after its last word", () => {
-    // The exact instant 2000 + LINGER_MS is left to the it.fails test in "untilNextChange" below.
+    // The exact instant 2000 + LINGER_MS hands off (see "untilNextChange" below).
     expect(cueAt(map, 2001)).toEqual({ line: 0, waiting: false, t: 2001 });
     expect(cueAt(map, 2000 + LINGER_MS - 1)).toEqual({ line: 0, waiting: false, t: 2000 + LINGER_MS - 1 });
   });
@@ -202,19 +202,12 @@ describe("untilNextChange", () => {
     }
   });
 
-  // BUG (src/overlay/stage.ts cueAt vs cueMap): every other change takes effect AT its boundary
-  // (lineAt uses start <= t, word states flip at t >= start / t >= end), and untilNextChange skips a
-  // boundary the clock is sitting on. The linger hand-off alone uses a strict `t > lastEnd + LINGER_MS`,
-  // so a frame that lands exactly on lastEnd + LINGER_MS still shows the old line and is told to sleep
-  // until the next line starts (5500 ms here). The controller's 250 ms MAX_SLEEP_MS cap hides most of
-  // it, so the next line appears as "upcoming" up to 250 ms late. Clock positions are integer ms
-  // (Date.now()-based), so landing exactly on the boundary is not rare.
-  // Repro: cueAt(cueMap(UNMARKED), 4500) → line 0; untilNextChange(…, 4500) → 5500; cueAt(…, 4501) → line 1 waiting.
-  // Fix: `t >= lastEnd + LINGER_MS` in cueAt.
-  it.fails("never sleeps through the linger hand-off when woken exactly on it", () => {
+  // Regression: the linger hand-off used a strict `>`, unlike every other boundary, so a frame landing
+  // exactly on it kept the old line and slept until the next line started.
+  it("never sleeps through the linger hand-off when woken exactly on it", () => {
     const map = cueMap(UNMARKED);
     const t = 2000 + LINGER_MS;
-    expect(firstChange(map, t, untilNextChange(map, t))).toBeNull(); // today: changes at t + 0.5
+    expect(firstChange(map, t, untilNextChange(map, t))).toBeNull();
   });
 });
 
@@ -222,7 +215,8 @@ describe("untilNextChange", () => {
 function shape(map: ReturnType<typeof cueMap>, t: number): string {
   const cue = cueAt(map, t);
   const focus = cue.line >= 0 ? map.lyrics[cue.line] : undefined;
-  const words = (focus?.words ?? []).map((w) => (cue.waiting || t < w.start ? "u" : t >= w.end ? "s" : "a")).join("");
+  // Unsynced lyrics show no per-word state in any mode, so only the focus line counts.
+  const words = map.unsynced ? "" : (focus?.words ?? []).map((w) => (cue.waiting || t < w.start ? "u" : t >= w.end ? "s" : "a")).join("");
   return `${cue.line}/${cue.waiting}/${words}`;
 }
 

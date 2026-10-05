@@ -1,0 +1,145 @@
+/* The lyric stage, its modes' shared rules and the state presentations. Imported by stage.ts, so the
+   overlay window and the settings preview both get exactly these. Page-level rules live elsewhere. */
+
+/* ---------- stage ---------- */
+.ut-stage {
+  position: relative;
+  overflow: hidden;
+  transition: opacity 0.35s ease;
+}
+
+.ut-stage.ut-hidden {
+  opacity: 0;
+}
+
+.ut-root,
+.ut-scene {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- drift / stack ---------- */
+.drift {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transition: opacity 0.4s ease;
+}
+
+.drift-row {
+  position: absolute;
+  left: 50%;
+  width: 88%;
+  text-align: center;
+  line-height: 1.12;
+  overflow-wrap: break-word;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.drift-row span {
+  transition:
+    color 0.12s linear,
+    text-shadow 0.2s linear;
+}
+
+/* ---------- states ---------- */
+.state {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.state-loading {
+  display: flex;
+  gap: 0.22em;
+  opacity: 0;
+  animation: ut-pulse 1.8s ease-in-out 0.6s infinite;
+}
+
+.state-loading i {
+  width: 0.13em;
+  height: 0.13em;
+  border-radius: 50%;
+}
+
+.state-loading i:nth-child(2) {
+  opacity: 0.75;
+}
+
+.state-loading i:nth-child(3) {
+  opacity: 0.5;
+}
+
+.state-instrumental {
+  animation: ut-breathe 4.2s ease-in-out infinite;
+}
+
+.state-chip {
+  font:
+    500 1em/1 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  padding: 0.55em 1.05em;
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.42);
+  box-shadow: 0 1px 10px rgba(0, 0, 0, 0.18);
+  letter-spacing: 0.01em;
+  opacity: 0;
+  animation: ut-chip 4s ease forwards;
+}
+
+[data-paused] .state-loading,
+[data-paused] .state-instrumental {
+  animation-play-state: paused;
+}
+
+@keyframes ut-pulse {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.34;
+  }
+}
+
+@keyframes ut-breathe {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
+  50% {
+    opacity: 0.85;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+@keyframes ut-chip {
+  0% {
+    opacity: 0;
+  }
+  8%,
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ut-stage,
+  .drift,
+  .drift-row span {
+    transition: none;
+  }
+  .state-instrumental {
+    animation: none;
+    opacity: 0.6;
+  }
+}

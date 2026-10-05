@@ -59,6 +59,7 @@ export class DriftMode implements ModeRenderer {
     box.style.color = look.colors.dim;
     this.rows = lines.map((line) => {
       const el = h("div", "drift-row");
+      el.dir = "auto";
       el.style.top = `${look.y}px`;
       const spans = line.words.map((w) => {
         const span = h("span", "", w.text);

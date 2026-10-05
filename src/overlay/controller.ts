@@ -49,16 +49,28 @@ export class OverlayController {
     this.palettes = options.palettes ?? new PaletteCache();
   }
 
-  /** Subscribes first, then reads the initial state, so nothing that happens in between is lost. */
+  /**
+   * Subscribes first, then reads the initial state, so nothing that happens in between is lost.
+   * Safe to destroy() while this is still running: it stops at the next step and unsubscribes.
+   */
   async start(): Promise<void> {
     const b = this.bridge;
-    this.unlisten.push(await b.listen("now-playing", (np) => this.onNowPlaying(np)));
-    this.unlisten.push(await b.listen("lyrics", (l) => this.onLyrics(l)));
+    const keep = (off: Unlisten): boolean => {
+      if (this.stopped) off();
+      else this.unlisten.push(off);
+      return !this.stopped;
+    };
+    if (!keep(await b.listen("now-playing", (np) => this.onNowPlaying(np)))) return;
+    if (!keep(await b.listen("lyrics", (l) => this.onLyrics(l)))) return;
     if (this.followSettings) {
-      this.unlisten.push(await b.listen("settings-changed", (s) => this.setSettings(s)));
-      this.setSettings(await b.invoke("get_settings"));
+      if (!keep(await b.listen("settings-changed", (s) => this.setSettings(s)))) return;
+      const settings = await b.invoke("get_settings");
+      if (this.stopped) return;
+      this.setSettings(settings);
     }
-    this.onNowPlaying(await b.invoke("get_now_playing"));
+    const np = await b.invoke("get_now_playing");
+    if (this.stopped) return;
+    this.onNowPlaying(np);
     document.addEventListener("visibilitychange", this.onVisibility);
   }
 
@@ -92,6 +104,7 @@ export class OverlayController {
   }
 
   private onNowPlaying(np: NowPlaying | null): void {
+    if (this.stopped) return;
     const before = this.nowPlaying?.trackKey ?? null;
     this.nowPlaying = np;
     this.clock.update(np, Date.now());
@@ -111,6 +124,7 @@ export class OverlayController {
 
   /** Events always apply in order. The initial `get_lyrics` reply only fills in if no event beat it. */
   private onLyrics(lyrics: Lyrics, fromQuery = false): void {
+    if (this.stopped) return;
     const np = this.nowPlaying;
     if (!np || lyrics.trackKey !== np.trackKey) return;
     if (fromQuery && this.lyrics?.trackKey === lyrics.trackKey) return;

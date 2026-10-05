@@ -1,6 +1,5 @@
 /* Settings window (C7): about 380×640, light and dark aware. The live preview stays pinned on top while
-   the controls scroll beneath it. overlay.css is loaded first for the stage, so its page-level rules
-   (transparent, click-through, no scroll) are undone here. */
+   the controls scroll beneath it. The preview's stage styles come from stage.css (via stage.ts). */
 
 :root {
   color-scheme: light dark;
@@ -56,9 +55,8 @@
   }
 }
 
-/* ---------- page (undo overlay.css) ---------- */
+/* ---------- page ---------- */
 html.ut-settings {
-  height: auto;
   min-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
@@ -68,14 +66,11 @@ html.ut-settings {
 }
 
 html.ut-settings body {
-  height: auto;
   min-height: 100%;
-  overflow: visible;
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 400 13px/1.4 var(--ui);
-  pointer-events: auto;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
