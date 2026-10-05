@@ -25,6 +25,7 @@
   --seg-on-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.12);
   --btn: rgba(24, 26, 32, 0.06);
   --btn-hover: rgba(24, 26, 32, 0.1);
+  /* white "Reset" label at ≥ 4.5:1 (about 4.7:1) */
   --danger: #d0402f;
   --scroll: rgba(24, 26, 32, 0.22);
 }
@@ -50,7 +51,8 @@
     --seg-on-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35);
     --btn: rgba(255, 255, 255, 0.07);
     --btn-hover: rgba(255, 255, 255, 0.11);
-    --danger: #e0543f;
+    /* white "Reset" label at ≥ 4.5:1 (about 5.1:1) */
+    --danger: #c63d2c;
     --scroll: rgba(255, 255, 255, 0.2);
   }
 }
@@ -113,7 +115,9 @@ html.ut-settings body {
   outline-offset: 2px;
 }
 
-.ut-settings button {
+/* Zero specificity for the page part, so it only replaces the browser's button font and color: every
+   button class below (.step, .btn, .link-btn, .icon-btn…) still sets its own size, weight and color. */
+:where(.ut-settings) button {
   font: inherit;
   color: inherit;
 }
@@ -788,21 +792,33 @@ html.is-scrolled .top {
   transition: background-color 0.12s ease;
 }
 
-.step:hover:not(:disabled),
+.step:hover:not(:disabled, [aria-disabled="true"]),
 .btn:hover:not(:disabled) {
   background: var(--btn-hover);
 }
 
-.step:active:not(:disabled),
+.step:active:not(:disabled, [aria-disabled="true"]),
 .btn:active:not(:disabled) {
   transform: translateY(0.5px);
 }
 
-.step:disabled,
-.btn:disabled,
-.link-btn:disabled {
+.btn:disabled {
   cursor: default;
   opacity: 0.4;
+}
+
+/* The sync steps and "Reset this song" are inert, never disabled, when a press would change nothing:
+   keyboard focus stays on them (a held key at the limit does nothing more). Only the face dims, so a
+   focus ring on one keeps full strength. */
+.step[aria-disabled="true"] {
+  background: color-mix(in srgb, var(--btn) 45%, transparent);
+  color: color-mix(in srgb, var(--text) 38%, transparent);
+  cursor: default;
+}
+
+.link-btn[aria-disabled="true"] {
+  color: color-mix(in srgb, var(--accent-strong) 40%, transparent);
+  cursor: default;
 }
 
 .song-foot {
@@ -824,7 +840,7 @@ html.is-scrolled .top {
   cursor: pointer;
 }
 
-.link-btn:hover:not(:disabled) {
+.link-btn:hover:not([aria-disabled="true"]) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }

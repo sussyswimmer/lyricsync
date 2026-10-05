@@ -5,6 +5,8 @@ import { hexToHsl, hslToHex, type Palette, type PaletteCache } from "../core/pal
 import { OverlayController } from "../overlay/controller";
 import { h } from "../overlay/dom";
 import { LyricStage } from "../overlay/stage";
+import { setText } from "./controls";
+import { GAP_GRACE_MS } from "./hold";
 
 /**
  * The preview stage counts this many px as 1× for `Settings.size` (the overlay uses 1080, which would
@@ -14,8 +16,6 @@ import { LyricStage } from "../overlay/stage";
  * were already shrunk to fit, so size changes barely showed.)
  */
 export const PREVIEW_REFERENCE_HEIGHT = 680;
-/** Brief gaps between songs report nothing playing; wait this long before showing the demo. */
-const DEMO_GRACE_MS = 900;
 /** Same grace as the overlay controller: a song without artwork keeps the last song's colors this long. */
 const ARTWORK_GRACE_MS = 1500;
 /** The demo plays these mock tracks (both synced) in a loop... */
@@ -141,7 +141,7 @@ export class SettingsPreview {
       this.graceTimer = setTimeout(() => {
         this.graceTimer = null;
         void this.switchTo("demo");
-      }, DEMO_GRACE_MS);
+      }, GAP_GRACE_MS); // a brief gap between songs never shows the demo
     }
   }
 
@@ -297,8 +297,4 @@ export class SettingsPreview {
     style.setProperty("--wp-2", hslToHex(dh, base, 0.25));
     style.setProperty("--wp-3", hslToHex(hh, Math.min(hs, 0.5), 0.2));
   }
-}
-
-function setText(el: HTMLElement, text: string): void {
-  if (el.textContent !== text) el.textContent = text;
 }

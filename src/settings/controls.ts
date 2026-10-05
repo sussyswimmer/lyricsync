@@ -17,6 +17,23 @@ export function group(title: string, ...children: HTMLElement[]): { el: HTMLElem
   return { el, card };
 }
 
+/**
+ * Writes text only when it differs. Rewriting the same text still replaces the text node, which churns
+ * the accessibility tree and can make a screen reader repeat it.
+ */
+export function setText(el: HTMLElement, text: string): void {
+  if (el.textContent !== text) el.textContent = text;
+}
+
+/** Sets or removes an attribute, touching the element only when it changes. */
+export function setAttr(el: Element, name: string, value: string | null): void {
+  if (value === null) {
+    if (el.hasAttribute(name)) el.removeAttribute(name);
+  } else if (el.getAttribute(name) !== value) {
+    el.setAttribute(name, value);
+  }
+}
+
 export function hint(text: string, className = ""): HTMLParagraphElement {
   return h("p", `hint ${className}`.trim(), text);
 }

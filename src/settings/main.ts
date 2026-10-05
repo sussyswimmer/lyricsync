@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, type NowPlaying, type Settings } from "../../contract
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
+import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
 import { SettingsPreview, type PreviewInfo } from "./preview";
 import { SettingsSync } from "./store";
@@ -42,7 +43,7 @@ async function boot(host: HTMLElement): Promise<void> {
     bridge.invoke("get_now_playing").catch(() => null),
   ]);
 
-  let track: NowPlaying | null = early.heardTrack ? early.track : fetchedTrack;
+  const track: NowPlaying | null = early.heardTrack ? early.track : fetchedTrack;
   let view: Settings = early.settings ?? fetched;
   let info: PreviewInfo = { track: null, demo: false, palette: null, paletteFrom: null, artPending: false };
 
@@ -51,15 +52,20 @@ async function boot(host: HTMLElement): Promise<void> {
   let panel: SettingsPanel | null = null;
   let preview: SettingsPreview | null = null;
 
+  // The panel's song rides out the brief "nothing playing" between songs (as the preview does), so the
+  // sync controls neither flash "Nothing playing" nor drop keyboard focus on every track change.
+  const held = new TrackHold<NowPlaying>(track, () => render());
+
   // now-playing resyncs arrive about once a second; only a change the panel shows re-renders it.
   let shown: PanelState | null = null;
   const render = (): void => {
+    const song = held.value;
     const state: PanelState = {
       settings: view,
       palette: info.palette,
       paletteFor: info.demo ? null : info.paletteFrom,
       artPending: info.artPending,
-      track: track ? { key: track.trackKey, title: track.title, artist: track.artist } : null,
+      track: song ? { key: song.trackKey, title: song.title, artist: song.artist } : null,
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -108,9 +114,8 @@ async function boot(host: HTMLElement): Promise<void> {
 
   onSettings = (s) => sync.receive(s);
   onTrack = (np) => {
-    track = np;
     preview?.setMainTrack(np);
-    render();
+    held.set(np);
   };
   render();
 

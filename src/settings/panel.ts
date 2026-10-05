@@ -2,8 +2,8 @@ import type { Mode, Settings } from "../../contract/contract";
 import type { Palette } from "../core/palette";
 import { h } from "../overlay/dom";
 import { FONTS, fontFor } from "../overlay/fonts";
-import { group, hint, icon, nextId, radios, slider, toggle, type Option } from "./controls";
-import { TRACK_OFFSET_LIMIT_MS } from "./store";
+import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle, type Option } from "./controls";
+import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
 /** What the panel draws. */
 export interface PanelState {
@@ -156,7 +156,7 @@ export class SettingsPanel {
     card.classList.add("card-plain");
     this.renderers.push((s) => {
       modes.set(s.settings.mode);
-      blurb.textContent = MODES.find((m) => m.value === s.settings.mode)?.blurb ?? "";
+      setText(blurb, MODES.find((m) => m.value === s.settings.mode)?.blurb ?? "");
     });
     return el;
   }
@@ -201,18 +201,19 @@ export class SettingsPanel {
       auto.set(s.settings.autoColor);
       const shown = this.shownColors(s);
       const fromAlbum = s.settings.autoColor && s.palette !== null;
-      caption.textContent = !s.settings.autoColor
+      const captionText = !s.settings.autoColor
         ? "Off. Your colors below are used for every song."
         : fromAlbum && s.paletteFor
           ? `Picked from the cover of “${s.paletteFor}”. Change any color to use your own.`
           : fromAlbum || s.artPending
             ? "Picked from each song's cover art. Change any color to use your own."
             : "This song has no cover art, so your colors below are used.";
+      setText(caption, captionText);
       for (const { key, chip, input, hex } of items) {
         const value = shown[key];
         if (input.value.toLowerCase() !== value) input.value = value;
         chip.style.setProperty("--swatch", value);
-        hex.textContent = value.toUpperCase();
+        setText(hex, value.toUpperCase());
       }
     });
     return el;
@@ -360,28 +361,39 @@ export class SettingsPanel {
     const song = h("div", "song");
     const head = h("div", "song-head");
     const songLabel = h("span", "row-label", "This song");
+    // Not a live region: it changes with every track change (spoken bare, out of context) and on a nudge,
+    // which `announce` already says with context. The stepper group reads it as its description instead.
     const songValue = h("span", "song-value");
-    songValue.setAttribute("aria-live", "polite");
+    songValue.id = nextId("song-value");
     head.append(songLabel, songValue);
     const songTitle = h("p", "song-title");
     const stepper = h("div", "stepper");
     stepper.setAttribute("role", "group");
     stepper.setAttribute("aria-label", "Nudge this song's sync");
-    // A button that disables itself (a limit reached, nothing left to reset) would drop keyboard focus
-    // on the page; hand it to a nudge that still works. The action re-renders synchronously.
-    const keepFocus = (from: HTMLButtonElement): void => {
-      if (from.disabled) buttons.find((b) => !b.disabled)?.focus();
+    stepper.setAttribute("aria-describedby", songValue.id);
+
+    /** This song and its offset, or null when nothing is playing. */
+    const current = (): { key: string; ms: number } | null => {
+      const state = this.state;
+      if (!state?.track) return null;
+      return { key: state.track.key, ms: state.settings.trackOffsetsMs[state.track.key] ?? 0 };
     };
+    // A press that would change nothing (a limit reached, nothing to reset, no song) leaves these buttons
+    // inert (aria-disabled), never `disabled`: a disabled button drops keyboard focus, and handing it to
+    // another button turned a held Enter on +100 into −100 presses, and a double Enter on "Reset this
+    // song" into −100 ms.
+    const inert = (b: HTMLButtonElement): boolean => b.getAttribute("aria-disabled") === "true";
     const buttons = NUDGES.map((delta) => {
       const b = h("button", "step", signed(delta));
       b.type = "button";
       b.setAttribute("aria-label", `${signed(delta).replace("−", "minus ")} milliseconds, lyrics ${delta > 0 ? "earlier" : "later"}`);
       b.addEventListener("click", () => {
-        const state = this.state;
-        if (!state?.track) return;
-        const now = state.settings.trackOffsetsMs[state.track.key] ?? 0;
-        this.actions.setTrackOffset(state.track.key, now + delta);
-        keepFocus(b);
+        const now = current();
+        if (!now || inert(b)) return;
+        // Clamped as the store clamps it, so the announcement says what is saved.
+        const next = clampTrackOffset(now.ms + delta);
+        this.actions.setTrackOffset(now.key, next);
+        this.announce(`This song: ${speakMs(next)}`);
       });
       stepper.append(b);
       return b;
@@ -389,12 +401,10 @@ export class SettingsPanel {
     const resetSong = h("button", "link-btn", "Reset this song");
     resetSong.type = "button";
     resetSong.addEventListener("click", () => {
-      const key = this.state?.track?.key;
-      if (key) {
-        this.actions.setTrackOffset(key, 0);
-        this.announce("This song's sync is back to 0");
-        keepFocus(resetSong);
-      }
+      const now = current();
+      if (!now || now.ms === 0 || inert(resetSong)) return;
+      this.actions.setTrackOffset(now.key, 0);
+      this.announce("This song's sync is back to 0");
     });
     const songHint = hint("");
     song.append(head, songTitle, stepper, h("div", "song-foot"));
@@ -405,21 +415,23 @@ export class SettingsPanel {
       const g = s.settings.globalOffsetMs;
       offset.set(g);
       // Disabled (and invisible), never removed: the slider's width must not change under a dragging pointer.
+      // Its click hands focus to the slider itself, so going away never strands keyboard focus.
       zero.disabled = g === 0;
       const track = s.track;
       const ms = track ? (s.settings.trackOffsetsMs[track.key] ?? 0) : 0;
       song.classList.toggle("is-disabled", !track);
-      songValue.textContent = track ? formatMs(ms) : "";
-      songTitle.textContent = track ? `${track.title} · ${track.artist}` : "Nothing playing";
+      setText(songValue, track ? formatMs(ms) : "");
+      setText(songTitle, track ? `${track.title} · ${track.artist}` : "Nothing playing");
       songTitle.title = track ? `${track.title} by ${track.artist}` : "";
-      songHint.textContent = track ? "Added on top of All songs." : "Play a song to fine-tune its sync.";
+      setText(songHint, track ? "Added on top of All songs." : "Play a song to fine-tune its sync.");
       for (const [i, b] of buttons.entries()) {
         const delta = NUDGES[i] ?? 0;
-        // Off only when a press would change nothing; a step past the limit is clamped to it.
+        // Inert only when a press would change nothing; a step past the limit is clamped to it.
         const atLimit = delta > 0 ? ms >= TRACK_OFFSET_LIMIT_MS : ms <= -TRACK_OFFSET_LIMIT_MS;
-        b.disabled = !track || atLimit;
+        setAttr(b, "aria-disabled", !track || atLimit ? "true" : null);
+        setAttr(b, "title", track && atLimit ? `This song is at the ${formatMs(delta > 0 ? TRACK_OFFSET_LIMIT_MS : -TRACK_OFFSET_LIMIT_MS)} limit` : null);
       }
-      resetSong.disabled = !track || ms === 0;
+      setAttr(resetSong, "aria-disabled", !track || ms === 0 ? "true" : null);
     });
     return el;
   }
@@ -480,7 +492,7 @@ export class SettingsPanel {
     this.renderers.push((s) => {
       const songs = Object.values(s.settings.trackOffsetsMs).filter((ms) => ms !== 0).length;
       forgetRow.hidden = songs === 0;
-      forgetText.textContent = `Also clear sync for ${songs} ${songs === 1 ? "song" : "songs"}`;
+      setText(forgetText, `Also clear sync for ${songs} ${songs === 1 ? "song" : "songs"}`);
       if (songs === 0) forget.checked = false;
     });
     return el;

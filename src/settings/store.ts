@@ -8,6 +8,11 @@ export const SAVE_MAX_WAIT_MS = 300;
 /** Per-song nudges stay within the global offset's range. */
 export const TRACK_OFFSET_LIMIT_MS = 2000;
 
+/** A per-song offset as it is saved: whole ms, within ±`TRACK_OFFSET_LIMIT_MS`. */
+export function clampTrackOffset(ms: number): number {
+  return Math.max(-TRACK_OFFSET_LIMIT_MS, Math.min(TRACK_OFFSET_LIMIT_MS, Math.round(ms)));
+}
+
 /** One save, in the order the user made it. */
 export type Write =
   | { kind: "patch"; patch: Partial<Settings> }
@@ -99,8 +104,7 @@ export class SettingsSync {
   setTrackOffset(trackKey: string, ms: number): void {
     if (this.disposed) return;
     this.flush();
-    const clamped = Math.max(-TRACK_OFFSET_LIMIT_MS, Math.min(TRACK_OFFSET_LIMIT_MS, Math.round(ms)));
-    this.queue.push({ kind: "track", trackKey, ms: clamped });
+    this.queue.push({ kind: "track", trackKey, ms: clampTrackOffset(ms) });
     this.onChange(this.view);
     this.pump();
   }
