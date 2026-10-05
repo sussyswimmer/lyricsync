@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Event access for overlay and settings webviews",
+  "windows": [
+    "overlay",
+    "overlay-*",
+    "settings"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}
