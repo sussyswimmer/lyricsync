@@ -76,6 +76,8 @@ Each font in the list is shown in its own face. All of them are built into Under
 
 Each font comes in one weight, which Undertone picks for you. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts.
 
+For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. Instrument Serif, Syne and Caveat have no Vietnamese accented letters, so those letters come from a system font and look different from the rest of the word.
+
 ## Layout
 
 ### Size
