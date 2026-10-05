@@ -16,15 +16,23 @@
 }
 
 .lens-word {
-  transition:
-    color 0.12s linear,
-    text-shadow 0.2s linear;
+  /*
+   * Color only: a text-shadow transition re-lays out and re-rasters the word on every frame it runs.
+   * The glow switches at once (the color fade and the fisheye's growth carry the change), and the far
+   * words' shadow steps (lens.ts SHADOW_STEPS) are too small to see.
+   */
+  transition: color 0.12s linear;
   /*
    * Each word on its own layer: the fisheye then moves and scales bitmaps instead of re-rastering the
    * row's blurred shadows every frame (about 10x less raster in Chromium). Chromium re-rasters a layer
    * when it grows, so magnified words stay sharp.
    */
   will-change: transform;
+}
+
+/* A line gliding up from the next slot eases its words from the next line's dim color itself (lens.ts mount). */
+.lens-arriving > .lens-word {
+  transition: none;
 }
 
 /* Built and read once per build to size every word, then removed. */
