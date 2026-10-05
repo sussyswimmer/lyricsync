@@ -138,7 +138,7 @@ pnpm tauri dev            # the desktop app
 
 `pnpm tauri dev` enables the `desktop` Cargo feature. Native checks must use it too: run `cargo check --features desktop` and `cargo clippy --features desktop -- -D warnings` from `src-tauri`. Linux can run the frontend and the portable Rust tests, but it isn't a supported desktop target. In cloud tasks, reuse the existing checkout; don't create a worktree unless asked.
 
-The Rust commands are still stubs in places: settings live in memory until persistence lands (X4), now playing is `null` until the media watcher lands (X2), and lyrics lookup reports `error` until the LRCLIB service lands (X3). The frontend listens to events first, then reads the initial settings and playback through commands.
+On `main` the Rust commands are still the M0 stubs: settings live in memory, now playing is `null` and lyrics lookup reports `error`. The Windows media watcher (X2) and the LRCLIB service (X3) are on Codex's branches until they pass native checks, and settings persistence (X4) comes after. The frontend listens to events first, then reads the initial settings and playback through commands.
 
 ### Frontend in a browser
 
