@@ -19,3 +19,8 @@ Done: `src/core/lrc.ts` (LRC + enhanced `<mm:ss.xx>` word tags, multi-stamp line
 Notes: `Word.text` keeps its trailing space so a line's words join back to `Line.text`; Chinese/Japanese/Korean lines split per character. `clock.ts` imports `NowPlaying`/`Settings` types from the contract.
 Needs from Codex: nothing.
 Contract: unchanged (v1).
+
+## 2026-10-05 · Claude Code · C4
+Done: `src/core/palette.ts`. Ports the prototype's `extract()` (48×48 sample, 4-bit buckets, dominant → lyric/dim tint, most vivid common color → highlight) with guaranteed legibility (lyric L ≥ 0.85; highlight L 0.6–0.75, S ≥ 0.55; checked across 300 random covers). Gray covers fall back to the default warm white plus the most colorful pixel, or the default highlight. `PaletteCache` computes once per trackKey and recomputes if artwork arrives later. Artwork decodes through `<img>` + canvas, which the current CSP allows (`img-src data:`); verified in Chromium against the prototype's covers. 110 tests pass.
+Needs from Codex: nothing. Keep `img-src data:` in the CSP; album colors depend on it.
+Contract: unchanged (v1).
