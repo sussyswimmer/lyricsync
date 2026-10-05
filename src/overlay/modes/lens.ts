@@ -77,6 +77,12 @@ interface Focus extends Shape {
   spans: HTMLSpanElement[];
   /** translateY shared by every word, putting the baseline on the device pixel grid */
   y: number;
+  /**
+   * The line's fit to the stage width, applied as part of each word's scale. Words are drawn at the
+   * size they were measured at: text width isn't proportional to font size (hinting and rounding at
+   * small sizes), so drawing at a fitted font size made words wider than measured and closed the gaps.
+   */
+  zoom: number;
   shadow: string;
   glow: string;
   /** smallest fisheye scale: SCALE_MIN, raised at small sizes so far words stay readable */
@@ -264,7 +270,7 @@ export class LensMode implements ModeRenderer {
       const s = f.scales[j] ?? 1;
       if (span) {
         const at = still ? snap(x, look.dpr) : x;
-        put(span, "transform", `translate(${at.toFixed(2)}px, ${f.y.toFixed(2)}px) scale(${s.toFixed(4)})`);
+        put(span, "transform", `translate(${at.toFixed(2)}px, ${f.y.toFixed(2)}px) scale(${(s * f.zoom).toFixed(4)})`);
       }
       const right = f.order[v + 1];
       x += s * (f.widths[j] ?? 0) + ((f.gaps[v] ?? 0) * (s + (right === undefined ? s : (f.scales[right] ?? s)))) / 2;
@@ -396,15 +402,15 @@ export class LensMode implements ModeRenderer {
       fit = fitFor(shape, low, look.width);
     }
     const size = look.size * fit;
-    const base = this.baseline * fit;
     const spans = line.words.map((w) => {
       const span = row.appendChild(wordSpan(w.text.trimEnd(), "lens-word"));
-      span.style.fontSize = `${size}px`;
-      span.style.transformOrigin = `0 ${base.toFixed(2)}px`;
+      span.style.fontSize = `${look.size}px`;
+      span.style.transformOrigin = `0 ${this.baseline.toFixed(2)}px`;
       return span;
     });
-    // a 1em box centered on look.y at scale 1; its baseline lands on a device pixel
-    const y = snap(look.y - size / 2 + base, look.dpr) - base;
+    // a 1em box of the fitted size centered on look.y at scale 1; its baseline lands on a device pixel
+    const baseline = snap(look.y - size / 2 + this.baseline * fit, look.dpr);
+    const y = baseline - this.baseline;
     const glide = look.motion && previous >= 0 && index === previous + 1 && was?.index === index;
     this.focus = {
       words: line.words,
@@ -413,8 +419,10 @@ export class LensMode implements ModeRenderer {
       order: m.order,
       gaps: shape.gaps.map((g) => g * fit),
       y,
-      shadow: textShadow(look, size),
-      glow: textShadow(look, size, true),
+      zoom: fit,
+      // drawn at look.size and scaled by the transform, which scales the shadows with it
+      shadow: textShadow(look, look.size),
+      glow: textShadow(look, look.size, true),
       low,
       // gliding in, the lens blooms over the glide (unsynced lines never get a lens)
       rampFrom: glide ? t : null,
@@ -424,7 +432,6 @@ export class LensMode implements ModeRenderer {
     this.mountNext(index + 1, size, look, glide);
     if (glide && was) {
       // Grow from where this line just was, as the next line, around the middle of its baseline.
-      const baseline = y + base;
       row.style.transformOrigin = `${(look.width / 2).toFixed(2)}px ${baseline.toFixed(2)}px`;
       this.glide(row, `translate(0px, ${(was.baseline - baseline).toFixed(2)}px) scale(${(was.size / size).toFixed(4)})`, "none", look);
     }
