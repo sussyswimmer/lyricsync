@@ -34,6 +34,8 @@ pub fn update_settings(
         *settings = next;
         settings.clone()
     };
+    #[cfg(target_os = "windows")]
+    crate::desktop_layer::request_refresh();
     app.emit(SETTINGS_CHANGED_EVENT, &result)
         .map_err(|e| e.to_string())?;
     Ok(result)
@@ -82,6 +84,8 @@ pub fn set_track_offset(
             .insert(track_key, ms.clamp(-2000.0, 2000.0));
         settings.clone()
     };
+    #[cfg(target_os = "windows")]
+    crate::desktop_layer::request_refresh();
     app.emit(SETTINGS_CHANGED_EVENT, &result)
         .map_err(|e| e.to_string())?;
     Ok(result)
