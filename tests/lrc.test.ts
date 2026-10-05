@@ -142,6 +142,14 @@ describe("parseLrc: gaps and line ends", () => {
     expect(lines.map((l) => [l.text, l.start])).toEqual([["x", 1000], ["", 10_000], ["y", 20_000]]);
   });
 
+  it("keeps the first of several lyric lines on one stamp (translated LRCs)", () => {
+    const lines = parseLrc("[00:01.00]original words here\n[00:01.00]translated words here\n[00:05.00]next line", 10_000);
+    expect(lines.map((l) => [l.text, l.start, l.end])).toEqual([
+      ["original words here", 1000, 5000 - LINE_GAP_MS],
+      ["next line", 5000, 10_000],
+    ]);
+  });
+
   it("never ends a line before it starts", () => {
     const [a] = parseLrc("[00:01.00]close\n[00:01.20]call", 5000);
     expect(a).toMatchObject({ start: 1000, end: 1000 });

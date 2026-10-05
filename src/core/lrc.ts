@@ -135,7 +135,7 @@ function wordsFor(entry: Entry, end: number): Word[] {
 /**
  * Parses LRC (plain or enhanced with `<mm:ss.xx>` word tags) into sorted lines with word timing.
  * Junk lines and metadata are skipped. An empty timed line is an instrumental gap: it ends the
- * line before it and has no words. Each line ends `LINE_GAP_MS` before the next one starts and
+ * line before it and has no words. When several lyric lines share one stamp, the first wins. Each line ends `LINE_GAP_MS` before the next one starts and
  * never runs past `durationMs`.
  */
 export function parseLrc(raw: string, durationMs: number): Line[] {
@@ -157,11 +157,17 @@ export function parseLrc(raw: string, durationMs: number): Line[] {
 
   // Gaps sort before lyrics that share their timestamp, so the lyric wins the tie.
   // Back-to-back gaps merge into the first.
+  // Two lyric lines on one stamp (translated LRCs add the translation under the original): keep the
+  // first, otherwise it would get zero length and only the second would ever show.
   entries.sort((a, b) => a.start - b.start || Number(a.text !== "") - Number(b.text !== ""));
   const kept: Entry[] = [];
   entries.forEach((entry, i) => {
-    const gap = entry.text === "";
-    if (gap && (kept[kept.length - 1]?.text === "" || entries[i + 1]?.start === entry.start)) return;
+    const prev = kept[kept.length - 1];
+    if (entry.text === "") {
+      if (prev?.text === "" || entries[i + 1]?.start === entry.start) return;
+    } else if (prev && prev.text !== "" && prev.start === entry.start) {
+      return;
+    }
     kept.push(entry);
   });
 
