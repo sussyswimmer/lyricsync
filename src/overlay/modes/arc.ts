@@ -2,13 +2,15 @@ import "../../styles/arc.css";
 import type { Line, Word } from "../../core/lrc";
 import { wordState } from "../../core/timing";
 import { h, put, s } from "../dom";
-import { dropShadow, shadowLayers, snap, type Look } from "../look";
+import { whenFaceLoads } from "../fonts";
+import { dropShadow, MIN_TEXT_PX, shadowLayers, snap, type Look } from "../look";
 import type { Cue, ModeRenderer } from "./types";
 
-/** Previous and next lines at this fraction of the focus size (prototype). */
+/**
+ * Previous and next lines at this fraction of the focus size (prototype), but no smaller than
+ * MIN_TEXT_PX (or 80% of the focus size, if that is smaller), so tiny sizes keep legible neighbors.
+ */
 const SIDE_SCALE = 0.48;
-/** ...but no smaller than this many px (or 80% of the focus size, if that is smaller), so tiny sizes keep legible neighbors. */
-const SIDE_MIN_PX = 11;
 /** Baselines in focus font sizes from the focus baseline: previous above, next below with a little extra room for descenders (prototype). */
 const PREV_RISE = -1.25;
 const NEXT_DROP = 1.25 + 0.15;
@@ -260,20 +262,35 @@ export function isRtl(text: string): boolean {
 /** A band on screen, by slot relative to the focus line (-1 previous, 0 focus or its glow copy, 1 next). */
 interface Drawn {
   svg: SVGSVGElement;
+  text: SVGTextElement;
   k: number;
+  /** its font size, px, which its shadow is drawn for */
+  size: number;
+  /** the focus line's glow copy */
+  glow: boolean;
+}
+
+/** Whether a look draws the active word's glow, which takes a band of its own (see showLine). */
+const glows = (look: Look): boolean => look.glow > 0 && !look.unsynced;
+
+/** Everything in a look but what restyle() takes (colors, glow) and the stage applies (opacity): two looks with the same key lay out the same. */
+function layoutKey(look: Look): string {
+  const { colors, glow, opacity, ...layout } = look;
+  return JSON.stringify(layout);
 }
 
 /**
  * Arc: the focus line set on a curve, with the previous line small above and the next one small
  * below, each on a parallel curve. The DOM is rebuilt only when the focus line changes, with the
  * move animated on the compositor (or, under reduced motion, crossfaded by the stage); a frame only
- * recolors words of the focus line.
+ * recolors words of the focus line. New colors or glow restyle the bands in place.
  */
 export class ArcMode implements ModeRenderer {
   private readonly id = ++instances;
   private builds = 0;
   private look: Look | null = null;
   private lines: readonly Line[] = [];
+  private host: HTMLElement | null = null;
   private box: HTMLDivElement | null = null;
   /** the shared curve, resolved per build */
   private geo: ArcGeometry = { bend: 0, mid: 0, minFit: MIN_FIT };
@@ -296,6 +313,7 @@ export class ArcMode implements ModeRenderer {
   build(host: HTMLElement, lines: readonly Line[], look: Look): void {
     this.look = look;
     this.lines = lines;
+    this.host = host;
     host.textContent = "";
     const box = h("div", "arc");
     box.style.fontFamily = look.font;
@@ -309,6 +327,32 @@ export class ArcMode implements ModeRenderer {
     this.drawn = [];
     this.measure(look, box);
     this.refitWhenFontsLoad(look, box);
+  }
+
+  /**
+   * New colors or glow, without measuring: each band's shadow, the glow copy's halo and the
+   * neighbors' fill change in place, and the next paint recolors the focus line's words. Glides in
+   * flight carry on. The glow copy exists only while there is a glow, so glow reaching or leaving 0
+   * rebuilds, as does anything that moves the layout (the stage rebuilds for that itself).
+   */
+  restyle(look: Look): void {
+    const was = this.look;
+    const host = this.host;
+    if (!was || !host || !this.box) {
+      this.look = look;
+      return;
+    }
+    if (glows(look) !== glows(was) || layoutKey(look) !== layoutKey(was)) {
+      this.build(host, this.lines, look);
+      if (this.lastCue) this.paint(this.lastCue);
+      return;
+    }
+    this.look = look;
+    for (const d of this.drawn) {
+      put(d.svg, "filter", d.glow ? glowFilter(look, d.size) : dropShadow(look, d.size));
+      if (d.glow) put(d.text, "fill", look.colors.highlight);
+      else if (d.k !== 0) put(d.text, "fill", look.colors.dim);
+    }
   }
 
   paint(cue: Cue): boolean {
@@ -332,6 +376,7 @@ export class ArcMode implements ModeRenderer {
   destroy(): void {
     this.box?.remove();
     this.box = null;
+    this.host = null;
     this.focus = null;
     this.drawn = [];
     this.lastCue = null;
@@ -371,21 +416,18 @@ export class ArcMode implements ModeRenderer {
 
   /**
    * The lyric face may still be downloading on the first build (or the subset for accents or another
-   * script may be), and fallback metrics would fit lines wrongly. Measure again once it's in.
+   * script may be), and fallback metrics would fit lines wrongly. Measure again once it's in. Asking
+   * is cached (see whenFaceLoads): a Size drag rebuilds on every step.
    */
   private refitWhenFontsLoad(look: Look, box: HTMLDivElement): void {
-    if (typeof document === "undefined" || !("fonts" in document)) return;
-    const spec = `${look.weight} ${look.size}px ${look.font}`;
-    const chars = [...new Set(this.lines.map((l) => l.text).join(""))].join("");
-    try {
-      if (document.fonts.check(spec, chars)) return;
-    } catch {
-      return;
-    }
-    void document.fonts.load(spec, chars).then(
+    const loading = whenFaceLoads(look.font, look.weight, this.lines.map((l) => l.text).join(""));
+    if (!loading) return;
+    void loading.then(
       () => {
-        if (this.box !== box) return;
-        this.measure(look, box);
+        // a restyle since then kept the layout but brought new colors
+        const current = this.look;
+        if (this.box !== box || !current) return;
+        this.measure(current, box);
         this.shown = Number.NaN;
         if (this.lastCue) this.paint(this.lastCue);
       },
@@ -434,7 +476,7 @@ export class ArcMode implements ModeRenderer {
   /** Focus and neighbor sizes around line `index`: a long focus line that had to shrink takes its neighbors (and their spacing) down with it, so it still leads. */
   private sizes(index: number, look: Look): { focus: number; side: number } {
     const focus = this.fitted(index, look.size, look);
-    return { focus, side: Math.max(SIDE_SCALE * focus, Math.min(0.8 * focus, SIDE_MIN_PX)) };
+    return { focus, side: Math.max(SIDE_SCALE * focus, Math.min(0.8 * focus, MIN_TEXT_PX)) };
   }
 
   /**
@@ -507,15 +549,15 @@ export class ArcMode implements ModeRenderer {
       const k = p.slot.k;
       const band = this.band(`${prefix}-${p.slot.name}`, line, p, look);
       band.svg.classList.add(`arc-${p.slot.name}`);
-      band.svg.style.filter = dropShadow(look, p.size);
+      put(band.svg, "filter", dropShadow(look, p.size));
       box.append(band.svg);
-      this.drawn.push({ svg: band.svg, k });
+      this.drawn.push({ svg: band.svg, text: band.text, k, size: p.size, glow: false });
       const start = step ? glideFrom(p, before, focusSize) : null;
       if (start) this.glide(band.svg, start, glideMs);
       else if (moving) this.appear(band.svg);
       if (k !== 0) {
         band.svg.setAttribute("aria-hidden", "true");
-        band.text.style.fill = look.colors.dim;
+        put(band.text, "fill", look.colors.dim);
         // the old focus line dims as it moves up
         if (step && k < 0) band.tspans.forEach((t, j) => easeFill(t, oldWords[j]?.style.fill ?? "", glideMs * FILL_SHARE));
         continue;
@@ -526,16 +568,16 @@ export class ArcMode implements ModeRenderer {
       const focus: Focus = { words: line.words, base: band.tspans, glow: [] };
       // SVG can't filter a single tspan, so the active word's glow is a second copy of the line on
       // the same curve, every word transparent but the active one, under a highlight-colored halo.
-      if (look.glow > 0 && !look.unsynced) {
+      if (glows(look)) {
         const glow = this.band(`${prefix}-glow`, line, p, look);
         glow.svg.classList.add("arc-glow");
         glow.svg.setAttribute("aria-hidden", "true");
-        glow.svg.style.filter = glowFilter(look, p.size);
-        glow.text.style.fill = look.colors.highlight;
+        put(glow.svg, "filter", glowFilter(look, p.size));
+        put(glow.text, "fill", look.colors.highlight);
         for (const t of glow.tspans) put(t, "fill-opacity", "0");
         focus.glow = glow.tspans;
         box.append(glow.svg);
-        this.drawn.push({ svg: glow.svg, k: 0 });
+        this.drawn.push({ svg: glow.svg, text: glow.text, k: 0, size: p.size, glow: true });
         if (start) this.glide(glow.svg, start, glideMs);
         else if (moving) this.appear(glow.svg);
       }

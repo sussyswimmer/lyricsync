@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
-import { resolveLook, type Frame, type Look } from "../src/overlay/look";
+import { parseLrc, type Line } from "../src/core/lrc";
+import { dropShadow, resolveLook, rgba, type Frame, type Look } from "../src/overlay/look";
 import {
   arcGeometry,
   arcLength,
+  ArcMode,
   clearNeighbor,
   glideFrames,
   glideFrom,
@@ -14,7 +16,8 @@ import {
   type Run,
   type Slot,
 } from "../src/overlay/modes/arc";
-import arcCss from "../src/styles/arc.css?raw";
+import type { Cue } from "../src/overlay/modes/types";
+import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 const look = (over: Partial<Settings>, frame: Partial<Frame> = {}): Look =>
   resolveLook({ ...structuredClone(DEFAULT_SETTINGS), mode: "arc", ...over }, null, {
@@ -277,8 +280,257 @@ describe("Arc step glide", () => {
 // bands re-rastered the whole filtered line on every frame of every word change, making Arc (the
 // default style) the most expensive mode to draw.
 describe("arc.css", () => {
+  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node, so
+  // an import made this test pass on an empty string. A non-literal specifier, because the strict type
+  // check runs without node's types.
+  let arcCss = "";
+  beforeAll(async () => {
+    const fsModule = "node:fs";
+    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+    arcCss = fs.readFileSync(new URL("../src/styles/arc.css", import.meta.url), "utf8");
+  });
+
   it("has no transitions on the filtered bands", () => {
+    expect(arcCss.trim()).not.toBe("");
     const css = arcCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).toContain(".arc-line");
     expect(css).not.toMatch(/transition\s*:/);
+  });
+});
+
+/*
+ * Just enough DOM, HTML and SVG, for Arc to build, paint and restyle in node: elements with inline
+ * styles and attributes, text half an em wide per character, Web Animations that only record
+ * themselves, and counts of what a build costs (elements made, layout reads).
+ */
+const cost = { created: 0, measured: 0 };
+
+class FakeStyle {
+  readonly props = new Map<string, string>();
+  [key: string]: unknown;
+  setProperty(name: string, value: string): void {
+    this.props.set(name, value);
+  }
+}
+
+class FakeAnimation {
+  cancelled = false;
+  /** never settles: a band fading out stays in the tree */
+  readonly finished = new Promise<void>(() => undefined);
+  cancel(): void {
+    this.cancelled = true;
+  }
+}
+
+class FakeNode {
+  readonly tagName: string;
+  readonly style = new FakeStyle();
+  readonly attrs = new Map<string, string>();
+  readonly animations: FakeAnimation[] = [];
+  children: FakeNode[] = [];
+  parent: FakeNode | null = null;
+  private own = "";
+  private readonly classes = new Set<string>();
+  readonly classList = {
+    add: (...names: string[]): void => {
+      for (const n of names) this.classes.add(n);
+    },
+    contains: (name: string): boolean => this.classes.has(name),
+  };
+
+  constructor(tag: string) {
+    this.tagName = tag;
+    cost.created++;
+  }
+
+  get className(): string {
+    return [...this.classes].join(" ");
+  }
+  set className(value: string) {
+    this.classes.clear();
+    for (const c of value.split(" ")) if (c) this.classes.add(c);
+  }
+  get textContent(): string {
+    return this.own + this.children.map((c) => c.textContent).join("");
+  }
+  set textContent(value: string) {
+    for (const c of this.children) c.parent = null;
+    this.children = [];
+    this.own = value;
+  }
+  get isConnected(): boolean {
+    return this.parent !== null;
+  }
+  append(...nodes: FakeNode[]): void {
+    for (const n of nodes) {
+      n.remove();
+      n.parent = this;
+      this.children.push(n);
+    }
+  }
+  remove(): void {
+    const p = this.parent;
+    if (!p) return;
+    p.children.splice(p.children.indexOf(this), 1);
+    this.parent = null;
+  }
+  setAttribute(name: string, value: string): void {
+    if (name === "class") this.className = value;
+    else this.attrs.set(name, value);
+  }
+  setAttributeNS(_ns: string, name: string, value: string): void {
+    this.setAttribute(name, value);
+  }
+  animate(): FakeAnimation {
+    const anim = new FakeAnimation();
+    this.animations.push(anim);
+    return anim;
+  }
+  /** the shared path, about 90% of a 1280 px stage */
+  getTotalLength(): number {
+    cost.measured++;
+    return 1160;
+  }
+  getComputedTextLength(): number {
+    cost.measured++;
+    return this.textContent.length * Number(this.attrs.get("font-size") ?? "16") * 0.5;
+  }
+  find(className: string): FakeNode[] {
+    return this.children.flatMap((c) => [...(c.classList.contains(className) ? [c] : []), ...c.find(className)]);
+  }
+  /** The subtree as data, band ids (fresh per build and instance) left out. */
+  snapshot(): unknown {
+    const plain = (v: string): string => v.replace(/ut-arc\d+-\d+/g, "ut-arc");
+    const style = Object.entries(this.style).filter(([k]) => k !== "props");
+    return {
+      tag: this.tagName,
+      className: this.className,
+      attrs: [...this.attrs].map(([k, v]) => [k, plain(v)]).sort(),
+      style: [...style, ...this.style.props].sort(),
+      own: this.own,
+      children: this.children.map((c) => c.snapshot()),
+    };
+  }
+}
+
+const asHost = (el: FakeNode): HTMLElement => el as unknown as HTMLElement;
+const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
+const cue = (line: number, t: number, running = true): Cue => ({ line, t, waiting: false, running });
+const stageLook = (over: Partial<Settings>, frame: Partial<Frame> = {}): Look => look(over, { width: 1280, height: 720, ...frame });
+const RED = { lyric: "#ffffff", highlight: "#ff3030", dim: "#404040" };
+
+function arcOn(l: Look): { mode: ArcMode; host: FakeNode; box: () => FakeNode | undefined } {
+  const host = new FakeNode("main");
+  const mode = new ArcMode();
+  mode.build(asHost(host), LINES, l);
+  return { mode, host, box: () => host.children[0] };
+}
+
+/** A band's font size: its <text> (after <defs>) carries it. */
+const sizeOf = (band: FakeNode): number => Number(band.children[1]?.attrs.get("font-size") ?? "NaN");
+/** The focus line's word fills: band > text > textPath > tspans. */
+const focusFills = (box: FakeNode | undefined): (string | undefined)[] =>
+  (box?.find("arc-focus")[0]?.children[1]?.children[0]?.children ?? []).map((t) => t.style.props.get("fill"));
+
+// Regression (arc-restyle-rebuild): Arc had no restyle, so every Glow, color or Size step rebuilt it,
+// and every build asked FontFaceSet.check about the whole song against the whole fallback stack at the
+// current size (about 30 ms a step). Settings drags in Arc, the default style, ran at 21-26 fps.
+describe("Arc restyle", () => {
+  beforeEach(() => {
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("takes new colors and glow in place: nothing built or measured, and a step's glide carries on", () => {
+    const { mode, box } = arcOn(stageLook({ glow: 30 }));
+    mode.paint(cue(0, 2000));
+    mode.paint(cue(1, 4300));
+    const bands = box()?.find("arc-line") ?? [];
+    expect(bands.length).toBe(4);
+    const gliding = bands.flatMap((b) => b.animations);
+    expect(gliding.length).toBeGreaterThan(0);
+    const before = { ...cost };
+    const after = stageLook({ glow: 80, autoColor: false, colors: RED });
+    mode.restyle(after);
+    expect(cost).toEqual(before);
+    expect(box()?.find("arc-line")).toEqual(bands);
+    expect(gliding.every((a) => !a.cancelled)).toBe(true);
+    for (const band of bands) {
+      const filter = band.style.props.get("filter") ?? "";
+      if (band.classList.contains("arc-glow")) {
+        // just the highlight halo, in the new highlight at the new glow
+        expect(filter).toContain(rgba(RED.highlight, 0.35 + 0.5 * 0.8));
+        expect(filter).not.toContain("rgba(0, 0, 0,");
+        expect(band.children[1]?.style.props.get("fill")).toBe(RED.highlight);
+      } else {
+        expect(filter).toBe(dropShadow(after, sizeOf(band)));
+      }
+      if (band.classList.contains("arc-prev") || band.classList.contains("arc-next")) expect(band.children[1]?.style.props.get("fill")).toBe(RED.dim);
+    }
+    // the next paint recolors the focus line's words: sung in the highlight, upcoming in the lyric color
+    mode.paint(cue(1, 4320));
+    const words = focusFills(box());
+    expect(words.length).toBe(LINES[1]?.words.length);
+    expect(words[0]).toBe(RED.highlight);
+    expect(words[words.length - 1]).toBe(RED.lyric);
+  });
+
+  it("draws exactly what a fresh build with the same settings draws", () => {
+    const restyled = arcOn(stageLook({ glow: 20 }));
+    restyled.mode.paint(cue(1, 4300));
+    restyled.mode.restyle(stageLook({ glow: 65, autoColor: false, colors: RED }));
+    restyled.mode.paint(cue(1, 4300));
+    const fresh = arcOn(stageLook({ glow: 65, autoColor: false, colors: RED }));
+    fresh.mode.paint(cue(1, 4300));
+    expect(restyled.host.snapshot()).toEqual(fresh.host.snapshot());
+  });
+
+  it("rebuilds when glow reaches or leaves 0 (the glow band exists only with a glow), and draws at once", () => {
+    const { mode, box } = arcOn(stageLook({ glow: 30 }));
+    mode.paint(cue(1, 4300));
+    const first = box();
+    expect(first?.find("arc-glow").length).toBe(1);
+    mode.restyle(stageLook({ glow: 0 }));
+    expect(box()).not.toBe(first);
+    expect(box()?.find("arc-glow").length).toBe(0);
+    expect(box()?.find("arc-line").length).toBe(3);
+    const second = box();
+    mode.restyle(stageLook({ glow: 45 }));
+    expect(box()).not.toBe(second);
+    expect(box()?.find("arc-glow").length).toBe(1);
+    // unsynced lyrics never draw a glow band: their glow changes stay in place
+    const calm = arcOn(stageLook({ glow: 30 }, { unsynced: true }));
+    calm.mode.paint(cue(1, 4300));
+    const calmBox = calm.box();
+    calm.mode.restyle(stageLook({ glow: 0 }, { unsynced: true }));
+    expect(calm.box()).toBe(calmBox);
+  });
+
+  it("rebuilds rather than restyles a look that moves the layout", () => {
+    const { mode, box } = arcOn(stageLook({ glow: 30 }));
+    mode.paint(cue(1, 4300));
+    const first = box();
+    mode.restyle(stageLook({ glow: 30, size: 70 }));
+    expect(box()).not.toBe(first);
+    expect(box()?.find("arc-line").length).toBe(4);
+  });
+
+  it("asks about the lyric face once per face and lyrics, for the bundled family at one size (a Size drag rebuilds every step)", () => {
+    const check = vi.fn((_spec: string, _text?: string) => true);
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+      fonts: { check, load: vi.fn(async () => []) },
+    });
+    for (let size = 40; size < 60; size++) arcOn(stageLook({ size, font: { family: "Syne", weight: 800 } }));
+    expect(check).toHaveBeenCalledTimes(1);
+    const [spec, chars] = check.mock.calls[0] ?? [];
+    expect(spec).toBe('800 16px "Syne"');
+    expect(chars?.length).toBe(new Set(LINES.map((l) => l.text).join("")).size);
   });
 });

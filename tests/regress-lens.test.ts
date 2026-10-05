@@ -1,8 +1,11 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
-import { FONTS, fontFor } from "../src/overlay/fonts";
+import { parseLrc, type Line } from "../src/core/lrc";
+import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
 import { resolveLook, shadowLayers, type Frame, type Look } from "../src/overlay/look";
-import { drawnShadow, fitRow, pull, rowWidth, whenFaceLoads, zoomAt, type Shape } from "../src/overlay/modes/lens";
+import { drawnShadow, fitRow, LensMode, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
+import type { Cue } from "../src/overlay/modes/types";
+import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 const look = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
   resolveLook({ ...structuredClone(DEFAULT_SETTINGS), mode: "lens", ...over }, null, {
@@ -242,5 +245,178 @@ describe("Lens: waiting for the lyric face", () => {
     expect(check).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
     expect(whenFaceLoads(fontFor("Fraunces").stack, 700, "anything")).toBeNull();
+  });
+});
+
+/*
+ * Just enough DOM for Lens to build and paint in node: elements with inline styles, text half an em
+ * wide per character (the baseline mark 0.8 em down), and Web Animations that only record themselves.
+ */
+class FakeStyle {
+  readonly props = new Map<string, string>();
+  [key: string]: unknown;
+  setProperty(name: string, value: string): void {
+    this.props.set(name, value);
+  }
+}
+
+class FakeAnimation {
+  readonly keyframes: Keyframe[];
+  cancelled = false;
+  readonly finished = new Promise<void>(() => undefined);
+  constructor(keyframes: Keyframe[]) {
+    this.keyframes = keyframes;
+  }
+  cancel(): void {
+    this.cancelled = true;
+  }
+}
+
+class FakeElement {
+  readonly tagName: string;
+  className = "";
+  dir = "";
+  readonly style = new FakeStyle();
+  readonly animations: FakeAnimation[] = [];
+  children: FakeElement[] = [];
+  parent: FakeElement | null = null;
+  private own = "";
+  readonly offsetWidth = 0;
+  readonly classList = {
+    add: (...names: string[]): void => {
+      this.className = [...new Set([...this.className.split(" "), ...names])].filter(Boolean).join(" ");
+    },
+    remove: (...names: string[]): void => {
+      this.className = this.className
+        .split(" ")
+        .filter((c) => c && !names.includes(c))
+        .join(" ");
+    },
+    contains: (name: string): boolean => this.className.split(" ").includes(name),
+  };
+
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+  }
+
+  get textContent(): string {
+    return this.own + this.children.map((c) => c.textContent).join("");
+  }
+  set textContent(value: string) {
+    for (const c of this.children) c.parent = null;
+    this.children = [];
+    this.own = value;
+  }
+  private fontSize(): number {
+    for (let el: FakeElement | null = this; el; el = el.parent) {
+      const v = el.style["fontSize"];
+      if (typeof v === "string" && v) return Number.parseFloat(v);
+    }
+    return 16;
+  }
+  getBoundingClientRect(): { width: number; left: number; top: number } {
+    const size = this.fontSize();
+    return { width: this.textContent.length * size * 0.5, left: 0, top: this.tagName === "I" ? 0.8 * size : 0 };
+  }
+  append(...nodes: FakeElement[]): void {
+    for (const n of nodes) {
+      n.remove();
+      n.parent = this;
+      this.children.push(n);
+    }
+  }
+  appendChild(node: FakeElement): FakeElement {
+    this.append(node);
+    return node;
+  }
+  after(node: FakeElement): void {
+    const p = this.parent;
+    if (!p) return;
+    node.remove();
+    node.parent = p;
+    p.children.splice(p.children.indexOf(this) + 1, 0, node);
+  }
+  remove(): void {
+    const p = this.parent;
+    if (!p) return;
+    p.children.splice(p.children.indexOf(this), 1);
+    this.parent = null;
+  }
+  contains(other: FakeElement): boolean {
+    for (let el: FakeElement | null = other; el; el = el.parent) if (el === this) return true;
+    return false;
+  }
+  setAttribute(): void {}
+  animate(keyframes: Keyframe[]): FakeAnimation {
+    const anim = new FakeAnimation(keyframes);
+    this.animations.push(anim);
+    return anim;
+  }
+}
+
+const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
+const cue = (line: number, t: number, running: boolean, waiting = false): Cue => ({ line, t, waiting, running });
+
+function lens(): { mode: LensMode; row: () => FakeElement | undefined } {
+  const host = new FakeElement("main");
+  const mode = new LensMode();
+  mode.build(host as unknown as HTMLElement, LINES, look());
+  const box = host.children[0];
+  return { mode, row: () => box?.children.find((c) => c.classList.contains("lens-row") && !c.classList.contains("lens-leaving")) };
+}
+
+/** Each word's drawn scale (its own fisheye scale times the row's zoom), from its transform. */
+const scales = (row: FakeElement | undefined): number[] =>
+  (row?.children ?? []).map((span) => Number(/scale\(([\d.]+)\)/.exec(span.style.props.get("transform") ?? "")?.[1] ?? "NaN"));
+
+const glides = (row: FakeElement | undefined): boolean => (row?.animations ?? []).some((a) => !a.cancelled && a.keyframes.some((k) => "transform" in k));
+
+// Regression (lens-paused-step): the lens blooms over a step's glide frame by frame, but no frames
+// follow a paused paint, so a paused seek or step onto the next line left the row flat (no lens) until
+// playback resumed. Paused, a step now cuts like any other jump, with the full lens at once.
+describe("Lens: line changes while paused", () => {
+  beforeEach(() => {
+    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["2000 → 5300", 0, 2000, 1, 5300],
+    ["4300 → 13300", 1, 4300, 2, 13300],
+  ])("shows the next line under the full lens at once after a paused step (%s)", (_, from, t0, to, t1) => {
+    const { mode, row } = lens();
+    mode.paint(cue(from, t0, false));
+    mode.paint(cue(to, t1, false));
+    expect(row()?.textContent).toBe(LINES[to]?.words.map((w) => w.text.trimEnd()).join(""));
+    expect(glides(row())).toBe(false);
+    const drawn = scales(row());
+    // the word being sung near SCALE_MAX, the far ones at SCALE_MIN
+    expect(Math.max(...drawn)).toBeGreaterThan(1.2);
+    expect(Math.min(...drawn)).toBeLessThan(0.6);
+  });
+
+  it("still glides during playback, the lens blooming from flat", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 2000, true));
+    mode.paint(cue(1, 5300, true));
+    expect(glides(row())).toBe(true);
+    expect(scales(row()).every((x) => Math.abs(x - (scales(row())[0] ?? 0)) < 1e-9)).toBe(true);
+    mode.paint(cue(1, 5300 + 460, true));
+    expect(Math.max(...scales(row()))).toBeGreaterThan(1.2);
+  });
+
+  it("finishes the lens easing in when paused just after a line shown at rest starts", () => {
+    const paused = lens();
+    paused.mode.paint(cue(0, 400, true, true));
+    paused.mode.paint(cue(0, 1100, false));
+    const playing = lens();
+    playing.mode.paint(cue(0, 400, true, true));
+    playing.mode.paint(cue(0, 1100, true));
+    const full = Math.max(...scales(paused.row()));
+    expect(full).toBeGreaterThan(1.2);
+    // during playback it is still easing in at that moment
+    expect(Math.max(...scales(playing.row()))).toBeLessThan(full - 0.05);
   });
 });

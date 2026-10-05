@@ -2,8 +2,8 @@ import "../../styles/lens.css";
 import type { Line, Word } from "../../core/lrc";
 import { progress, wordState } from "../../core/timing";
 import { h, put } from "../dom";
-import { FONTS } from "../fonts";
-import { shadowLayers, snap, textShadow, type Look } from "../look";
+import { whenFaceLoads } from "../fonts";
+import { MIN_TEXT_PX, shadowLayers, snap, textShadow, type Look } from "../look";
 import type { Cue, ModeRenderer } from "./types";
 
 /**
@@ -26,8 +26,6 @@ const OPACITY_MIN = 0.6;
  * few happen as the lens passes; the difference between neighboring steps is too small to see.
  */
 const SHADOW_STEPS = 3;
-/** Far words and the next line stay at least this many px tall (when the base size allows), so small sizes stay readable. */
-const MIN_TEXT_PX = 11;
 /** The focus row never gets wider than this share of the stage; long lines get a smaller base size. */
 const ROW_FIT = 0.92;
 /** The next line sits this many focus sizes below the focus line, at this share of the size. */
@@ -238,39 +236,6 @@ function shadowsFor(look: Look, f: RowFit): { shadows: string[]; glow: string } 
   return { shadows, glow: drawnShadow(look, zoom, 1, true) };
 }
 
-/** Faces (family, weight, characters) found loaded: a rebuild with the same face and lyrics never asks again. */
-const facesReady = new Set<string>();
-const FACES_READY_MAX = 256;
-
-/**
- * Null when the lyric face is in for every character of `text`; otherwise a promise that settles
- * once it has loaded. Asks about the bundled family alone, at one size, for each distinct character:
- * `FontFaceSet.check` looks every family of a stack up for every character it is given (in Blink a
- * platform font lookup per family and character, uncached), so the whole song against the whole
- * fallback stack cost hundreds of ms per build, seconds on long lyrics. Only the bundled family has
- * faces to load (the rest are platform or generic fonts), and size doesn't change which subsets a
- * text needs. The system stack has nothing to load.
- */
-export function whenFaceLoads(stack: string, weight: number, text: string): Promise<unknown> | null {
-  const fonts = typeof document !== "undefined" ? document.fonts : undefined;
-  const family = FONTS.find((f) => f.stack === stack && f.family !== "System")?.family;
-  if (!fonts || !family) return null;
-  const chars = [...new Set(text)].join("") || " ";
-  const key = `${family}/${weight}/${chars}`;
-  if (facesReady.has(key)) return null;
-  const spec = `${weight} 16px "${family}"`;
-  try {
-    if (fonts.check(spec, chars)) {
-      if (facesReady.size >= FACES_READY_MAX) facesReady.clear();
-      facesReady.add(key);
-      return null;
-    }
-    return fonts.load(spec, chars);
-  } catch {
-    return null;
-  }
-}
-
 /** Index of the word being sung (or next to be), and the singing position: that index plus its progress. */
 function singingAt(words: readonly Word[], t: number): number {
   let i = 0;
@@ -379,7 +344,7 @@ export class LensMode implements ModeRenderer {
     const look = this.look;
     if (!look) return false;
     this.lastCue = cue;
-    if (cue.line !== this.current) this.mount(cue.line, cue.t, look);
+    if (cue.line !== this.current) this.mount(cue.line, cue.t, cue.running, look);
     const f = this.focus;
     if (!f) return false;
 
@@ -392,6 +357,9 @@ export class LensMode implements ModeRenderer {
       // shown at rest: the lens eases in once the line starts
       f.rampFrom = words[0]?.start ?? t;
       f.rampMs = RAMP_MS;
+    } else if (!cue.running) {
+      // paused: no frame follows this one to finish easing in
+      f.rampFrom = null;
     }
     const ramp = f.rampFrom === null ? 1 : (t - f.rampFrom) / f.rampMs;
     const lens = lensOn ? easeOut(clamp01(ramp)) : 0;
@@ -528,15 +496,19 @@ export class LensMode implements ModeRenderer {
    * scene, old next line included, under the same text gliding up). Stepping to the next line, the
    * old focus line fades out where it is and the old next line glides up into focus; any other change
    * fades the old lines out and the new ones in. A fresh build (previous -2) just draws.
+   *
+   * Only during playback does a step glide: the lens blooms over the glide frame by frame, and no
+   * frames follow a paused paint, so a paused step (a seek or a step onto the next line) would leave
+   * the row flat until playback resumed. Paused, it changes like a jump, with the full lens at once.
    */
-  private mount(index: number, t: number, look: Look): void {
+  private mount(index: number, t: number, running: boolean, look: Look): void {
     const previous = this.current;
     const was = this.nextShown;
     this.current = index;
     this.focus = null;
     this.nextShown = null;
     const change = look.motion && previous !== -2;
-    const glide = change && previous >= 0 && index === previous + 1 && was?.index === index;
+    const glide = change && running && previous >= 0 && index === previous + 1 && was?.index === index;
     if (change) {
       this.row = this.leave(this.row, rowElement);
       // gliding, the next line's text is what moves up into focus: its element stays for the new next line
