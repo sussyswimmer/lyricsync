@@ -7,6 +7,8 @@ import { sameLyrics, viewFor } from "./view";
 
 /** Longest the loop sleeps between word boundaries, so a slewing clock or a missed event can't strand it. */
 const MAX_SLEEP_MS = 250;
+/** Wait before asking again when the first lyrics query for a track answers `error`. */
+const QUERY_RETRY_MS = 1500;
 /** A track whose artwork hasn't arrived by now gets the manual colors instead of the last song's. */
 const ARTWORK_GRACE_MS = 1500;
 
@@ -153,9 +155,21 @@ export class OverlayController {
     this.kick();
   }
 
-  private async fetchLyrics(trackKey: string): Promise<void> {
+  /**
+   * The initial query, in case the `lyrics` event for this track was missed. An `error` reply can just
+   * mean the core hasn't registered the track yet, so ask once more before believing it; any event
+   * for the track in between wins.
+   */
+  private async fetchLyrics(trackKey: string, retried = false): Promise<void> {
     try {
-      this.onLyrics(await this.bridge.invoke("get_lyrics", { trackKey }), true);
+      const lyrics = await this.bridge.invoke("get_lyrics", { trackKey });
+      if (lyrics.status === "error" && !retried) {
+        await new Promise((resolve) => setTimeout(resolve, QUERY_RETRY_MS));
+        if (this.stopped || this.nowPlaying?.trackKey !== trackKey || this.lyrics?.trackKey === trackKey) return;
+        await this.fetchLyrics(trackKey, true);
+        return;
+      }
+      this.onLyrics(lyrics, true);
     } catch {
       // the lyrics event will still arrive
     }

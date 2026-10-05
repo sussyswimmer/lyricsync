@@ -248,3 +248,72 @@ describe("start-up races between events and replies", () => {
     controller.destroy();
   });
 });
+
+// The core's get_lyrics answers `error` for a track it hasn't registered yet, and now-playing can reach
+// the overlay first: the error chip would flash before the real lookup's events arrive.
+describe("an error reply to the first lyrics query", () => {
+  const failed = (trackKey: string): Lyrics => ({ trackKey, status: "error", synced: null, plain: null, source: "lrclib" });
+  const found = (trackKey: string): Lyrics => ({ trackKey, status: "found", synced: "[00:01.00]placeholder words here", plain: null, source: "lrclib" });
+
+  it("is asked once more before it shows", async () => {
+    const { bridge, stage, controller } = setup();
+    let calls = 0;
+    bridge.answers.get_lyrics = () => (++calls === 1 ? failed("a") : found("a"));
+    await controller.start();
+    bridge.emit("now-playing", np("a"));
+    await settle();
+    expect(stage.shows).toEqual(["none ", "loading a"]);
+    vi.advanceTimersByTime(1500);
+    await settle();
+    expect(calls).toBe(2);
+    expect(stage.shows).toEqual(["none ", "loading a", "lyrics a"]);
+  });
+
+  it("shows when the second answer is an error too", async () => {
+    const { bridge, stage, controller } = setup();
+    bridge.answers.get_lyrics = () => failed("a");
+    await controller.start();
+    bridge.emit("now-playing", np("a"));
+    await settle();
+    vi.advanceTimersByTime(1500);
+    await settle();
+    expect(stage.shows).toEqual(["none ", "loading a", "error a"]);
+  });
+
+  it("gives way to a lyrics event that arrives while it waits", async () => {
+    const { bridge, stage, controller } = setup();
+    let calls = 0;
+    bridge.answers.get_lyrics = () => {
+      calls++;
+      return failed("a");
+    };
+    await controller.start();
+    bridge.emit("now-playing", np("a"));
+    await settle();
+    bridge.emit("lyrics", found("a"));
+    await settle();
+    vi.advanceTimersByTime(1500);
+    await settle();
+    expect(calls).toBe(1);
+    expect(stage.shows).toEqual(["none ", "loading a", "lyrics a"]);
+  });
+
+  it("is dropped when the track changed while it waited", async () => {
+    const { bridge, stage, controller } = setup();
+    let calls = 0;
+    bridge.answers.get_lyrics = () => {
+      calls++;
+      return failed("a");
+    };
+    await controller.start();
+    bridge.emit("now-playing", np("a"));
+    await settle();
+    bridge.answers.get_lyrics = () => lyrics("b");
+    bridge.emit("now-playing", np("b"));
+    await settle();
+    vi.advanceTimersByTime(1500);
+    await settle();
+    expect(calls).toBe(1);
+    expect(stage.shows).toEqual(["none ", "loading a", "loading b"]);
+  });
+});
