@@ -24,12 +24,12 @@ The top of the settings window is a **live preview**: a small copy of your deskt
 
 Four ways to lay out the lyrics. In every style the words of the current line change color as they're sung (see [Color](#color)).
 
-- **Arc** (the default). The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. The [Curve](#curve) setting controls the bend.
+- **Arc** (the default). The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. The [Curve](#curve) setting controls the bend.
 - **Lens.** One line at a time, straight across. The word being sung is magnified, and words further from it get smaller and fainter, as if a magnifying glass were sliding along the line with the voice. The next line waits underneath in small type.
 - **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum.
 - **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are smaller and fainter, with no tilt.
 
-Long lines wrap onto a second row in Drift and Stack. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it too, but only to about half its size: at a large [Size](#size) on a narrow screen, a very long line runs off both edges. Lower Size if that happens.
+Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it too, but only to about half its size (further on a screen narrower than 16:9, such as a portrait one): at a large [Size](#size) on a narrow screen, a very long line runs off both edges. Lower Size if that happens.
 
 You can also switch styles from the menu: **Style ▸ Arc / Lens / Drift / Stack**.
 
@@ -92,11 +92,13 @@ How much the Arc style bends, from −100 to +100 (default +38). It only applies
 - **Positive** values arch the line: the middle rises and the ends drop.
 - **Negative** values sag it: the middle dips and the ends rise.
 
-The bend is split evenly around the [Height](#height), so even a strong curve stays on screen.
+The bend is split evenly around the [Height](#height): the middle moves one way as far as the ends move the other. Near the top or bottom of the screen, the current line moves in just far enough to keep its whole curve on screen, and a curve too deep for the screen gets flatter instead of being cut off. A tall (portrait) screen gets the same shape as a wide one.
 
 ### Height
 
 Where the current line sits on the screen, from 0% (top) to 100% (bottom). The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
+
+At 0% and 100% the current line still stays whole on screen, a little way in from the edge. The lines around it can run off the edge there. In Arc, a strong [Curve](#curve) moves the current line a little further in.
 
 ### Glow
 
@@ -180,7 +182,7 @@ Shortcuts that work from any app:
 ## Loading, missing and unsynced lyrics
 
 - **Loading.** Nothing for the first 0.6 seconds (lyrics Undertone has seen before usually arrive sooner), then three faint pulsing dots until the lyrics arrive.
-- **No lyrics found.** A small "No lyrics for this song" note appears and fades out after about 4 seconds. Nothing else shows for the rest of the song. **Refetch lyrics** in the menu tries again.
+- **No lyrics found.** A small "No lyrics for this song" note fades in, stays for about 4 seconds, then fades out. Nothing else shows for the rest of the song. **Refetch lyrics** in the menu tries again.
 - **Couldn't load.** If the lookup fails (no connection, or LRCLIB doesn't answer), a "Couldn't load lyrics" note appears and fades out the same way. **Refetch lyrics** tries again.
 - **Instrumental.** For songs LRCLIB marks as instrumental, a ♪ slowly breathes in and out where the lyrics would be.
 - **Plain (unsynced) lyrics.** Some songs only have lyrics without timestamps. Undertone spreads the lines evenly over the length of the song, so a line is on screen roughly while it's sung, but not exactly. There's no word-by-word highlight, and lines change with slower, calmer transitions.

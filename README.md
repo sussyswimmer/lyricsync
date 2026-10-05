@@ -17,7 +17,14 @@ Download the latest build from [GitHub Releases](https://github.com/sussyswimmer
 - **macOS:** the `.dmg`. One universal build covers Apple silicon and Intel Macs. Open it and drag Undertone to Applications.
 - **Windows:** the `-setup.exe` (NSIS installer).
 
-Builds aren't code-signed yet, so macOS Gatekeeper and Windows SmartScreen warn you the first time you open Undertone. [docs/INSTALL.md](docs/INSTALL.md) has the steps to get past each warning.
+Builds aren't code-signed yet, so macOS and Windows warn you the first time you open Undertone. To get past the warning:
+
+- **macOS 14 (Sonoma):** in Applications, Control-click (or right-click) Undertone, choose **Open**, then click **Open** in the warning.
+- **macOS 15 (Sequoia) and later:** open Undertone once and close the warning. Then go to **System Settings → Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next to the message about Undertone. Click **Open Anyway** again and enter your password. This also works on macOS 14.
+- **If macOS says Undertone "is damaged and can't be opened":** run `xattr -dr com.apple.quarantine /Applications/Undertone.app` in Terminal, then open it again.
+- **Windows:** when SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**.
+
+You only need to do this once for each version you download.
 
 After launch, Undertone shows up as an icon in the menu bar (macOS) or the system tray (Windows). Start a song and the lyrics appear on your desktop.
 
@@ -121,7 +128,7 @@ Use Node 24+, pnpm 11 and Rust stable (`rust-toolchain.toml` selects the stable 
 ```sh
 pnpm install --frozen-lockfile
 pnpm test                 # vitest
-pnpm coverage             # vitest with coverage of src/core
+pnpm coverage             # vitest with coverage of src/core, src/bridge and the overlay's view.ts, look.ts and stage.ts
 pnpm build                # tsc, then vite build into dist/
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -137,7 +144,7 @@ The Rust commands are still stubs in places: settings live in memory until persi
 
 `pnpm dev` serves the frontend at <http://localhost:1420>. In a plain browser there is no Tauri, so both pages run against the **mock bridge**, a fake player that sends the same events as the Rust core. Open the overlay at <http://localhost:1420/> and the settings window at <http://localhost:1420/settings.html> side by side: they share the player and settings, so a change in one shows up in the other.
 
-The mock plays five demo tracks with original placeholder lyrics:
+The mock plays six demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
@@ -146,6 +153,7 @@ The mock plays five demo tracks with original placeholder lyrics:
 | 2 | Letters Never Sent | plain lyrics only (unsynced style) |
 | 3 | Ultraviolet Static | not found |
 | 4 | Tidal Interlude | instrumental, no cover art |
+| 5 | Script Sampler | scripts and line shapes for visual QA: Japanese, Chinese, Korean, Vietnamese, right-to-left, very long and one-word lines, 42 s |
 
 Keys in mock mode (ignored while a form control has focus):
 
@@ -160,7 +168,7 @@ URL parameters (combine them with `&`):
 | Parameter | Effect |
 |---|---|
 | `?mock` | Use the mock even inside the Tauri webview. A plain browser always uses it. |
-| `?track=N` | Start on demo track N (0–4). |
+| `?track=N` | Start on demo track N (0–5). |
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |
