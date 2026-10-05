@@ -115,7 +115,10 @@ export class OverlayController {
     if (!np || lyrics.trackKey !== np.trackKey) return;
     if (fromQuery && this.lyrics?.trackKey === lyrics.trackKey) return;
     if (sameLyrics(this.lyrics, lyrics)) return;
+    // A track change already shows "loading"; a second "loading" mustn't fade it out and back in.
+    const wasLoading = this.lyrics === null || this.lyrics.status === "loading";
     this.lyrics = lyrics;
+    if (lyrics.status === "loading" && wasLoading) return;
     this.stage.show(viewFor(lyrics, np.durationMs), np.trackKey);
     this.kick();
   }
