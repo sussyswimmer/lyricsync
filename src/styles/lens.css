@@ -1,0 +1,61 @@
+/* ---------- lens ---------- */
+/* Every word is placed by transform (translate + scale around its baseline), so a frame never lays out. */
+.lens {
+  position: absolute;
+  inset: 0;
+}
+
+.lens-row,
+.lens-word,
+.lens-next {
+  position: absolute;
+  left: 0;
+  top: 0;
+  line-height: 1;
+  white-space: pre;
+}
+
+.lens-word {
+  transition:
+    color 0.12s linear,
+    text-shadow 0.2s linear;
+  /*
+   * Each word on its own layer: the fisheye then moves and scales bitmaps instead of re-rastering the
+   * row's blurred shadows every frame (about 10x less raster in Chromium). Chromium re-rasters a layer
+   * when it grows, so magnified words stay sharp.
+   */
+  will-change: transform;
+}
+
+/* Built and read once per build to size every word, then removed. */
+.lens-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  white-space: pre;
+  line-height: 1;
+}
+
+.lens-measure > div {
+  width: max-content;
+}
+
+/* each word shaped on its own, as it is drawn: no joining (Arabic) or kerning across words */
+.lens-iso > span {
+  display: inline-block;
+}
+
+.lens-baseline {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  vertical-align: baseline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lens-word {
+    transition: none;
+    will-change: auto;
+  }
+}
