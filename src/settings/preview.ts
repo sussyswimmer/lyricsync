@@ -10,10 +10,10 @@ import { GAP_GRACE_MS } from "./hold";
 
 /**
  * The preview stage counts this many px as 1× for `Settings.size` (the overlay uses 1080, which would
- * be an exact miniature). About 1.6× magnified: default-size lyrics read at about 17 px in the 200 px
- * tall preview, yet lines wrap, fit and shrink nearly where they would on the desktop, so moving the
- * Size slider looks the way it will there. (At 2.5× every long Drift line wrapped and Arc and Lens
- * were already shrunk to fit, so size changes barely showed.)
+ * be an exact miniature). About 1.6× magnified: default-size lyrics read at about 15 px on the 176 px
+ * tall stage under the preview's menu bar, yet lines wrap, fit and shrink nearly where they would on
+ * the desktop, so moving the Size slider looks the way it will there. (At 2.5× every long Drift line
+ * wrapped and Arc and Lens were already shrunk to fit, so size changes barely showed.)
  */
 export const PREVIEW_REFERENCE_HEIGHT = 680;
 /** Same grace as the overlay controller: a song without artwork keeps the last song's colors this long. */
@@ -57,9 +57,10 @@ type SourceKind = "main" | "demo";
 
 /**
  * A miniature desktop at the top of the settings window: the real overlay stage and controller on
- * a wallpaper, with a slim menu bar naming the song. It plays the current track, or a private demo
- * player when nothing is playing (Tauri only; the mock always has a track). Settings come from the
- * window, not the bridge, so unsaved edits show at once.
+ * a wallpaper, with a slim menu bar naming the song. The stage starts below the bar (settings.css),
+ * so its Height clamp never tucks the focus line under it. It plays the current track, or a private
+ * demo player when nothing is playing (Tauri only; the mock always has a track). Settings come from
+ * the window, not the bridge, so unsaved edits show at once.
  */
 export class SettingsPreview {
   readonly el: HTMLElement;

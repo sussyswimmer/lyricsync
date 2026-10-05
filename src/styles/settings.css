@@ -168,6 +168,8 @@ html.is-scrolled .top {
 }
 
 .pv-screen {
+  /* the menu bar's height: the lyric stage starts where the bar ends */
+  --pv-bar-h: 22px;
   position: relative;
   aspect-ratio: 16 / 9;
   background:
@@ -180,12 +182,12 @@ html.is-scrolled .top {
     --wp-3 0.9s ease;
 }
 
+/* Below the menu bar, not behind it: the stage's own Height clamp then keeps the focus line whole and
+   in view at Height 0, and lines above it slide out under the bar's edge. Only the wallpaper runs
+   under the bar. */
 .pv-stage.ut-stage {
   position: absolute;
-  inset: 0;
-  /* lyrics fade out under the menu bar instead of smudging through its blur */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 14px, #000 30px);
-  mask-image: linear-gradient(to bottom, transparent 14px, #000 30px);
+  inset: var(--pv-bar-h) 0 0;
 }
 
 /* a slim menu bar naming what the preview plays */
@@ -196,7 +198,7 @@ html.is-scrolled .top {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: var(--pv-bar-h);
   padding: 0 7px 0 6px;
   background: rgba(8, 10, 14, 0.34);
   -webkit-backdrop-filter: blur(14px) saturate(140%);

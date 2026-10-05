@@ -10,6 +10,8 @@ import { applyWrite, clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "../src/sett
  * - settings-nudge-focus: self-disabling sync buttons handed focus to the opposite action, and a brief
  *   "nothing playing" between songs disabled them all and dropped focus to <body>.
  * - settings-song-aria-live: the "This song" value was a live region rewritten on every render.
+ * - settings-preview-bar: the preview's stage ran under its 22 px menu bar and a top mask, so at
+ *   Height 0–15 the focus line the stage clamps into view was drawn behind the bar.
  */
 
 // ---------- a DOM just big enough for SettingsPanel ----------
@@ -412,5 +414,67 @@ describe("settings-button-cascade: button classes win over the page's button res
     expect(sels).toContain('.step[aria-disabled="true"]');
     expect(sels).toContain('.link-btn[aria-disabled="true"]');
     expect(sels.some((s) => s.startsWith(".step:hover") && s.includes('[aria-disabled="true"]'))).toBe(true);
+  });
+});
+
+// ---------- settings-preview-bar ----------
+
+/** The declarations of the rule with exactly this selector. */
+function declarations(selector: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [sel, body] of rules(settingsCss)) {
+    if (sel !== selector) continue;
+    for (const d of body.split(";")) {
+      const at = d.indexOf(":");
+      if (at > 0) out.set(d.slice(0, at).trim(), d.slice(at + 1).trim());
+    }
+  }
+  return out;
+}
+
+/** A length with any `var(--x)` replaced by the custom property's value wherever the sheet sets it. */
+function resolve(value: string | undefined): string | undefined {
+  const flat = settingsCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  return value?.replace(/var\((--[\w-]+)\)/g, (_, name: string) => {
+    const set = [...flat.matchAll(new RegExp(`${name}\\s*:\\s*([^;]+);`, "g"))].map((m) => (m[1] ?? "").trim());
+    expect(set, `${name} is set once`).toHaveLength(1);
+    return set[0] ?? "";
+  });
+}
+
+/** Top, right, bottom and left of a positioned rule, from `inset` and any longhands after it. */
+function edges(decls: Map<string, string>): string[] {
+  const inset = (resolve(decls.get("inset")) ?? "auto").split(/\s+/);
+  const [t = "auto", r = t, b = t, l = r] = inset;
+  return [
+    resolve(decls.get("top")) ?? t,
+    resolve(decls.get("right")) ?? r,
+    resolve(decls.get("bottom")) ?? b,
+    resolve(decls.get("left")) ?? l,
+  ];
+}
+
+describe("settings-preview-bar: the preview's lyric stage starts below its menu bar", () => {
+  // the stylesheet is read in a beforeAll, after this block is collected
+  const bar = (): Map<string, string> => declarations(".pv-bar");
+  const stage = (): Map<string, string> => declarations(".pv-stage.ut-stage");
+
+  it("the bar sits at the top of the wallpaper, 22 px tall", () => {
+    expect(bar().get("position")).toBe("absolute");
+    expect(edges(bar())[0]).toBe("0");
+    expect(resolve(bar().get("height"))).toBe("22px");
+  });
+
+  it("the stage fills the wallpaper from the bar's bottom edge down, so its Height clamp counts the bar as off-stage", () => {
+    expect(stage().get("position")).toBe("absolute");
+    const [top, right, bottom, left] = edges(stage());
+    expect(top).toBe(resolve(bar().get("height")));
+    expect([right, bottom, left]).toEqual(["0", "0", "0"]);
+  });
+
+  it("no mask fades the top of the stage, where Height 0 puts the focus line", () => {
+    for (const prop of stage().keys()) expect(prop).not.toMatch(/mask/);
+    const masked = rules(settingsCss).filter(([sel, body]) => /\.pv-stage/.test(sel) && /mask/.test(body));
+    expect(masked).toEqual([]);
   });
 });
