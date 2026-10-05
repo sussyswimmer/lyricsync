@@ -2,9 +2,11 @@
 mod commands;
 pub mod contract;
 pub mod desktop_layer;
+pub mod media;
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
+    #[cfg(target_os = "macos")]
     use tauri::Emitter;
     tauri::Builder::default()
         .manage(commands::AppState::default())
@@ -25,6 +27,9 @@ pub fn run() {
             _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             #[cfg(target_os = "windows")]
             desktop_layer::start(_app.handle()).map_err(std::io::Error::other)?;
+            #[cfg(target_os = "windows")]
+            media::start(_app.handle());
+            #[cfg(target_os = "macos")]
             _app.emit(
                 contract::NOW_PLAYING_EVENT,
                 Option::<contract::NowPlaying>::None,

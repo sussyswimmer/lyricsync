@@ -1,10 +1,11 @@
-//! M0 command stubs: in-memory settings, no media source or network lookups yet.
+//! Settings and lyrics remain M0 stubs; Windows now-playing is supplied by the X2 watcher.
 use crate::contract::*;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 #[derive(Default)]
 pub struct AppState {
     pub settings: Mutex<Settings>,
+    pub now_playing: Mutex<Option<NowPlaying>>,
 }
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
@@ -41,8 +42,8 @@ pub fn update_settings(
     Ok(result)
 }
 #[tauri::command]
-pub fn get_now_playing() -> Option<NowPlaying> {
-    None
+pub fn get_now_playing(state: State<'_, AppState>) -> Result<Option<NowPlaying>, String> {
+    Ok(state.now_playing.lock().map_err(|e| e.to_string())?.clone())
 }
 fn stub_lyrics(track_key: String, status: LyricsStatus) -> Lyrics {
     Lyrics {
