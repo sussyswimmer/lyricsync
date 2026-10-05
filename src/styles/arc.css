@@ -19,19 +19,9 @@
   text-rendering: geometricPrecision;
 }
 
-/* sung / upcoming color change and the active word's glow fading in and out */
-.arc-focus tspan {
-  transition: fill 0.12s linear;
-}
-
-.arc-glow tspan {
-  transition: fill-opacity 0.2s linear;
-}
-
-/* reduced motion: nothing animates here; the stage still crossfades lines */
-.arc-still tspan {
-  transition: none;
-}
+/* A word's color and glow switch at once, as in the prototype; no transitions here. Every band
+   carries a drop-shadow filter, and a transition on any word re-rasters its whole filtered band on
+   every frame it runs (several times the work of a single repaint per word change). */
 
 /* off-screen text used once per build to measure line lengths */
 .arc-measure {
@@ -42,10 +32,4 @@
   height: 0;
   overflow: hidden;
   visibility: hidden;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .arc tspan {
-    transition: none;
-  }
 }
