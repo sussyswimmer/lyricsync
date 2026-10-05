@@ -4,8 +4,26 @@ import { textShadow, type Look } from "./look";
 /** Everything the stage shows when there are no lines to sing. */
 export type StateKind = "loading" | "not-found" | "instrumental" | "error";
 
-/** Each state's CSS animation delay (styles/stage.css): loading waits 600 ms before it pulses. */
-const DELAY_MS: Record<StateKind, number> = { loading: 600, "not-found": 0, instrumental: 0, error: 0 };
+/** The stage fades a scene out over this long, and the next one in over this long once it's gone (C6). */
+export const SCENE_FADE_OUT_MS = 250;
+export const SCENE_FADE_IN_MS = 450;
+/** Loading shows nothing at all for this long, then a faint pulse. */
+export const LOADING_DELAY_MS = 600;
+/** The not-found and error chips stay fully readable for this long once their scene has faded in... */
+const CHIP_HOLD_MS = 4000;
+/** ...which takes at most this long: the old scene fading out, then this one fading in. */
+const CHIP_REVEAL_MS = SCENE_FADE_OUT_MS + SCENE_FADE_IN_MS;
+
+/**
+ * Each state's CSS animation delay (styles/stage.css): loading waits before it pulses, a chip holds
+ * before it fades out.
+ */
+const DELAY_MS: Record<StateKind, number> = {
+  loading: LOADING_DELAY_MS,
+  "not-found": CHIP_REVEAL_MS + CHIP_HOLD_MS,
+  instrumental: 0,
+  error: CHIP_REVEAL_MS + CHIP_HOLD_MS,
+};
 
 const CHIP_TEXT: Partial<Record<StateKind, string>> = {
   "not-found": "No lyrics for this song",
@@ -16,7 +34,7 @@ const CHIP_TEXT: Partial<Record<StateKind, string>> = {
  * Builds a state presentation. All motion is CSS (see styles/stage.css), so none of it needs the
  * animation loop:
  * - loading: nothing for 600 ms, then a faint pulse
- * - not-found / error: a small chip that fades out after 4 s
+ * - not-found / error: a small chip that comes in with its scene, stays for 4 s, then fades out
  * - instrumental: a slow breathing ♪
  *
  * `elapsedMs` is how long this state has been showing. A rebuild (settings change, resize, late

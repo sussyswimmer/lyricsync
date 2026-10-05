@@ -109,7 +109,7 @@ describe("mock tracks", () => {
   });
 
   it("covers every lyrics state the overlay must handle", () => {
-    expect(MOCK_TRACKS.map((t) => t.status)).toEqual(["found", "found", "plain-only", "not-found", "instrumental"]);
+    expect(MOCK_TRACKS.map((t) => t.status).slice(0, 5)).toEqual(["found", "found", "plain-only", "not-found", "instrumental"]);
     expect(MOCK_TRACKS[1]?.synced).toMatch(/<\d\d:\d\d\.\d\d>/u);
     expect(MOCK_TRACKS[0]?.synced).not.toMatch(/<\d\d:\d\d\.\d\d>/u);
     expect(MOCK_TRACKS[4]?.cover).toBeNull();
@@ -149,8 +149,8 @@ describe("mock bridge: initial state", () => {
   });
 
   it("wraps out-of-range track numbers and ignores junk", async () => {
-    expect((await mock("?track=7")).bridge.player.snapshot.track).toBe(2);
-    expect((await mock("?track=-1")).bridge.player.snapshot.track).toBe(4);
+    expect((await mock("?track=7")).bridge.player.snapshot.track).toBe(7 % MOCK_TRACKS.length);
+    expect((await mock("?track=-1")).bridge.player.snapshot.track).toBe(MOCK_TRACKS.length - 1);
     expect((await mock("?track=abc&t=xyz")).bridge.player.snapshot).toMatchObject({ track: 0, positionMs: 0 });
   });
 
@@ -206,11 +206,12 @@ describe("mock bridge: playback events", () => {
   });
 
   it("wraps next and previous around the track list", async () => {
-    const { bridge } = await mock("?track=4&paused");
+    const lastTrack = MOCK_TRACKS.length - 1;
+    const { bridge } = await mock(`?track=${lastTrack}&paused`);
     bridge.player.next();
     expect(bridge.player.snapshot.track).toBe(0);
     bridge.player.next(-1);
-    expect(bridge.player.snapshot.track).toBe(4);
+    expect(bridge.player.snapshot.track).toBe(lastTrack);
     bridge.player.select(1, 3000);
     expect(bridge.player.snapshot).toMatchObject({ track: 1, positionMs: 3000 });
     expect(bridge.player.current.title).toBe("Paper Lanterns");
@@ -461,7 +462,8 @@ describe("mock bridge: auto-advance", () => {
   });
 
   it("wraps from the last track to the first", async () => {
-    const { bridge } = await mock("?track=4&t=17500");
+    const lastTrack = MOCK_TRACKS.length - 1;
+    const { bridge } = await mock(`?track=${lastTrack}&t=${(MOCK_TRACKS[lastTrack]?.durationMs ?? 0) - 500}`);
     await advance(500);
     expect(bridge.player.snapshot.track).toBe(0);
   });
@@ -544,7 +546,7 @@ describe("MockPlayer sync between tabs", () => {
     p.player.apply({ track: 1, positionMs: 500, sampledAt: T0, isPlaying: false });
     expect(p.emitted).toEqual([]);
     p.player.apply({ track: 7, positionMs: 0, sampledAt: T0, isPlaying: false });
-    expect(p.player.snapshot.track).toBe(2);
+    expect(p.player.snapshot.track).toBe(7 % MOCK_TRACKS.length);
     expect(p.onChange).not.toHaveBeenCalled();
     p.player.dispose();
   });

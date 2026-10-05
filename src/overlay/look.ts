@@ -4,6 +4,8 @@ import { fontFor } from "./fonts";
 
 /** `Settings.size` is in px on a display this many CSS px tall; lyrics scale with the stage height. */
 export const REFERENCE_HEIGHT = 1080;
+/** Secondary text (neighbor lines, far words) stays at least this many px tall where the mode can manage it. */
+export const MIN_TEXT_PX = 11;
 
 /** Everything a mode needs to draw, resolved to concrete px and colors for the current stage. */
 export interface Look {
@@ -69,17 +71,26 @@ export function rgba(hex: string, alpha: number): string {
 
 const px = (v: number): string => `${Math.max(0, v).toFixed(1)}px`;
 
+/** Below this text size the dark shadow gets darker, up to fully at SMALL_TEXT_PX - SMALL_TEXT_RAMP_PX. */
+const SMALL_TEXT_PX = 32;
+const SMALL_TEXT_RAMP_PX = 16;
+
 /**
  * Shadow layers for text of `size` px: the soft dark shadow every lyric carries so light text reads
  * on light wallpapers (subtle at glow 0, softer and wider as glow rises), plus a highlight-colored
  * halo for the active word.
+ *
+ * The dark layers scale with the text, but never below a pixel floor, and get a little darker under
+ * SMALL_TEXT_PX: small dim lines (Arc's neighbors, Lens's next line) on a busy wallpaper are told
+ * apart from it only by that halo, which would otherwise shrink to nothing.
  */
 export function shadowLayers(look: Look, size: number, active: boolean): [x: string, y: string, blur: string, color: string][] {
   const k = size / 58;
   const g = look.glow;
+  const small = Math.min(1, Math.max(0, (SMALL_TEXT_PX - size) / SMALL_TEXT_RAMP_PX));
   const layers: [string, string, string, string][] = [
-    ["0px", px(1 * k), px((2 + 2 * g) * k), `rgba(0, 0, 0, ${(0.4 + 0.15 * g).toFixed(3)})`],
-    ["0px", "0px", px((8 + 14 * g) * k), `rgba(0, 0, 0, ${(0.16 + 0.2 * g).toFixed(3)})`],
+    ["0px", px(Math.max(1 * k, 1)), px(Math.max((2 + 2 * g) * k, 1.5)), `rgba(0, 0, 0, ${(0.4 + 0.15 * g + 0.2 * small).toFixed(3)})`],
+    ["0px", "0px", px(Math.max((8 + 14 * g) * k, 4)), `rgba(0, 0, 0, ${(0.16 + 0.2 * g + 0.04 * small).toFixed(3)})`],
   ];
   if (active && g > 0) layers.push(["0px", "0px", px((6 + 24 * g) * k), rgba(look.colors.highlight, 0.35 + 0.5 * g)]);
   return layers;

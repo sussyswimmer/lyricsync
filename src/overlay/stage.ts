@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
+import { DEFAULT_SETTINGS, type Mode, type Settings } from "../../contract/contract";
 import type { Line } from "../core/lrc";
 import type { Palette } from "../core/palette";
 import { lineAt, type Timeline } from "../core/timing";
@@ -7,14 +7,14 @@ import { fontFor, loadFont } from "./fonts";
 import { resolveLook, type Look } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
-import { buildState, type StateKind } from "./states";
+import { LOADING_DELAY_MS, SCENE_FADE_IN_MS, SCENE_FADE_OUT_MS, buildState, type StateKind } from "./states";
 import "../styles/stage.css";
 
 export type StageView = { kind: "none" } | { kind: StateKind } | { kind: "lyrics"; timeline: Timeline };
 
 /** Old song out, then new song in (C6). */
-const FADE_OUT_MS = 250;
-const FADE_IN_MS = 450;
+const FADE_OUT_MS = SCENE_FADE_OUT_MS;
+const FADE_IN_MS = SCENE_FADE_IN_MS;
 /**
  * Crossfade between lines for modes that redraw per line, and for everything under reduced motion.
  * The old line drops out fast and the new one comes in just behind it, so two different lines are
@@ -69,7 +69,7 @@ export function cueMap(timeline: Timeline): CueMap {
 }
 
 /** Which line is in focus at `t`, and whether it is still waiting to start. */
-export function cueAt(map: CueMap, t: number): Cue {
+export function cueAt(map: CueMap, t: number): Omit<Cue, "running"> {
   const i = lineAt(map.all, t);
   if (i < 0) return { line: map.lyrics.length > 0 ? 0 : -1, waiting: true, t };
   const li = map.lyricOf[i] ?? -1;
@@ -83,7 +83,10 @@ export function cueAt(map: CueMap, t: number): Cue {
   return { line: n, waiting: n >= 0, t };
 }
 
-/** Time from `t` to the next visible change, in ms (Infinity when nothing else will change). */
+/**
+ * Time from `t` to the next visible change, in ms (Infinity when nothing else will change). Every
+ * span is [start, end): a boundary at exactly `t` has already happened, as `wordState` paints it.
+ */
 export function untilNextChange(map: CueMap, t: number): number {
   const b = map.boundaries;
   let lo = 0;
@@ -97,6 +100,19 @@ export function untilNextChange(map: CueMap, t: number): number {
   return next === undefined ? Infinity : next - t;
 }
 
+/** Whether `t` is exactly one of the map's boundaries. */
+function onBoundary(map: CueMap, t: number): boolean {
+  const b = map.boundaries;
+  let lo = 0;
+  let hi = b.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((b[mid] ?? Infinity) < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return b[lo] === t;
+}
+
 interface Scene {
   el: HTMLDivElement;
   view: StageView;
@@ -105,6 +121,8 @@ interface Scene {
   cues: CueMap | null;
   /** performance.now() when the scene appeared; rebuilt state animations resume from here */
   shownAt: number;
+  /** performance.now() when it starts fading in, once whatever it replaced has faded out */
+  revealAt: number;
 }
 
 export interface StageOptions {
@@ -120,6 +138,28 @@ const reducedMotion = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
+ * What a look change means for a mode: `shape` (fonts, sizes, placement, motion) needs a rebuild,
+ * `paint` (colors, glow) only a restyle. Opacity is neither: the stage root applies it.
+ */
+export function lookKeys(look: Look, mode: Mode): { shape: string; paint: string } {
+  const { colors, glow, opacity, ...shape } = look;
+  return { shape: JSON.stringify([shape, mode]), paint: JSON.stringify([colors, glow]) };
+}
+
+/** An element's opacity as drawn right now, running fades included. */
+function opacityOf(el: HTMLElement): number {
+  if (typeof getComputedStyle !== "function") return 1;
+  const value = Number.parseFloat(getComputedStyle(el).opacity);
+  return Number.isFinite(value) ? value : 1;
+}
+
+/** Stops the stage's own fades on an element (it holds whatever its own opacity is). */
+function stopFades(el: HTMLElement): void {
+  if (typeof el.getAnimations !== "function") return;
+  for (const anim of el.getAnimations()) anim.cancel();
+}
+
+/**
  * The lyric stage: one per overlay window, and a small one in the settings preview. Owns the DOM,
  * the current mode, song-to-song fades and per-line crossfades. Knows nothing about the bridge or
  * the clock: the controller hands it views and positions.
@@ -132,7 +172,13 @@ export class LyricStage {
   private palette: Palette | null = null;
   private scene: Scene | null = null;
   private lastCue: Cue | null = null;
-  private lookKey = "";
+  private shapeKey = "";
+  private paintKey = "";
+  private paused = false;
+  /** the boundary nextChange last asked an extra frame for */
+  private followedUp = Number.NaN;
+  /** performance.now() when everything that was on screen before the current scene has faded out */
+  private clearAt = 0;
   private fontKey = "";
   private fontTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly resize: ResizeObserver | null;
@@ -180,34 +226,52 @@ export class LyricStage {
     if (this.settings.autoColor) this.rebuild();
   }
 
-  /** Shows a view for a track. A new key or a different view fades the old content out first. */
+  /**
+   * Shows a view for a track. A new key or a different view fades the old content out first, and the
+   * new one in once nothing old is left on screen. Something that never became visible (a loading
+   * state still in its quiet first 600 ms) is simply dropped and holds nothing up.
+   */
   show(view: StageView, key: string): void {
     const old = this.scene;
     if (old && old.key === key && old.view === view) return;
+    const t = now();
     const scene: Scene = {
       el: h("div", "ut-scene"),
       view,
       key,
       mode: null,
       cues: view.kind === "lyrics" ? cueMap(view.timeline) : null,
-      shownAt: now(),
+      shownAt: t,
+      revealAt: t,
     };
     this.root.append(scene.el);
     this.scene = scene;
     this.lastCue = null;
-    this.lookKey = "";
+    this.shapeKey = "";
     this.build(scene);
     if (old) {
-      void this.fade(old.el, 1, 0, FADE_OUT_MS, 0, "ease-in").then(() => {
+      const drop = (): void => {
         old.mode?.destroy();
         old.el.remove();
-      });
+      };
+      if (onScreen(old, t)) {
+        this.clearAt = Math.max(this.clearAt, t + FADE_OUT_MS);
+        void this.fade(old.el, null, 0, FADE_OUT_MS, 0, "ease-in").then(drop);
+      } else {
+        drop();
+      }
     }
-    if (view.kind !== "none") void this.fade(scene.el, 0, 1, FADE_IN_MS, old && old.view.kind !== "none" ? FADE_OUT_MS : 0, "ease-out");
+    if (view.kind !== "none") {
+      const delay = Math.max(0, this.clearAt - t);
+      scene.revealAt = t + delay;
+      void this.fade(scene.el, 0, 1, FADE_IN_MS, delay, "ease-out");
+    }
     this.options.onInvalidate?.();
   }
 
+  /** Paused (or stopped): the next paints get `running: false`, and state animations hold still. */
   setPaused(paused: boolean): void {
+    this.paused = paused;
     this.host.toggleAttribute("data-paused", paused);
   }
 
@@ -220,16 +284,28 @@ export class LyricStage {
   render(t: number): boolean {
     const scene = this.scene;
     if (!scene?.mode || !scene.cues) return false;
-    const cue = cueAt(scene.cues, t);
+    const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused };
     const last = this.lastCue;
-    if (last && cue.line !== last.line && scene.mode.crossfadeLines) this.ghost(scene.el);
+    if (last && cue.line !== last.line && scene.mode.crossfadeLines) this.ghost(scene);
     this.lastCue = cue;
     return scene.mode.paint(cue);
   }
 
-  /** Ms of song time until the next word or line boundary; the controller can sleep that long. */
+  /**
+   * Ms of song time until the next word or line boundary; the controller can sleep that long. A frame
+   * that lands exactly on a boundary gets another one straight after (0). Painted by `wordState`, a
+   * word is already lit at its first millisecond, but a renderer that lights a word only once
+   * `progress` is above 0 would otherwise show it unlit until the loop next wakes, up to 250 ms on.
+   * That costs one extra frame on the rare exact hit, once per boundary, so it never spins.
+   */
   nextChange(t: number): number {
-    return this.scene?.cues ? untilNextChange(this.scene.cues, t) : Infinity;
+    const cues = this.scene?.cues;
+    if (!cues) return Infinity;
+    if (t !== this.followedUp && onBoundary(cues, t)) {
+      this.followedUp = t;
+      return 0;
+    }
+    return untilNextChange(cues, t);
   }
 
   destroy(): void {
@@ -253,19 +329,33 @@ export class LyricStage {
     });
   }
 
-  /** Rebuilds the current scene if anything that affects drawing changed (or always, with `force`). */
+  /**
+   * Brings the current scene up to date with the look: nothing to do, a restyle when only colors or
+   * glow changed (a slider drag mustn't tear down and re-measure the mode, or cut a glide short), or
+   * a rebuild. `force` always rebuilds.
+   */
   private rebuild(force = false): void {
     const scene = this.scene;
     if (!scene) return;
     const look = this.look(scene);
-    const key = JSON.stringify([look, this.settings.mode]);
-    if (!force && key === this.lookKey) return;
+    const keys = lookKeys(look, this.settings.mode);
+    if (!force && keys.shape === this.shapeKey) {
+      if (keys.paint === this.paintKey) return;
+      if (scene.mode?.restyle) {
+        this.paintKey = keys.paint;
+        scene.mode.restyle(look);
+        this.options.onInvalidate?.();
+        return;
+      }
+    }
     this.build(scene, look);
     this.options.onInvalidate?.();
   }
 
   private build(scene: Scene, look = this.look(scene)): void {
-    this.lookKey = JSON.stringify([look, this.settings.mode]);
+    const keys = lookKeys(look, this.settings.mode);
+    this.shapeKey = keys.shape;
+    this.paintKey = keys.paint;
     scene.mode?.destroy();
     scene.mode = null;
     scene.el.textContent = "";
@@ -279,20 +369,36 @@ export class LyricStage {
     }
   }
 
-  /** Leaves a copy of the current line fading out on top while the mode draws the next one. */
-  private ghost(el: HTMLElement): void {
-    const copy = el.cloneNode(true) as HTMLElement;
-    copy.classList.add("ut-ghost");
-    copy.setAttribute("aria-hidden", "true");
-    el.after(copy);
-    void this.fade(copy, 1, 0, LINE_OUT_MS, 0, "ease-out").then(() => copy.remove());
+  /**
+   * Leaves a copy of the current line fading out on top while the mode draws the next one. The copy
+   * starts from however visible the scene is right now (it may itself be fading in), and the scene's
+   * own fade restarts under it, so nothing ever jumps to full brightness. A scene that hasn't started
+   * fading in yet has nothing on screen to fade: its line just changes.
+   */
+  private ghost(scene: Scene): void {
+    if (now() < scene.revealAt) return;
+    const el = scene.el;
+    const shown = opacityOf(el);
+    stopFades(el);
+    if (shown > 0.01) {
+      const copy = el.cloneNode(true) as HTMLElement;
+      copy.classList.add("ut-ghost");
+      copy.setAttribute("aria-hidden", "true");
+      el.after(copy);
+      void this.fade(copy, shown, 0, LINE_OUT_MS, 0, "ease-out").then(() => copy.remove());
+    }
     void this.fade(el, 0, 1, LINE_IN_MS, LINE_IN_DELAY_MS, "ease-out");
   }
 
-  private fade(el: HTMLElement, from: number, to: number, duration: number, delay: number, easing: string): Promise<void> {
+  /** Fades `el` between opacities; `from` null starts from wherever it is now (taking over any fade in progress). */
+  private fade(el: HTMLElement, from: number | null, to: number, duration: number, delay: number, easing: string): Promise<void> {
     if (typeof el.animate !== "function") {
       el.style.opacity = String(to);
       return Promise.resolve();
+    }
+    if (from === null) {
+      from = opacityOf(el);
+      stopFades(el);
     }
     const anim = el.animate([{ opacity: from }, { opacity: to }], {
       duration,
@@ -306,4 +412,10 @@ export class LyricStage {
       () => undefined,
     );
   }
+}
+
+/** Whether any of a scene is on screen at `t`: it has started fading in, and has something to show by now. */
+function onScreen(scene: Scene, t: number): boolean {
+  if (scene.view.kind === "none" || t <= scene.revealAt) return false;
+  return scene.view.kind !== "loading" || t - scene.shownAt >= LOADING_DELAY_MS;
 }

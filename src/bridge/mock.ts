@@ -25,6 +25,27 @@ const LETTERS = [
   "Maybe the ink remembers what I didn't",
 ].join("\n");
 
+/**
+ * Visual QA for scripts and line shapes (C8): Japanese, Chinese with per-character tags, Korean,
+ * Vietnamese with stacked diacritics (lower and upper case), a line of about 120 characters, a line
+ * of 20 words, a one-word line, and right-to-left lines with punctuation. Original placeholder text.
+ */
+const SCRIPT_SAMPLER = [
+  "[ti:Script Sampler]",
+  "[ar:Demo Artist]",
+  "[by:Original placeholder lyrics written for Undertone]",
+  "[00:01.00]夜明けの駅で、紙の鳥が待っている",
+  "[00:05.00]<00:05.00>灯<00:05.40>笼<00:05.80>漂<00:06.20>过<00:06.60>安<00:07.00>静<00:07.40>的<00:07.80>河<00:08.20>面<00:08.90>",
+  "[00:09.50]작은 불빛이 창문을 두드려요",
+  "[00:13.00]Đèn phố nhỏ vẫn đợi người về, ĐẤT TRỜI rộng như những giấc mơ",
+  "[00:18.00]This placeholder line keeps on going well past the point where a lyric would stop, so every style must decide how it fits",
+  "[00:25.00]We counted every little window on the hill and every one of them was humming softly back at us tonight",
+  "[00:31.00]Breathe",
+  "[00:33.00]الضوء يعود إلى البيت، أخيرًا!",
+  "[00:36.50]האור חוזר הביתה, נכון?",
+  "[00:40.00]",
+].join("\n");
+
 const track = (
   title: string,
   durationMs: number,
@@ -48,6 +69,8 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   track("Letters Never Sent", 30_000, 2, "plain-only", { plain: LETTERS }),
   track("Ultraviolet Static", 20_000, 2, "not-found"),
   track("Tidal Interlude", 18_000, null, "instrumental"),
+  // Not a lyrics state: visual QA for scripts and line shapes. Cycle every font over it (?track=5).
+  track("Script Sampler", 42_000, 0, "found", { synced: SCRIPT_SAMPLER }),
 ];
 
 /** Built exactly as SPEC defines it. */

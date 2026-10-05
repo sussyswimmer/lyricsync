@@ -51,6 +51,8 @@ export class OverlayController {
 
   /**
    * Subscribes first, then reads the initial state, so nothing that happens in between is lost.
+   * Events and command replies travel separately, so an event can overtake a reply: once an event has
+   * been heard, it is newer than the reply, which is dropped (every later change sends another event).
    * Safe to destroy() while this is still running: it stops at the next step and unsubscribes.
    */
   async start(): Promise<void> {
@@ -60,18 +62,28 @@ export class OverlayController {
       else this.unlisten.push(off);
       return !this.stopped;
     };
-    if (!keep(await b.listen("now-playing", (np) => this.onNowPlaying(np)))) return;
+    let heardTrack = false;
+    let heardSettings = false;
+    const onNowPlaying = (np: NowPlaying | null): void => {
+      heardTrack = true;
+      this.onNowPlaying(np);
+    };
+    const onSettings = (settings: Settings): void => {
+      heardSettings = true;
+      this.setSettings(settings);
+    };
+    if (!keep(await b.listen("now-playing", onNowPlaying))) return;
     if (!keep(await b.listen("lyrics", (l) => this.onLyrics(l)))) return;
     if (this.followSettings) {
-      if (!keep(await b.listen("settings-changed", (s) => this.setSettings(s)))) return;
+      if (!keep(await b.listen("settings-changed", onSettings))) return;
       const settings = await b.invoke("get_settings");
       if (this.stopped) return;
-      this.setSettings(settings);
+      if (!heardSettings) this.setSettings(settings);
     }
     const np = await b.invoke("get_now_playing");
     if (this.stopped) return;
-    this.onNowPlaying(np);
-    document.addEventListener("visibilitychange", this.onVisibility);
+    if (!heardTrack) this.onNowPlaying(np);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisibility);
   }
 
   get track(): NowPlaying | null {
@@ -100,24 +112,28 @@ export class OverlayController {
     if (this.raf) cancelAnimationFrame(this.raf);
     if (this.timer) clearTimeout(this.timer);
     if (this.artworkTimer) clearTimeout(this.artworkTimer);
-    document.removeEventListener("visibilitychange", this.onVisibility);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisibility);
   }
 
   private onNowPlaying(np: NowPlaying | null): void {
     if (this.stopped) return;
-    const before = this.nowPlaying?.trackKey ?? null;
+    // A sample older than the clock's (one that crossed a newer one in flight) changes nothing, so
+    // what this controller believes (playing, paused) always matches what its clock does.
+    if (this.clock.update(np, Date.now()) === "ignored") return;
+    const before = this.nowPlaying;
     this.nowPlaying = np;
-    this.clock.update(np, Date.now());
     if (!np) {
       this.lyrics = null;
       this.stage.show({ kind: "none" }, "");
     } else {
-      if (np.trackKey !== before) {
+      if (np.trackKey !== before?.trackKey) {
         this.lyrics = null;
         this.stage.show({ kind: "loading" }, np.trackKey);
         void this.fetchLyrics(np.trackKey);
       }
-      this.updatePalette(np);
+      // Once per track and picture. Resyncs (every second while playing) repeat both, and must not
+      // keep restarting the grace period of a track that has no artwork.
+      if (np.trackKey !== before?.trackKey || np.artwork !== before.artwork) this.updatePalette(np);
     }
     this.update();
   }
@@ -145,18 +161,24 @@ export class OverlayController {
     }
   }
 
-  /** Album colors follow the artwork. Keeps the last song's colors until this song's art arrives. */
+  /**
+   * Album colors follow the artwork. Keeps the last song's colors until this song's art arrives, or
+   * for ARTWORK_GRACE_MS after the track starts if it has none, then uses the manual colors.
+   */
   private updatePalette(np: NowPlaying): void {
-    const key = np.trackKey;
-    void this.palettes.get(key, np.artwork).then((palette) => {
-      if (this.nowPlaying?.trackKey !== key) return;
-      if (palette || np.artwork !== null) {
+    const { trackKey: key, artwork } = np;
+    if (this.artworkTimer) clearTimeout(this.artworkTimer);
+    this.artworkTimer = null;
+    void this.palettes.get(key, artwork).then((palette) => {
+      const current = this.nowPlaying;
+      if (current?.trackKey !== key || current.artwork !== artwork) return;
+      if (palette || artwork !== null) {
         this.stage.setPalette(palette);
         this.kick();
         return;
       }
-      if (this.artworkTimer) clearTimeout(this.artworkTimer);
       this.artworkTimer = setTimeout(() => {
+        this.artworkTimer = null;
         if (this.nowPlaying?.trackKey === key && this.nowPlaying.artwork === null) {
           this.stage.setPalette(null);
           this.kick();
@@ -174,7 +196,8 @@ export class OverlayController {
   }
 
   private get animating(): boolean {
-    return this.visible && !!this.nowPlaying?.isPlaying && document.visibilityState !== "hidden";
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    return this.visible && !!this.nowPlaying?.isPlaying && !hidden;
   }
 
   private readonly tick = (): void => {

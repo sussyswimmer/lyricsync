@@ -38,9 +38,8 @@
 }
 
 .drift-row span {
-  transition:
-    color 0.12s linear,
-    text-shadow 0.2s linear;
+  /* Color only: a text-shadow transition re-lays out the word on every frame it runs. */
+  transition: color 0.12s linear;
 }
 
 /* ---------- states ---------- */
@@ -88,8 +87,8 @@
   background: rgba(12, 14, 18, 0.42);
   box-shadow: 0 1px 10px rgba(0, 0, 0, 0.18);
   letter-spacing: 0.01em;
-  opacity: 0;
-  animation: ut-chip 4s ease forwards;
+  /* Comes in with its scene's fade, holds (the delay is set by states.ts), then fades out for good. */
+  animation: ut-chip-out 0.7s ease-in forwards;
 }
 
 [data-paused] .state-loading,
@@ -119,15 +118,11 @@
   }
 }
 
-@keyframes ut-chip {
-  0% {
-    opacity: 0;
-  }
-  8%,
-  78% {
+@keyframes ut-chip-out {
+  from {
     opacity: 1;
   }
-  100% {
+  to {
     opacity: 0;
   }
 }

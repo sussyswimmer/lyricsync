@@ -137,6 +137,19 @@ export function lineAt(lines: readonly Pick<Line, "start">[], t: number): number
   return found;
 }
 
+/** Where a word stands at `t`. */
+export type WordState = "upcoming" | "active" | "sung";
+
+/**
+ * A word is active on [start, end): lit from the very millisecond it starts. The stage schedules
+ * frames by the same rule, so a renderer that paints from this never shows a started word unlit.
+ * Zero-length words go straight from upcoming to sung.
+ */
+export function wordState(word: Pick<Word, "start" | "end">, t: number): WordState {
+  if (t < word.start) return "upcoming";
+  return t < word.end ? "active" : "sung";
+}
+
 /** How far through a word `t` is, 0..1. Zero-length words jump straight from 0 to 1. */
 export function progress(word: Pick<Word, "start" | "end">, t: number): number {
   if (t < word.start) return 0;
