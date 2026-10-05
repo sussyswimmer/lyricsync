@@ -1,0 +1,353 @@
+<title>Undertone</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Caveat:wght@600&family=Figtree:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Serif&family=JetBrains+Mono:wght@400;600&family=Syne:wght@600;800&family=Unbounded:wght@500;700&display=swap">
+<style>
+/* Layout: a simulated desktop (wallpaper + lyrics + draggable windows/folders) beside a control rail; stacks on phones.
+   Deliberately single-theme dark: it previews a desktop wallpaper. */
+:root{
+  --ink:#0c0e12;
+  --panel:#15181e;
+  --panel-2:#1c2028;
+  --line:#2b313b;
+  --text:#e9ecf1;
+  --muted:#8d96a6;
+  --accent:#f2a65a;
+  --ui:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--ink);color:var(--text);font-family:var(--ui);font-size:14px;padding-inline:16px;padding-block:16px}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;height:100%;min-height:560px}
+@media (max-width:860px){.app{grid-template-columns:1fr;height:auto}.stage{height:68vh;min-height:420px}}
+
+/* ---------- stage ---------- */
+.stage{position:relative;overflow:hidden;border-radius:14px;border:1px solid var(--line);
+  --w1:#0d1a1f;--w2:#2b4d52;--w3:#5a2e3d;
+  background:radial-gradient(circle at 18% 12%,var(--w2) 0,transparent 55%),radial-gradient(circle at 88% 92%,var(--w3) 0,transparent 52%),var(--w1);
+  transition:background .8s;user-select:none;-webkit-user-select:none;touch-action:none}
+.menubar{position:absolute;inset:0 0 auto 0;height:26px;display:flex;align-items:center;justify-content:space-between;padding-inline:14px;
+  background:rgba(10,12,16,.35);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);font-size:12px;color:rgba(255,255,255,.82);z-index:4}
+.menubar b{font-weight:600}
+.layer{position:absolute;inset:0;z-index:1;pointer-events:none}
+#lyrics{transition:opacity .3s}
+svg#arc{width:100%;height:100%;display:block;overflow:visible}
+svg#arc text{white-space:pre}
+.lens{position:absolute;left:4%;right:4%;display:flex;flex-wrap:wrap;justify-content:center;align-items:baseline;column-gap:.28em;line-height:1.05;transform:translateY(-50%)}
+.lens span{transition:color .15s}
+.lens-next{position:absolute;left:6%;right:6%;text-align:center;opacity:.9}
+.drift{perspective:900px}
+.dline{position:absolute;left:50%;width:88%;text-align:center;line-height:1.1;will-change:transform,opacity}
+.dline span{transition:color .12s}
+
+.icons{position:absolute;inset:0;z-index:2;pointer-events:none}
+.icon{position:absolute;width:84px;display:grid;justify-items:center;gap:6px;pointer-events:auto;cursor:grab;padding:6px;border-radius:8px}
+.icon:active{cursor:grabbing;background:rgba(255,255,255,.08)}
+.folder{width:58px;height:44px;border-radius:5px;background:linear-gradient(#7fb3e6,#5a95d6);position:relative;margin-top:8px;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.folder::before{content:"";position:absolute;left:0;top:-7px;width:24px;height:10px;border-radius:4px 4px 0 0;background:#6aa3df}
+.icon span{font-size:11.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7);text-align:center}
+
+.win{position:absolute;z-index:3;width:min(330px,72%);border-radius:10px;overflow:hidden;background:rgba(28,31,38,.92);
+  border:1px solid rgba(255,255,255,.1);box-shadow:0 18px 50px rgba(0,0,0,.5);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.win-bar{height:30px;display:flex;align-items:center;gap:7px;padding-inline:12px;cursor:grab;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06)}
+.win-bar:active{cursor:grabbing}
+.dot{width:11px;height:11px;border-radius:50%}
+.win-bar em{font-style:normal;font-size:12px;color:var(--muted);margin-left:8px}
+.win-body{padding:14px 16px 16px;font-size:13px;line-height:1.55;color:#cfd5de}
+.win-body p{margin:0 0 6px}
+.win-body code{font-family:var(--mono);font-size:12px;color:var(--accent)}
+
+/* ---------- panel ---------- */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;overflow:auto;display:flex;flex-direction:column;gap:20px;min-width:0}
+.brand{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.brand h1{margin:0;font:700 22px/1 "Bricolage Grotesque",var(--ui);letter-spacing:-.01em}
+.brand small{color:var(--muted);font-size:11px;font-family:var(--mono)}
+.sec{display:flex;flex-direction:column;gap:10px}
+.label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.np{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:10px}
+.np img{width:52px;height:52px;border-radius:6px;display:block}
+.np .t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.np .a{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.play{width:38px;height:38px;border-radius:50%;border:0;background:var(--text);color:var(--ink);cursor:pointer;font-size:14px;display:grid;place-items:center}
+.scrub{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.covers{display:flex;gap:8px;flex-wrap:wrap}
+.cover-btn{width:48px;height:48px;padding:0;border-radius:8px;border:2px solid transparent;overflow:hidden;cursor:pointer;background:none}
+.cover-btn img{width:100%;height:100%;display:block}
+.cover-btn[aria-pressed=true]{border-color:var(--text)}
+.upload{width:48px;height:48px;border-radius:8px;border:1px dashed var(--line);display:grid;place-items:center;color:var(--muted);cursor:pointer;font-size:20px}
+.upload:hover{color:var(--text);border-color:var(--muted)}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);background:var(--panel-2);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px}
+.seg button{border:0;background:none;color:var(--muted);padding:8px 4px;border-radius:6px;cursor:pointer;font:500 12.5px var(--ui)}
+.seg button[aria-pressed=true]{background:var(--text);color:var(--ink)}
+.hint{color:var(--muted);font-size:12px;line-height:1.45;margin:0}
+.row{display:grid;grid-template-columns:92px minmax(0,1fr) 44px;gap:10px;align-items:center}
+.row label{color:#c2c9d4;font-size:13px}
+.row output{font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.switch{position:relative;width:40px;height:22px;border-radius:11px;border:0;background:var(--line);cursor:pointer;flex:none}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--text);transition:transform .2s}
+.switch[aria-checked=true]{background:var(--accent)}
+.switch[aria-checked=true]::after{transform:translateX(18px)}
+.swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.sw{display:grid;gap:6px;justify-items:start}
+.sw input{width:100%;height:34px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);padding:2px;cursor:pointer}
+.sw span{font-size:11.5px;color:var(--muted)}
+select{width:100%;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:500 13px var(--ui)}
+.ghost{border:1px solid var(--line);background:none;color:var(--muted);border-radius:8px;padding:8px 12px;cursor:pointer;font:500 12.5px var(--ui)}
+.ghost:hover{color:var(--text)}
+button:focus-visible,select:focus-visible,input:focus-visible,.upload:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.stage,#lyrics,.switch::after{transition:none}}
+</style>
+
+<div class="app">
+  <section class="stage" id="stage" aria-label="Desktop preview">
+    <div class="menubar"><span><b>Desktop preview</b> · lyrics sit under every window</span><span id="clock">20:44</span></div>
+    <div class="layer" id="lyrics"></div>
+    <div class="icons" id="icons">
+      <div class="icon" style="right:16px;top:42px"><div class="folder"></div><span>School</span></div>
+      <div class="icon" style="right:16px;top:132px"><div class="folder"></div><span>Projects</span></div>
+      <div class="icon" style="right:16px;top:222px"><div class="folder"></div><span>Screenshots</span></div>
+    </div>
+    <div class="win" id="win" style="left:6%;top:62%">
+      <div class="win-bar" id="winbar"><i class="dot" style="background:#ff5f57"></i><i class="dot" style="background:#febc2e"></i><i class="dot" style="background:#28c840"></i><em>notes.txt</em></div>
+      <div class="win-body"><p>Drag this window or the folders around.</p><p>The lyrics stay underneath, the way they'll sit on your real desktop layer.</p></div>
+    </div>
+  </section>
+
+  <aside class="panel" aria-label="Settings">
+    <div class="brand"><h1>Undertone</h1><small>prototype v0.1</small></div>
+
+    <div class="sec">
+      <div class="label">Now playing</div>
+      <div class="np">
+        <img id="npCover" alt="Album cover">
+        <div style="min-width:0"><div class="t" id="npTitle"></div><div class="a" id="npArtist"></div></div>
+        <button class="play" id="play" aria-label="Pause">❚❚</button>
+      </div>
+      <div class="scrub"><span id="tCur">0:00</span><input type="range" id="scrub" min="0" step="0.01" aria-label="Seek"><span id="tDur">0:00</span></div>
+      <p class="hint">Demo track with lyrics written for this preview. The real app reads what Spotify is playing.</p>
+    </div>
+
+    <div class="sec">
+      <div class="label">Album cover</div>
+      <div class="covers" id="covers">
+        <label class="upload" title="Use your own image">+<input type="file" id="file" accept="image/*" hidden></label>
+      </div>
+      <p class="hint">Try an actual album cover with the + button to see the auto colors pick it up.</p>
+    </div>
+
+    <div class="sec">
+      <div class="label">Style</div>
+      <div class="seg" id="modes">
+        <button data-mode="arc">Arc</button><button data-mode="lens">Lens</button><button data-mode="drift">Drift</button><button data-mode="stack">Stack</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="toggle"><span class="label">Color</span>
+        <span style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#c2c9d4">Match album
+          <button class="switch" id="auto" role="switch" aria-checked="true" aria-label="Match album colors"></button></span></div>
+      <div class="swatches">
+        <div class="sw"><input type="color" id="cLyric" aria-label="Lyric color"><span>Lyric</span></div>
+        <div class="sw"><input type="color" id="cHi" aria-label="Highlight color"><span>Highlight</span></div>
+        <div class="sw"><input type="color" id="cDim" aria-label="Other lines color"><span>Other lines</span></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="label">Type &amp; layout</div>
+      <select id="font" aria-label="Font"></select>
+      <div class="row"><label for="size">Size</label><input type="range" id="size" min="22" max="110"><output id="oSize"></output></div>
+      <div class="row" id="curveRow"><label for="curve">Curve</label><input type="range" id="curve" min="-100" max="100"><output id="oCurve"></output></div>
+      <div class="row"><label for="ypos">Height</label><input type="range" id="ypos" min="15" max="85"><output id="oY"></output></div>
+      <div class="row"><label for="glow">Glow</label><input type="range" id="glow" min="0" max="100"><output id="oGlow"></output></div>
+      <div class="row"><label for="opac">Opacity</label><input type="range" id="opac" min="20" max="100"><output id="oOpac"></output></div>
+    </div>
+
+    <button class="ghost" id="reset">Reset to defaults</button>
+  </aside>
+</div>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const NS="http://www.w3.org/2000/svg";
+
+/* ---------- demo song (original placeholder lyrics) ---------- */
+const RAW=[[0.8,"The rain writes cursive on the window"],[4.6,"Motorbikes hum the bridge into the night"],[8.6,"I keep your voice like a lighter in my pocket"],[13.0,"Every streetlight melting into slow gold"],[17.2,"Hold on, the city is still awake"],[21.0,"Hold on, we are still awake"],[24.8,"Turn the radio up past the thunder"],[28.8,"Let the whole sky hear us sing"]];
+const SONG={title:"Neon Monsoon",artist:"Demo Artist",end:33,duration:35};
+// Line-level LRC → per-word timing, weighted by word length (fallback when a track has no word-level timing)
+SONG.lines=RAW.map(([s,text],i)=>{const next=i<RAW.length-1?RAW[i+1][0]:SONG.end,e=next-.35,ws=text.split(" "),wt=ws.map(w=>w.length+2),tot=wt.reduce((a,b)=>a+b,0);let acc=s;return{start:s,end:e,words:ws.map((w,j)=>{const d=(e-s)*wt[j]/tot,o={text:w,start:acc,end:acc+d};acc+=d;return o})}});
+
+/* ---------- fonts ---------- */
+const FONTS=[["Fraunces","Fraunces, Georgia, serif",700],["Instrument Serif","'Instrument Serif', Georgia, serif",400],["Syne","Syne, system-ui, sans-serif",800],["Unbounded","Unbounded, system-ui, sans-serif",700],["Bricolage Grotesque","'Bricolage Grotesque', system-ui, sans-serif",700],["Caveat","Caveat, 'Comic Sans MS', cursive",600],["JetBrains Mono","'JetBrains Mono', ui-monospace, monospace",600],["System","system-ui, -apple-system, 'Segoe UI', sans-serif",700]];
+
+/* ---------- settings ---------- */
+const DEF={mode:"arc",auto:true,lyric:"#f1ece3",hi:"#f2a65a",dim:"#8d93a0",font:0,size:58,curve:38,y:46,glow:40,opac:100,cover:0};
+let S={...DEF};
+try{const saved=JSON.parse(localStorage.getItem("undertone")||"null");if(saved)S={...DEF,...saved}}catch(e){}
+let saveT;function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem("undertone",JSON.stringify(S))}catch(e){}},250)}
+
+/* ---------- color helpers ---------- */
+function rgb2hsl(r,g,b){r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2;let h=0,s=0;if(mx!==mn){const d=mx-mn;s=l>.5?d/(2-mx-mn):d/(mx+mn);h=mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4;h/=6}return[h,s,l]}
+function hsl2hex(h,s,l){const f=n=>{const k=(n+h*12)%12,a=s*Math.min(l,1-l),c=l-a*Math.max(-1,Math.min(k-3,9-k,1));return Math.round(c*255).toString(16).padStart(2,"0")};return"#"+f(0)+f(8)+f(4)}
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function hexA(hex,a){const n=parseInt(hex.slice(1),16);return`rgba(${n>>16&255},${n>>8&255},${n&255},${a})`}
+
+/* Palette extraction: bucket pixels, take the dominant color for the wallpaper tint and the most vivid common color for the highlight */
+function extract(src){
+  const c=document.createElement("canvas");c.width=c.height=48;const x=c.getContext("2d",{willReadFrequently:true});x.drawImage(src,0,0,48,48);
+  const d=x.getImageData(0,0,48,48).data,B=new Map();
+  for(let i=0;i<d.length;i+=4){if(d[i+3]<128)continue;const k=(d[i]>>4)<<8|(d[i+1]>>4)<<4|(d[i+2]>>4);const b=B.get(k)||{r:0,g:0,b:0,n:0};b.r+=d[i];b.g+=d[i+1];b.b+=d[i+2];b.n++;B.set(k,b)}
+  const arr=[...B.values()].map(b=>{const r=b.r/b.n,g=b.g/b.n,bb=b.b/b.n;return{n:b.n,hsl:rgb2hsl(r,g,bb)}}),tot=arr.reduce((a,b)=>a+b.n,0);
+  const dom=arr.reduce((a,b)=>b.n>a.n?b:a);
+  const vib=arr.filter(b=>b.n>tot*.008).reduce((a,b)=>{const sc=v=>v.hsl[1]*(1-Math.abs(v.hsl[2]-.55))*Math.sqrt(v.n);return sc(b)>sc(a)?b:a},dom);
+  const [dh,ds]=dom.hsl,[vh,vs,vl]=vib.hsl;
+  // second accent for the wallpaper: most common color whose hue is far from the dominant
+  const alt=arr.filter(b=>b.n>tot*.01&&Math.min(Math.abs(b.hsl[0]-dh),1-Math.abs(b.hsl[0]-dh))>.08).sort((a,b)=>b.n-a.n)[0]||vib;
+  return{lyric:hsl2hex(dh,Math.min(ds,.3),.92),hi:hsl2hex(vh,Math.max(vs,.62),clamp(vl,.62,.72)),dim:hsl2hex(dh,Math.min(ds,.18),.66),
+    w1:hsl2hex(dh,Math.min(ds,.5)*.8,.1),w2:hsl2hex(vh,Math.min(vs,.6),.26),w3:hsl2hex(alt.hsl[0],Math.min(alt.hsl[1],.55),.22)};
+}
+
+/* ---------- procedural demo covers (original art) ---------- */
+function makeCover(draw){const c=document.createElement("canvas");c.width=c.height=240;draw(c.getContext("2d"));return c}
+const COVERS=[
+  makeCover(x=>{const g=x.createLinearGradient(0,0,0,240);g.addColorStop(0,"#0f3b46");g.addColorStop(1,"#08161c");x.fillStyle=g;x.fillRect(0,0,240,240);x.fillStyle="#f7a93b";x.beginPath();x.arc(150,96,52,0,7);x.fill();x.fillStyle="#d4377a";for(let i=0;i<6;i++)x.fillRect(0,150+i*13,240,6);x.fillStyle="#0b2229";x.fillRect(0,206,240,34)}),
+  makeCover(x=>{x.fillStyle="#e9e4d2";x.fillRect(0,0,240,240);x.fillStyle="#1f7a5c";x.beginPath();x.moveTo(0,240);x.quadraticCurveTo(80,60,240,120);x.lineTo(240,240);x.fill();x.fillStyle="#0f3d2f";x.beginPath();x.arc(70,70,30,0,7);x.fill();x.strokeStyle="#c9b46b";x.lineWidth=5;x.strokeRect(18,18,204,204)}),
+  makeCover(x=>{const g=x.createRadialGradient(120,120,10,120,120,170);g.addColorStop(0,"#ff4fa3");g.addColorStop(.45,"#6a2bd1");g.addColorStop(1,"#130b2b");x.fillStyle=g;x.fillRect(0,0,240,240);x.globalAlpha=.55;x.strokeStyle="#7fe7ff";x.lineWidth=2;for(let r=30;r<200;r+=22){x.beginPath();x.arc(120,120,r,0,7);x.stroke()}x.globalAlpha=1})
+];
+let covers=COVERS.map((c,i)=>({src:c,url:c.toDataURL(),name:["Neon Monsoon","Jade Hour","Ultraviolet"][i]}));
+
+/* ---------- DOM refs ---------- */
+const stage=$("#stage"),layer=$("#lyrics");
+const ui={size:$("#size"),curve:$("#curve"),ypos:$("#ypos"),glow:$("#glow"),opac:$("#opac"),font:$("#font"),cLyric:$("#cLyric"),cHi:$("#cHi"),cDim:$("#cDim"),auto:$("#auto"),scrub:$("#scrub")};
+FONTS.forEach((f,i)=>{const o=document.createElement("option");o.value=i;o.textContent=f[0];o.style.fontFamily=f[1];ui.font.append(o)});
+ui.scrub.max=SONG.duration;$("#tDur").textContent=fmt(SONG.duration);$("#npTitle").textContent=SONG.title;$("#npArtist").textContent=SONG.artist;
+function fmt(s){s=Math.max(0,s);return Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0")}
+
+function renderCovers(){
+  const box=$("#covers"),up=box.querySelector(".upload");box.querySelectorAll(".cover-btn").forEach(b=>b.remove());
+  covers.forEach((c,i)=>{const b=document.createElement("button");b.className="cover-btn";b.setAttribute("aria-pressed",i===S.cover);b.title=c.name;b.innerHTML=`<img alt="${c.name}" src="${c.url}">`;b.onclick=()=>{S.cover=i;applyCover();renderCovers();save()};box.insertBefore(b,up)});
+}
+function applyCover(){
+  if(S.cover>=covers.length)S.cover=0;
+  const c=covers[S.cover],p=extract(c.src);$("#npCover").src=c.url;
+  stage.style.setProperty("--w1",p.w1);stage.style.setProperty("--w2",p.w2);stage.style.setProperty("--w3",p.w3);
+  if(S.auto){S.lyric=p.lyric;S.hi=p.hi;S.dim=p.dim}
+  syncUI();dirty=true;
+}
+$("#file").addEventListener("change",e=>{
+  const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{const img=new Image();img.onload=()=>{covers=covers.slice(0,3).concat({src:img,url:r.result,name:f.name});S.cover=3;S.auto=true;applyCover();renderCovers()};img.src=r.result};
+  r.readAsDataURL(f);e.target.value="";
+});
+
+/* ---------- controls ---------- */
+function syncUI(){
+  ui.size.value=S.size;$("#oSize").textContent=S.size;ui.curve.value=S.curve;$("#oCurve").textContent=S.curve;
+  ui.ypos.value=S.y;$("#oY").textContent=S.y+"%";ui.glow.value=S.glow;$("#oGlow").textContent=S.glow;ui.opac.value=S.opac;$("#oOpac").textContent=S.opac+"%";
+  ui.font.value=S.font;ui.cLyric.value=S.lyric;ui.cHi.value=S.hi;ui.cDim.value=S.dim;ui.auto.setAttribute("aria-checked",S.auto);
+  document.querySelectorAll("#modes button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===S.mode));
+  $("#curveRow").hidden=S.mode!=="arc";layer.style.opacity=S.opac/100;
+  const f=FONTS[S.font];layer.style.fontFamily=f[1];layer.style.fontWeight=f[2];
+}
+[["size","size"],["curve","curve"],["ypos","y"],["glow","glow"],["opac","opac"]].forEach(([id,k])=>ui[id].addEventListener("input",()=>{S[k]=+ui[id].value;syncUI();dirty=true;save()}));
+ui.font.addEventListener("change",()=>{S.font=+ui.font.value;syncUI();dirty=true;save()});
+[["cLyric","lyric"],["cHi","hi"],["cDim","dim"]].forEach(([id,k])=>ui[id].addEventListener("input",()=>{S[k]=ui[id].value;S.auto=false;syncUI();save()}));
+ui.auto.addEventListener("click",()=>{S.auto=!S.auto;applyCover();save()});
+document.querySelectorAll("#modes button").forEach(b=>b.addEventListener("click",()=>{S.mode=b.dataset.mode;syncUI();dirty=true;save()}));
+$("#reset").addEventListener("click",()=>{S={...DEF};applyCover();renderCovers();save()});
+
+/* ---------- playback ---------- */
+let t=0,playing=true,last=performance.now();
+$("#play").addEventListener("click",()=>{playing=!playing;$("#play").textContent=playing?"❚❚":"▶";$("#play").setAttribute("aria-label",playing?"Pause":"Play")});
+ui.scrub.addEventListener("input",()=>{t=+ui.scrub.value;dirty=true});
+
+/* ---------- renderers ---------- */
+let dirty=true,builtLine=-2,builtMode="",W=0,H=0,refs={};
+function lineAt(t){let L=0;SONG.lines.forEach((l,i)=>{if(t>=l.start)L=i});return L}
+const prog=(w,t)=>t>=w.end?1:t<w.start?0:(t-w.start)/(w.end-w.start);
+
+function build(L){
+  layer.innerHTML="";refs={};layer.className="layer";
+  const s=S.size,y=H*S.y/100;
+  if(S.mode==="arc"){
+    const svg=document.createElementNS(NS,"svg");svg.id="arc";svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+    const defs=document.createElementNS(NS,"defs");svg.append(defs);
+    const bend=S.curve/100*H*.42;refs.tspans=[];
+    [-1,0,1].forEach(k=>{
+      const li=L+k;if(li<0||li>=SONG.lines.length)return;
+      const fs=k===0?s:s*.48,y0=y+k*s*1.25+(k>0?s*.15:0);
+      const p=document.createElementNS(NS,"path");p.id="arcp"+(k+1);p.setAttribute("d",`M ${W*.05} ${y0} Q ${W/2} ${y0-2*bend} ${W*.95} ${y0}`);defs.append(p);
+      const tx=document.createElementNS(NS,"text");tx.setAttribute("font-size",fs);tx.setAttribute("text-anchor","middle");
+      const tp=document.createElementNS(NS,"textPath");tp.setAttribute("href","#arcp"+(k+1));tp.setAttribute("startOffset","50%");
+      SONG.lines[li].words.forEach((w,j)=>{const ts=document.createElementNS(NS,"tspan");ts.textContent=w.text;tp.append(ts);if(j<SONG.lines[li].words.length-1)tp.append(document.createTextNode(" "));if(k===0)refs.tspans.push(ts);else ts.setAttribute("fill",S.dim)});
+      tx.append(tp);svg.append(tx);if(k===0)refs.main=tx;
+    });
+    layer.append(svg);
+  }else if(S.mode==="lens"){
+    const row=document.createElement("div");row.className="lens";row.style.top=y+"px";
+    refs.spans=SONG.lines[L].words.map(w=>{const sp=document.createElement("span");sp.textContent=w.text;row.append(sp);return sp});
+    layer.append(row);
+    if(L+1<SONG.lines.length){const n=document.createElement("div");n.className="lens-next";n.style.top=(y+s*1.25)+"px";n.style.fontSize=s*.4+"px";n.style.color=S.dim;n.textContent=SONG.lines[L+1].words.map(w=>w.text).join(" ");layer.append(n)}
+  }else{
+    layer.classList.add("drift");
+    refs.lines=SONG.lines.map(l=>{const d=document.createElement("div");d.className="dline";d.style.top=y+"px";d.style.fontSize=s+"px";const spans=l.words.map((w,j)=>{const sp=document.createElement("span");sp.textContent=w.text+(j<l.words.length-1?" ":"");d.append(sp);return sp});layer.append(d);return{el:d,spans}});
+  }
+  builtLine=L;builtMode=S.mode;dirty=false;
+}
+
+function paint(L,t){
+  const words=SONG.lines[L].words,g=S.glow/100;
+  if(S.mode==="arc"){
+    refs.tspans.forEach((ts,j)=>ts.setAttribute("fill",prog(words[j],t)>0?S.hi:S.lyric));
+    if(refs.main)refs.main.style.filter=g?`drop-shadow(0 0 ${4+g*18}px ${hexA(S.hi,.25+g*.45)})`:"none";
+  }else if(S.mode==="lens"){
+    let act=words.findIndex(w=>t<w.end);if(act<0)act=words.length;const a=act<words.length?act+prog(words[act],t):act;
+    refs.spans.forEach((sp,j)=>{const d=j+.5-a,k=Math.exp(-(d*d)/1.4),p=prog(words[j],t);
+      sp.style.fontSize=(S.size*(.5+.85*k))+"px";sp.style.opacity=.4+.6*k;sp.style.color=p>0?S.hi:S.lyric;
+      sp.style.textShadow=p>0&&p<1&&g?`0 0 ${6+g*24}px ${hexA(S.hi,.35+g*.5)}`:"none"});
+  }else{
+    const depth=S.mode==="drift"?1:0,ln=SONG.lines[L];
+    let f=L;if(L>0){const e=clamp((t-ln.start)/.5,0,1);f=L-1+(e<.5?2*e*e:1-Math.pow(-2*e+2,2)/2)}
+    refs.lines.forEach((o,i)=>{const off=i-f,ab=Math.abs(off);
+      if(ab>3.5){o.el.hidden=true;return}o.el.hidden=false;
+      const sc=1-Math.min(ab,1)*.42;
+      o.el.style.transform=`translate(-50%,calc(-50% + ${off*S.size*1.15}px)) translateZ(${-ab*depth*140}px) rotateX(${-off*depth*14}deg) scale(${sc})`;
+      o.el.style.opacity=Math.max(0,1-ab*.3);
+      o.spans.forEach((sp,j)=>{if(i!==L){sp.style.color=S.dim;sp.style.textShadow="none";return}const p=prog(SONG.lines[i].words[j],t);sp.style.color=p>0?S.hi:S.lyric;sp.style.textShadow=p>0&&p<1&&g?`0 0 ${6+g*24}px ${hexA(S.hi,.35+g*.5)}`:"none"});
+    });
+  }
+}
+
+function tick(now){
+  const dt=Math.min(.1,(now-last)/1000);last=now;
+  if(playing){t+=dt;if(t>SONG.duration)t=0}
+  ui.scrub.value=t;$("#tCur").textContent=fmt(t);
+  const L=lineAt(t),drift=S.mode==="drift"||S.mode==="stack";
+  if(dirty||S.mode!==builtMode||(!drift&&L!==builtLine))build(L);
+  paint(L,t);
+  requestAnimationFrame(tick);
+}
+new ResizeObserver(()=>{W=stage.clientWidth;H=stage.clientHeight;dirty=true}).observe(stage);
+
+/* ---------- draggable windows & folders ---------- */
+function drag(el,handle){
+  handle.addEventListener("pointerdown",e=>{
+    e.preventDefault();handle.setPointerCapture(e.pointerId);
+    const r=el.getBoundingClientRect(),sr=stage.getBoundingClientRect(),ox=e.clientX-r.left,oy=e.clientY-r.top;
+    el.style.right="auto";
+    const mv=ev=>{el.style.left=clamp(ev.clientX-sr.left-ox,0,sr.width-r.width)+"px";el.style.top=clamp(ev.clientY-sr.top-oy,26,sr.height-30)+"px"};
+    const up=()=>{handle.removeEventListener("pointermove",mv);handle.removeEventListener("pointerup",up)};
+    handle.addEventListener("pointermove",mv);handle.addEventListener("pointerup",up);
+  });
+}
+drag($("#win"),$("#winbar"));document.querySelectorAll(".icon").forEach(i=>drag(i,i));
+const d=new Date();$("#clock").textContent=d.getHours()+":"+String(d.getMinutes()).padStart(2,"0");
+
+renderCovers();applyCover();syncUI();requestAnimationFrame(tick);
+})();
+</script>
