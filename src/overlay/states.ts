@@ -50,7 +50,12 @@ export function buildState(host: HTMLElement, kind: StateKind, look: Look, elaps
   if (chip) {
     el.classList.add("state-chip");
     el.textContent = chip;
-    el.style.fontSize = `${Math.max(12, look.size * 0.3)}px`;
+    const fontSize = Math.max(12, look.size * 0.3);
+    el.style.fontSize = `${fontSize}px`;
+    // The pill is 2.1em tall (1em of text plus 0.55em padding each side) and can be taller than the
+    // margin that keeps a lyric line on screen: keep the whole pill, plus its shadow, inside the stage.
+    const half = fontSize * 1.05 + 2;
+    el.style.top = `${Math.min(Math.max(look.y, half), Math.max(half, look.height - half))}px`;
   } else if (kind === "instrumental") {
     el.textContent = "♪";
     el.style.fontFamily = look.font;
