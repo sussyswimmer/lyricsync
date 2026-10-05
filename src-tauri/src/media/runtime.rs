@@ -117,8 +117,12 @@ fn emit(app: &AppHandle, update: super::Update) {
             .as_ref()
             .is_some_and(|track| track.is_playing),
     );
+    if update.track_changed {
+        if let Some(track) = update.now_playing.as_ref() {
+            crate::lyrics::runtime::track_changed(app, track);
+        }
+    }
     if let Err(error) = app.emit(NOW_PLAYING_EVENT, &update.now_playing) {
         eprintln!("now-playing event: {error}");
     }
-    // X3 will consume update.track_changed to begin lyrics lookup; lyrics remain an explicit stub.
 }

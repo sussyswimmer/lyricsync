@@ -2,6 +2,7 @@
 mod commands;
 pub mod contract;
 pub mod desktop_layer;
+pub mod lyrics;
 pub mod media;
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
@@ -23,6 +24,7 @@ pub fn run() {
             }
         })
         .setup(|_app| {
+            lyrics::runtime::install(_app.handle()).map_err(std::io::Error::other)?;
             #[cfg(target_os = "macos")]
             _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             #[cfg(target_os = "windows")]
