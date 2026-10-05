@@ -96,7 +96,7 @@ export class MockPlayer {
     this.emit = emit;
     this.onChange = onChange;
     this.now = now;
-    this.state = { ...initial, track: wrap(initial.track) };
+    this.state = normalize(initial, now());
     this.startTrack();
   }
 
@@ -165,7 +165,7 @@ export class MockPlayer {
   /** Adopts state from another tab without echoing it back. */
   apply(next: PlayerState): void {
     const same = (Object.keys(next) as (keyof PlayerState)[]).every((k) => next[k] === this.state[k]);
-    if (!same) this.commit({ ...next, track: wrap(next.track) }, false);
+    if (!same) this.commit(next, false);
   }
 
   dispose(): void {
@@ -179,7 +179,8 @@ export class MockPlayer {
     this.commit({ ...this.state, positionMs: this.position(now), ...patch, sampledAt: now }, true);
   }
 
-  private commit(next: PlayerState, broadcast: boolean): void {
+  private commit(proposed: PlayerState, broadcast: boolean): void {
+    const next = normalize(proposed, this.now());
     const trackChanged = next.track !== this.state.track;
     this.state = next;
     if (broadcast) this.onChange(this.snapshot);
@@ -241,7 +242,23 @@ export class MockPlayer {
 
 function wrap(index: number): number {
   const n = MOCK_TRACKS.length;
-  return ((Math.trunc(index) % n) + n) % n;
+  return ((Math.trunc(Number.isFinite(index) ? index : 0) % n) + n) % n;
+}
+
+/**
+ * Keeps a player state inside its track. A playing state already past the end (a tab reopened
+ * later, a seek or ?t= beyond the end) moves on to the next track once, instead of finishing one
+ * track per timer until it catches up with the clock.
+ */
+function normalize(s: PlayerState, now: number): PlayerState {
+  const track = wrap(s.track);
+  const duration = MOCK_TRACKS[track]?.durationMs ?? 0;
+  const positionMs = Math.max(0, Math.min(duration, Number.isFinite(s.positionMs) ? s.positionMs : 0));
+  const sampledAt = Number.isFinite(s.sampledAt) ? s.sampledAt : now;
+  if (s.isPlaying && positionMs + Math.max(0, now - sampledAt) >= duration) {
+    return { track: wrap(track + 1), positionMs: 0, sampledAt: now, isPlaying: true };
+  }
+  return { track, positionMs, sampledAt, isPlaying: s.isPlaying };
 }
 
 const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>

@@ -154,13 +154,10 @@ describe("mock bridge: initial state", () => {
     expect((await mock("?track=abc&t=xyz")).bridge.player.snapshot).toMatchObject({ track: 0, positionMs: 0 });
   });
 
-  // BUG (src/bridge/mock.ts, createMockBridge initial state): `?t=` is taken as is, so a negative
-  // value is reported as a negative positionMs (seek() clamps at 0, the URL path doesn't). The overlay
-  // then shows a silent pre-roll before the song "starts".
-  // Repro: http://localhost:1420/?mock&track=0&t=-5000&paused → get_now_playing().positionMs === -5000.
-  it.fails("never reports a negative position from a negative ?t=", async () => {
+  // Regression: a negative ?t= used to be reported as a negative positionMs.
+  it("never reports a negative position from a negative ?t=", async () => {
     const { bridge } = await mock("?track=0&t=-5000&paused");
-    expect((await bridge.invoke("get_now_playing"))?.positionMs).toBe(0); // today: -5000
+    expect((await bridge.invoke("get_now_playing"))?.positionMs).toBe(0);
   });
 
   it("ignores a malformed ?settings=", async () => {
@@ -490,29 +487,21 @@ describe("mock bridge: auto-advance", () => {
     player.dispose();
   });
 
-  // BUG (src/bridge/mock.ts, MockPlayer.schedule): endsAt is computed from the raw positionMs, which
-  // nothing clamps on the way in (`?t=`, select(), a restored player). A position past the end makes
-  // endsAt land in the past, so the next track starts "already finished" and the player cascades
-  // through the list with setTimeout(0) until the accumulated time catches up with the wall clock.
-  // Repro: http://localhost:1420/?mock&track=1&t=999999 lands on Neon Monsoon mid-song after ~32
-  // now-playing events instead of ending Paper Lanterns; in node it is 40 track changes.
-  // Same root cause as the stale-storage test under "mock bridge: storage". Fix: clamp positionMs to
-  // [0, duration] whenever state is set, and compute endsAt from the clamped value.
-  it.fails("advances at most one track when ?t= is past the end", async () => {
+  // Regression: a position past the end (?t=, select(), a restored player) used to cascade through
+  // every track with setTimeout(0). State is now clamped, and a finished playing state moves on once.
+  it("advances at most one track when ?t= is past the end", async () => {
     const { bridge, seen } = await mock("?track=1&t=999999");
     for (let i = 0; i < 100; i++) await advance(1);
-    expect(seen.lyrics.filter((l) => l.status === "loading").length).toBeLessThanOrEqual(2); // today: 40
+    expect(seen.lyrics.filter((l) => l.status === "loading").length).toBeLessThanOrEqual(2);
     expect([1, 2]).toContain(bridge.player.snapshot.track);
   });
 
-  // BUG: same root cause through select(), which README suggests from the devtools console.
-  // Repro: undertone.bridge.player.select(1, 500000) → 21 track changes.
-  it.fails("advances at most one track after select() past the end", async () => {
+  it("advances at most one track after select() past the end", async () => {
     const { bridge, seen } = await mock("?track=0");
     seen.clear();
     bridge.player.select(1, 500_000);
     for (let i = 0; i < 100; i++) await advance(1);
-    expect(seen.lyrics.filter((l) => l.status === "loading").length).toBeLessThanOrEqual(2); // today: 21
+    expect(seen.lyrics.filter((l) => l.status === "loading").length).toBeLessThanOrEqual(2);
   });
 });
 
@@ -629,18 +618,14 @@ describe("mock bridge: storage", () => {
     expect((await bridge.invoke("update_settings", { patch: { size: 30 } })).size).toBe(30);
   });
 
-  // BUG (src/bridge/mock.ts, MockPlayer.schedule): a saved player that was playing when the tab
-  // closed is fast-forwarded one track at a time. Each finished track schedules the next with
-  // setTimeout(0) and emits now-playing + lyrics, so a page reopened ten minutes later churns through
-  // ~24 track changes (a day later ~3400, about 14 s of 4 ms-clamped browser timers) before it
-  // settles, and the overlay fades through every one. It should land on the right track in one step.
-  // The same cascade follows any unclamped position past the end; see "mock bridge: auto-advance".
-  it.fails("restores a stale playing state with at most one track change", async () => {
+  // Regression: a saved player that was playing when the tab closed used to fast-forward one track at a
+  // time (~24 track changes after ten minutes) instead of moving on once.
+  it("restores a stale playing state with at most one track change", async () => {
     const storage = memoryStorage({ [PLAYER_KEY]: { track: 0, positionMs: 0, sampledAt: T0 - 10 * 60_000, isPlaying: true } });
     const { seen } = await mock("", { storage });
     for (let i = 0; i < 100; i++) await advance(1);
     const changes = seen.lyrics.filter((l) => l.status === "loading").length;
-    expect(changes).toBeLessThanOrEqual(2); // today: 24
+    expect(changes).toBeLessThanOrEqual(2);
   });
 });
 
