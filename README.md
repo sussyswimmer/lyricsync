@@ -44,13 +44,13 @@ Undertone sends the title, artist, album and length of the current song to `lrcl
 
 | Item | What it does |
 |---|---|
-| **Show/Hide lyrics** | Hides the lyrics or brings them back. |
+| **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as **Lyrics on the desktop** in Settings. Undertone remembers it. |
 | **Style ▸** Arc / Lens / Drift / Stack | Switches the lyric style. The checkmark follows the setting. |
 | **Sync ▸** Earlier 100 ms / Later 100 ms | Moves this song's lyrics earlier or later. Undertone remembers it for this song. |
 | **Sync ▸** Reset for this song | Clears this song's sync nudge. |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping the cache. |
 | **Settings…** | Opens the settings window. |
-| **Launch at login** | Starts Undertone when you log in. |
+| **Launch at login** | Starts Undertone when you log in, the same as the switch in Settings › General. |
 | **Quit Undertone** | Quits Undertone. |
 
 **Sync** and **Refetch lyrics** are greyed out while no song is loaded. **Reset for this song** shows the current nudge, for example "Reset for this song (150 ms earlier)".
@@ -59,17 +59,19 @@ Opening Undertone again while it's already running (from Applications or the Sta
 
 ### Keyboard shortcuts
 
-These work from any app.
+These work from any app. They are the defaults: you can change each one, remove it, or turn them all off in **Settings › Shortcuts**.
 
 | macOS | Windows | What it does |
 |---|---|---|
-| ⌘⌥⇧L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
-| ⌘⌥⇧[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
-| ⌘⌥⇧] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
+| ⌥⇧⌘L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
+| ⌥⇧⌘[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
+| ⌥⇧⌘] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
+
+If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Alt+Shift+L, and on Windows some keyboard layouts type characters with AltGr, which counts as Ctrl+Alt), record a different one. Settings warns under any shortcut another app already holds. The [user guide](docs/USER_GUIDE.md#shortcuts) explains how.
 
 ### Settings
 
-The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
+The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **General** turns the lyrics on or off and sets **Launch at login**; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
 
 ## Troubleshooting
 
@@ -85,14 +87,14 @@ The settings window has a live preview at the top that plays the current song, o
 Positive offsets make lyrics appear **earlier**; negative offsets make them appear **later**.
 
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
-- **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌘⌥⇧[ / ⌘⌥⇧] (Ctrl+Alt+Shift+[ / ] on Windows) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
+- **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌥⇧⌘[ / ⌥⇧⌘] (Ctrl+Alt+Shift+[ / ] on Windows, unless you've changed them) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
 The song's nudge is added on top of the All songs offset. When a song's lyrics are timed by line only, Undertone estimates where each word falls, so judge the sync by when each line starts.
 
 ### Nothing shows up
 
-1. **Is a song playing?** With **Show lyrics: While playing** (the default), lyrics hide when you pause and when nothing is playing. Choose **Always** to keep them up while paused.
-2. **Are the lyrics hidden?** Use **Show/Hide lyrics** in the menu, or ⌘⌥⇧L / Ctrl+Alt+Shift+L.
+1. **Is a song playing?** With **When: While playing** (the default, in Settings › Behavior), lyrics hide when you pause and when nothing is playing. Choose **Always** to keep them up while paused.
+2. **Are the lyrics turned off?** Then the preview in Settings says **Off on the desktop**. Switch on **Lyrics on the desktop** in Settings › General, choose **Show lyrics** in the menu, or press ⌥⇧⌘L / Ctrl+Alt+Shift+L (the default shortcut).
 3. **Is a window covering them?** The lyrics sit under every window, so a maximized or full-screen window hides them. Move windows aside or show the desktop.
 4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls. When Undertone finds no such player open, **This song** in Settings → Sync says **No music app open**.
 5. **On macOS, was Automation denied?** Then the settings window shows a notice at the top, such as "Undertone can't see what Spotify is playing.", with the switch to turn on. See [Permissions](#macos-automation).
@@ -100,7 +102,7 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 
 ### Lyrics on the wrong monitor
 
-**Show on: Primary display** (the default) shows lyrics only on your main display: on macOS, the one with the menu bar (set it in System Settings → Displays); on Windows, the one marked "Make this my main display" in Settings → System → Display. Choose **All displays** to show them on every monitor. Each screen scales the lyrics to its own height.
+**Where: Primary display** (the default, in Settings › Behavior) shows lyrics only on your main display: on macOS, the one with the menu bar (set it in System Settings → Displays); on Windows, the one marked "Make this my main display" in Settings → System → Display. Choose **All displays** to show them on every monitor. Each screen scales the lyrics to its own height.
 
 ### After an Explorer restart, sleep or a display change
 
@@ -155,6 +157,8 @@ Keys in mock mode (ignored while a form control has focus):
 | ← / → | Seek −5 s / +5 s |
 | N / Shift+N | Next / previous track |
 
+The global shortcuts work too, while the page has focus: the default ⌥⇧⌘L / Ctrl+Alt+Shift+L turns the lyrics off and on (the overlay page hides them, the settings preview shows **Off on the desktop**), and the nudges change the current song's offset. They follow what you record in Settings › Shortcuts, and pause while Settings listens for a new one.
+
 URL parameters (combine them with `&`):
 
 | Parameter | Effect |
@@ -164,6 +168,7 @@ URL parameters (combine them with `&`):
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |
+| `?shortcutConflict=toggleLyrics,nudgeLater` | Act as if another app held the combinations those actions start with: they report `"unavailable"` in `shortcuts-status`, and Settings warns under them. Recording a different combination clears the warning. Actions: `toggleLyrics`, `nudgeEarlier`, `nudgeLater`. |
 | `?media=automation-denied\|no-player` | Act like a core that can't see the player: nothing playing, and `media-status` says why (`automation-denied` names Spotify). The settings window then shows its Automation notice, or **No music app open** under This song, and its preview plays the demo song as the app does. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 

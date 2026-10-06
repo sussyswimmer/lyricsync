@@ -6,7 +6,11 @@ import {
   type MediaStatus,
   type NowPlaying,
   type Settings,
+  type ShortcutAction,
+  type Shortcuts,
+  type ShortcutsStatus,
 } from "../../contract/contract";
+import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, recordKey, SHORTCUT_ACTIONS, type KeyLayout } from "../core/accelerator";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
 import { demoCover } from "./covers";
@@ -323,8 +327,10 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
 /**
  * What the Rust store does with `update_settings` (X4, `settings::merge_patch`): a shallow merge
  * validated field by field. Unknown keys are dropped, numbers are clamped to the SPEC ranges, and a
- * value of the wrong type or outside an enum keeps the current one. A partial `colors` or `font`
- * object changes only the keys it has; `trackOffsetsMs` replaces the whole map; `version` is ignored.
+ * value of the wrong type or outside an enum keeps the current one. A partial `colors`, `font` or
+ * `shortcuts` object changes only the keys it has; a shortcut that isn't usable or that another
+ * action has keeps its current binding (`mergeShortcuts`); `trackOffsetsMs` replaces the whole map;
+ * `version` is ignored.
  */
 export function mergeSettings(current: Settings, patch: unknown): Settings {
   const next = structuredClone(current);
@@ -350,6 +356,9 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.displays = oneOf(p.displays, DISPLAYS) ?? next.displays;
   next.globalOffsetMs = clamp(p.globalOffsetMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
   next.trackOffsetsMs = offsetsOf(p.trackOffsetsMs) ?? next.trackOffsetsMs;
+  if (typeof p.enabled === "boolean") next.enabled = p.enabled;
+  if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
+  next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
   return next;
 }
 
@@ -357,6 +366,25 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
 export function migrateSettings(stored: unknown): Settings {
   return mergeSettings(DEFAULT_SETTINGS, stored);
 }
+
+/**
+ * What the core reports for each shortcut after registering them (contract v3): "off" when shortcuts
+ * are off or the action has none, "invalid" when the binding doesn't parse, "unavailable" when
+ * another app holds the combination (here: one of `taken`), else "ok".
+ */
+export function shortcutsStatusOf(shortcuts: Shortcuts, taken: ReadonlySet<string> = new Set()): ShortcutsStatus {
+  const state = (action: ShortcutAction): ShortcutsStatus[ShortcutAction] => {
+    const binding = shortcuts[action];
+    if (!shortcuts.enabled || binding === "") return "off";
+    const normalized = normalizeBinding(binding);
+    if (!normalized) return "invalid";
+    return taken.has(normalized) ? "unavailable" : "ok";
+  };
+  return { toggleLyrics: state("toggleLyrics"), nudgeEarlier: state("nudgeEarlier"), nudgeLater: state("nudgeLater") };
+}
+
+/** How far the nudge shortcuts move the current song, as in the core (`shortcuts::SHORTCUT_NUDGE_MS`). */
+export const SHORTCUT_NUDGE_MS = 50;
 
 /** `set_track_offset` (`settings::with_track_offset`): clamped to ±2000 ms; zero removes the song. */
 export function withTrackOffset(current: Settings, trackKey: string, ms: number): Settings {
@@ -371,13 +399,18 @@ export function withTrackOffset(current: Settings, trackKey: string, ms: number)
 export interface MockOptions {
   /** Share player and settings with other tabs (overlay + settings side by side). Default true. */
   shared?: boolean;
-  /** Space play/pause, ←/→ seek ±5 s, N / Shift+N next/previous track. Default true. */
+  /**
+   * Space play/pause, ←/→ seek ±5 s, N / Shift+N next/previous track, and the global shortcuts
+   * (while this page has focus). Default true.
+   */
   keys?: boolean;
   /** Persist across reloads. Default: localStorage when available. */
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
   /**
-   * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state, and
-   * `?media=automation-denied|no-player` starts with that media problem. Default: the page URL.
+   * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state,
+   * `?media=automation-denied|no-player` starts with that media problem, and
+   * `?shortcutConflict=toggleLyrics,nudgeLater` makes those actions' starting combinations
+   * "unavailable", as if another app held them. Default: the page URL.
    */
   params?: URLSearchParams;
 }
@@ -389,6 +422,8 @@ export interface MockBridge extends Bridge {
    * (`automation-denied` names Spotify), with null the player again. Shared with the other pages.
    */
   setMedia(problem: MediaProblem | null): void;
+  /** True between `suspend_shortcuts(true)` and `suspend_shortcuts(false)`. */
+  readonly shortcutsSuspended: boolean;
   dispose(): void;
 }
 
@@ -436,6 +471,7 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     lyrics: new Set(),
     "settings-changed": new Set(),
     "media-status": new Set(),
+    "shortcuts-status": new Set(),
   };
   const emit: Emit = (event, payload) => {
     queueMicrotask(() => {
@@ -494,6 +530,14 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     emit("media-status", mediaStatus());
   };
 
+  // Like `?media`, `?shortcutConflict` applies to this page only: the combinations those actions start
+  // with are taken by "another app", so they stay unavailable whichever action is given them later.
+  const conflicts = (params.get("shortcutConflict") ?? "").split(",").flatMap((name) => SHORTCUT_ACTIONS.filter((a) => a === name.trim()));
+  const taken = new Set(conflicts.map((action) => settings.shortcuts[action]).filter((binding) => binding !== ""));
+  let shortcutsStatus = shortcutsStatusOf(settings.shortcuts, taken);
+  // Suspending changes no status: the core keeps reporting what is registered, so nothing flashes.
+  let suspended = false;
+
   /** Stores already validated settings; saves, shares and broadcasts them only on a real change. */
   const setSettings = (next: Settings, broadcast: boolean): Settings => {
     if (JSON.stringify(next) !== JSON.stringify(settings)) {
@@ -501,6 +545,12 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
       write(storage, SETTINGS_KEY, settings);
       if (broadcast) post({ type: "settings", settings });
       emit("settings-changed", structuredClone(settings));
+      // A registration pass after every change; the status goes out only when it changed.
+      const status = shortcutsStatusOf(settings.shortcuts, taken);
+      if (JSON.stringify(status) !== JSON.stringify(shortcutsStatus)) {
+        shortcutsStatus = status;
+        emit("shortcuts-status", { ...status });
+      }
     }
     return structuredClone(settings);
   };
@@ -518,6 +568,10 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     update_settings: ({ patch }) => setSettings(mergeSettings(settings, patch), true),
     get_now_playing: () => (problem === null ? player.nowPlaying() : null),
     get_media_status: () => mediaStatus(),
+    get_shortcuts_status: () => ({ ...shortcutsStatus }),
+    suspend_shortcuts: ({ suspended: next }) => {
+      suspended = next;
+    },
     get_lyrics: ({ trackKey }) => player.lyrics(trackKey),
     refetch_lyrics: ({ trackKey }) => {
       if (trackKey === trackKeyOf(player.current)) player.refetch();
@@ -534,7 +588,40 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     quit: () => {},
   };
 
+  const platform = detectPlatform(typeof navigator === "undefined" ? undefined : navigator);
+  const keys = (options.keys ?? true) && typeof window !== "undefined";
+  // Windows matches a letter by what it types, as the recorder saves it (`recordKey`).
+  let layout: KeyLayout | null = null;
+  if (keys && platform === "windows") {
+    void loadKeyLayout(navigator).then((l) => {
+      layout = l;
+    });
+  }
+  /** The global shortcuts, as far as a page can have them: they work while it has focus. */
+  const onShortcut = (e: KeyboardEvent): boolean => {
+    if (suspended || !settings.shortcuts.enabled) return false;
+    const pressed = recordKey(e, platform, layout);
+    if (pressed.kind !== "combo") return false;
+    const action = SHORTCUT_ACTIONS.find((a) => settings.shortcuts[a] === pressed.accelerator && shortcutsStatus[a] === "ok");
+    if (!action) return false;
+    if (action === "toggleLyrics") {
+      setSettings(mergeSettings(settings, { enabled: !settings.enabled }), true);
+    } else if (problem === null) {
+      // Like the core: a nudge needs a song, and moves its offset within the same ±2000 ms.
+      const trackKey = trackKeyOf(player.current);
+      const step = action === "nudgeEarlier" ? SHORTCUT_NUDGE_MS : -SHORTCUT_NUDGE_MS;
+      setSettings(withTrackOffset(settings, trackKey, (settings.trackOffsetsMs[trackKey] ?? 0) + step), true);
+    }
+    return true;
+  };
+
   const onKey = (e: KeyboardEvent): void => {
+    // The Settings key recorder handles its keys first (and suspends the shortcuts while it listens).
+    if (e.defaultPrevented) return;
+    if (onShortcut(e)) {
+      e.preventDefault();
+      return;
+    }
     const target = e.target instanceof Element ? e.target : null;
     if (target?.closest("input, select, textarea, button, [contenteditable]")) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -545,7 +632,6 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     else return;
     e.preventDefault();
   };
-  const keys = (options.keys ?? true) && typeof window !== "undefined";
   if (keys) window.addEventListener("keydown", onKey);
 
   return {
@@ -553,6 +639,9 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     player,
     setMedia(next: MediaProblem | null): void {
       setProblem(next, true);
+    },
+    get shortcutsSuspended(): boolean {
+      return suspended;
     },
     invoke<C extends Command>(command: C, ...args: ArgsOf<C>): Promise<ResultOf<C>> {
       const handler = commands[command];

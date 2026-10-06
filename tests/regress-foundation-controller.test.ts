@@ -513,6 +513,40 @@ describe("the frame loop", () => {
     controller.destroy();
   });
 
+  it("hides and stops a gated overlay while the lyrics are turned off; an ungated preview keeps playing", async () => {
+    const settings = (enabled: boolean): Settings => ({ ...structuredClone(DEFAULT_SETTINGS), enabled });
+    for (const gate of [true, false]) {
+      const { bridge, stage, controller } = await playing(gate);
+      bridge.emit("settings-changed", settings(false));
+      expect(stage.visible, `gate ${gate}`).toBe(!gate);
+      paintsIn(stage, 16);
+      if (gate) {
+        expect(paintsIn(stage, 5000)).toHaveLength(0);
+        expect(display.pending).toBe(0);
+      } else {
+        expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
+      }
+      // under Always too: off is off
+      bridge.emit("settings-changed", { ...settings(false), showWhen: "always" });
+      expect(stage.visible, `gate ${gate}`).toBe(!gate);
+
+      bridge.emit("settings-changed", settings(true));
+      expect(stage.visible).toBe(true);
+      expect(paintsIn(stage, 1000).length, `gate ${gate}`).toBeGreaterThanOrEqual(60);
+      controller.destroy();
+    }
+  });
+
+  it("counts settings without `enabled` (a core older than contract v3) as on", async () => {
+    const { bridge, stage, controller } = await playing();
+    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+    delete old.enabled;
+    bridge.emit("settings-changed", old as Settings);
+    expect(stage.visible).toBe(true);
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
+    controller.destroy();
+  });
+
   it("stops when the track goes away, and starts again with the next one", async () => {
     // the overlay (gated) and the settings preview (never gated)
     for (const gate of [true, false]) {

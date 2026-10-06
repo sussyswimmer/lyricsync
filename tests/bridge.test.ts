@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Lyrics, type MediaStatus, type NowPlaying, type Settings } from "../contract/contract";
+import { DEFAULT_SETTINGS, type Lyrics, type MediaStatus, type NowPlaying, type Settings, type ShortcutsStatus } from "../contract/contract";
 import { demoCover } from "../src/bridge/covers";
 import {
   MOCK_TRACKS,
   MockPlayer,
   SEEK_STEP_MS,
+  SHORTCUT_NUDGE_MS,
   createMockBridge,
   lyricsOf,
   mergeSettings,
   migrateSettings,
+  shortcutsStatusOf,
   trackKeyOf,
   withTrackOffset,
   type MockBridge,
@@ -50,6 +52,7 @@ interface Seen {
   lyrics: Lyrics[];
   settings: Settings[];
   media: MediaStatus[];
+  shortcuts: ShortcutsStatus[];
   clear(): void;
 }
 
@@ -64,19 +67,22 @@ async function mock(query = "", options: MockOptions = {}): Promise<{ bridge: Mo
     lyrics: [],
     settings: [],
     media: [],
+    shortcuts: [],
     clear() {
       this.nowPlaying.length = 0;
       this.lyrics.length = 0;
       this.settings.length = 0;
       this.media.length = 0;
+      this.shortcuts.length = 0;
     },
   };
-  // All four subscribe synchronously, before the construction-time `loading` event is delivered.
+  // All five subscribe synchronously, before the construction-time `loading` event is delivered.
   await Promise.all([
     bridge.listen("now-playing", (p) => seen.nowPlaying.push(p)),
     bridge.listen("lyrics", (p) => seen.lyrics.push(p)),
     bridge.listen("settings-changed", (p) => seen.settings.push(p)),
     bridge.listen("media-status", (p) => seen.media.push(p)),
+    bridge.listen("shortcuts-status", (p) => seen.shortcuts.push(p)),
   ]);
   return { bridge, seen };
 }
@@ -510,6 +516,9 @@ describe("mergeSettings", () => {
     displays: "all",
     globalOffsetMs: 250,
     trackOffsetsMs: { "a|b|c|1": -150 },
+    enabled: false,
+    launchAtLogin: true,
+    shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -524,8 +533,8 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor.
-      expect(next).toEqual(junk === true ? { ...custom, autoColor: true } : custom);
+      // A boolean is a valid autoColor, enabled and launchAtLogin.
+      expect(next).toEqual(junk === true ? { ...custom, autoColor: true, enabled: true, launchAtLogin: true } : custom);
     }
   });
 
@@ -573,6 +582,23 @@ describe("mergeSettings", () => {
     expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10 });
     expect(mergeSettings(custom, { trackOffsetsMs: [5] }).trackOffsetsMs).toEqual(custom.trackOffsetsMs);
   });
+
+  it("takes enabled and launchAtLogin as booleans only (contract v3)", () => {
+    expect(mergeSettings(custom, { enabled: true, launchAtLogin: false })).toEqual({ ...custom, enabled: true, launchAtLogin: false });
+    expect(mergeSettings(custom, { enabled: "true", launchAtLogin: 1 })).toEqual(custom);
+  });
+
+  it("changes only the shortcut keys a partial object has, each validated and normalized (contract v3)", () => {
+    expect(mergeSettings(custom, { shortcuts: { enabled: true } }).shortcuts).toEqual({ ...custom.shortcuts, enabled: true });
+    expect(mergeSettings(custom, { shortcuts: { nudgeEarlier: "alt+shift+cmdorctrl+]" } }).shortcuts).toEqual({
+      ...custom.shortcuts,
+      nudgeEarlier: "CmdOrCtrl+Alt+Shift+]",
+    });
+    // unusable, or another action's: kept
+    expect(mergeSettings(custom, { shortcuts: { toggleLyrics: "Shift+L", nudgeEarlier: "ctrl+alt+k" } }).shortcuts).toEqual(custom.shortcuts);
+    expect(mergeSettings(custom, { shortcuts: { toggleLyrics: "" } }).shortcuts.toggleLyrics).toBe("");
+    for (const junk of [null, "CmdOrCtrl+L", [1], 5]) expect(mergeSettings(custom, { shortcuts: junk }).shortcuts).toEqual(custom.shortcuts);
+  });
 });
 
 describe("migrateSettings", () => {
@@ -608,6 +634,15 @@ describe("migrateSettings", () => {
       globalOffsetMs: 120.5,
       trackOffsetsMs: { "x|y|z|200": 90, far: -2000 },
     });
+  });
+
+  it("gives contract v2 settings the v3 defaults: on, no login item, the default shortcuts", () => {
+    const v2 = { version: 1, mode: "lens", size: 70 };
+    const s = migrateSettings(v2);
+    expect(s).toEqual({ ...DEFAULT_SETTINGS, mode: "lens", size: 70 });
+    expect(s).toMatchObject({ enabled: true, launchAtLogin: false, shortcuts: DEFAULT_SETTINGS.shortcuts });
+    s.shortcuts.toggleLyrics = "";
+    expect(DEFAULT_SETTINGS.shortcuts.toggleLyrics).toBe("CmdOrCtrl+Alt+Shift+L");
   });
 
   it("keeps what it knows from a newer version", () => {
@@ -944,6 +979,82 @@ describe("mock bridge: media status (contract v2)", () => {
   });
 });
 
+describe("mock bridge: shortcuts (contract v3)", () => {
+  const ALL_OK: ShortcutsStatus = { toggleLyrics: "ok", nudgeEarlier: "ok", nudgeLater: "ok" };
+
+  it("reports every default shortcut working, and sends nothing while that holds", async () => {
+    const { bridge, seen } = await mock();
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual(ALL_OK);
+    await bridge.invoke("update_settings", { patch: { size: 40, enabled: false, launchAtLogin: true } });
+    await tick();
+    expect(seen.settings).toHaveLength(1);
+    expect(seen.shortcuts).toEqual([]);
+  });
+
+  it("re-registers after a shortcuts change and sends the status only when it changed", async () => {
+    const { bridge, seen } = await mock();
+    const shortcuts = (patch: Partial<Settings["shortcuts"]>): Promise<Settings> =>
+      bridge.invoke("update_settings", { patch: { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, ...patch } } });
+    await shortcuts({ enabled: false });
+    await tick();
+    expect(seen.shortcuts).toEqual([{ toggleLyrics: "off", nudgeEarlier: "off", nudgeLater: "off" }]);
+    await shortcuts({ toggleLyrics: "" });
+    await tick();
+    expect(last(seen.shortcuts)).toEqual({ toggleLyrics: "off", nudgeEarlier: "ok", nudgeLater: "ok" });
+    await shortcuts({ toggleLyrics: "Control+Alt+K" });
+    await tick();
+    expect(last(seen.shortcuts)).toEqual(ALL_OK);
+    // a new binding that works like the old one: no event
+    await shortcuts({ toggleLyrics: "Control+Alt+J" });
+    await tick();
+    expect(seen.shortcuts).toHaveLength(3);
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual(ALL_OK);
+  });
+
+  it("?shortcutConflict= makes those starting combinations unavailable, whichever action has them", async () => {
+    const { bridge, seen } = await mock("?shortcutConflict=toggleLyrics,%20nudgeLater,bogus");
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual({ toggleLyrics: "unavailable", nudgeEarlier: "ok", nudgeLater: "unavailable" });
+    const d = DEFAULT_SETTINGS.shortcuts;
+    // moved to a free combination: ok; the old one given to another action: still taken
+    await bridge.invoke("update_settings", { patch: { shortcuts: { ...d, toggleLyrics: "Control+Alt+K", nudgeEarlier: d.toggleLyrics } } });
+    await tick();
+    expect(seen.shortcuts).toEqual([{ toggleLyrics: "ok", nudgeEarlier: "unavailable", nudgeLater: "unavailable" }]);
+    // turned off: off wins
+    await bridge.invoke("update_settings", { patch: { shortcuts: { ...d, enabled: false } } });
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual({ toggleLyrics: "off", nudgeEarlier: "off", nudgeLater: "off" });
+  });
+
+  it("suspending changes no status, and the bridge says whether it is suspended", async () => {
+    const { bridge, seen } = await mock();
+    expect(bridge.shortcutsSuspended).toBe(false);
+    await bridge.invoke("suspend_shortcuts", { suspended: true });
+    expect(bridge.shortcutsSuspended).toBe(true);
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual(ALL_OK);
+    await bridge.invoke("suspend_shortcuts", { suspended: false });
+    await tick();
+    expect(bridge.shortcutsSuspended).toBe(false);
+    expect(seen.shortcuts).toEqual([]);
+  });
+
+  it("hands out copies of the status", async () => {
+    const { bridge } = await mock();
+    const status = await bridge.invoke("get_shortcuts_status");
+    status.toggleLyrics = "invalid";
+    expect(await bridge.invoke("get_shortcuts_status")).toEqual(ALL_OK);
+  });
+
+  it("shortcutsStatusOf: off, then invalid, then unavailable, else ok", () => {
+    const d = DEFAULT_SETTINGS.shortcuts;
+    expect(shortcutsStatusOf(d)).toEqual(ALL_OK);
+    expect(shortcutsStatusOf({ ...d, enabled: false, toggleLyrics: "junk" })).toEqual({ toggleLyrics: "off", nudgeEarlier: "off", nudgeLater: "off" });
+    expect(shortcutsStatusOf({ ...d, toggleLyrics: "Shift+L", nudgeLater: "" }, new Set([d.nudgeEarlier]))).toEqual({
+      toggleLyrics: "invalid",
+      nudgeEarlier: "unavailable",
+      nudgeLater: "off",
+    });
+  });
+});
+
 describe("mock bridge: other commands and lifetime", () => {
   it("does nothing for open_settings and quit outside a browser", async () => {
     const { bridge } = await mock();
@@ -1003,7 +1114,10 @@ describe("mock bridge: keyboard and window", () => {
     return { added, removed, opened };
   }
 
-  function press(fn: KeyListener | undefined, init: Partial<Record<"code" | "key", string>> & { shiftKey?: boolean; metaKey?: boolean; target?: unknown }): boolean {
+  function press(
+    fn: KeyListener | undefined,
+    init: Partial<Record<"code" | "key", string>> & { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; defaultPrevented?: boolean; target?: unknown },
+  ): boolean {
     let prevented = false;
     const e = {
       code: "",
@@ -1053,6 +1167,75 @@ describe("mock bridge: keyboard and window", () => {
     expect(press(onKey, { code: "Space", key: " ", target: new FakeElement(true) })).toBe(false);
     expect(bridge.player.snapshot).toEqual(before);
     expect(press(onKey, { code: "Space", key: " ", target: new FakeElement(false) })).toBe(true);
+  });
+
+  it("ignores a key the Settings recorder already handled", async () => {
+    const win = stubWindow();
+    const { bridge } = await mock("?track=1&t=10000&paused", { keys: true });
+    const onKey = win.added.get("keydown");
+    const before = bridge.player.snapshot;
+    press(onKey, { code: "Space", key: " ", defaultPrevented: true });
+    press(onKey, { key: "n", defaultPrevented: true });
+    expect(bridge.player.snapshot).toEqual(before);
+  });
+
+  // The global shortcuts, as far as a page can have them (Windows notation: Ctrl is CmdOrCtrl).
+  describe("global shortcuts while the page has focus", () => {
+    const toggle = { code: "KeyL", key: "L", ctrlKey: true, altKey: true, shiftKey: true };
+    const earlier = { code: "BracketRight", key: "}", ctrlKey: true, altKey: true, shiftKey: true };
+    const later = { code: "BracketLeft", key: "{", ctrlKey: true, altKey: true, shiftKey: true };
+
+    async function setup(query = "?track=1&t=10000&paused"): Promise<{ bridge: MockBridge; seen: Seen; onKey: KeyListener | undefined }> {
+      vi.stubGlobal("navigator", { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+      const win = stubWindow();
+      const { bridge, seen } = await mock(query, { keys: true });
+      return { bridge, seen, onKey: win.added.get("keydown") };
+    }
+
+    it("the toggle shortcut flips enabled and every page hears it", async () => {
+      const { bridge, seen, onKey } = await setup();
+      expect(press(onKey, toggle)).toBe(true);
+      expect((await bridge.invoke("get_settings")).enabled).toBe(false);
+      press(onKey, toggle);
+      await tick();
+      expect(seen.settings.map((s) => s.enabled)).toEqual([false, true]);
+    });
+
+    it("the nudges move this song's offset by 50 ms, earlier positive", async () => {
+      const { bridge, onKey } = await setup();
+      press(onKey, earlier);
+      press(onKey, earlier);
+      press(onKey, later);
+      expect((await bridge.invoke("get_settings")).trackOffsetsMs).toEqual({ [key(1)]: SHORTCUT_NUDGE_MS });
+      // with nothing reported, a nudge has no song to move (but still belongs to Undertone)
+      bridge.setMedia("no-player");
+      expect(press(onKey, earlier)).toBe(true);
+      expect((await bridge.invoke("get_settings")).trackOffsetsMs).toEqual({ [key(1)]: SHORTCUT_NUDGE_MS });
+    });
+
+    it("do nothing while suspended, turned off, unavailable, or already handled", async () => {
+      const { bridge, onKey } = await setup("?track=1&paused&shortcutConflict=nudgeLater");
+      await bridge.invoke("suspend_shortcuts", { suspended: true });
+      expect(press(onKey, toggle)).toBe(false);
+      await bridge.invoke("suspend_shortcuts", { suspended: false });
+      expect(press(onKey, { ...toggle, defaultPrevented: true })).toBe(false);
+      expect(press(onKey, later)).toBe(false);
+      // a different combination
+      expect(press(onKey, { ...toggle, shiftKey: false })).toBe(false);
+      await bridge.invoke("update_settings", { patch: { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, enabled: false } } });
+      expect(press(onKey, toggle)).toBe(false);
+      const s = await bridge.invoke("get_settings");
+      expect(s.enabled).toBe(true);
+      expect(s.trackOffsetsMs).toEqual({});
+    });
+
+    it("follow a rebinding", async () => {
+      const { bridge, onKey } = await setup();
+      await bridge.invoke("update_settings", { patch: { shortcuts: { ...DEFAULT_SETTINGS.shortcuts, toggleLyrics: "Super+F9" } } });
+      expect(press(onKey, toggle)).toBe(false);
+      expect(press(onKey, { code: "F9", key: "F9", metaKey: true })).toBe(true);
+      expect((await bridge.invoke("get_settings")).enabled).toBe(false);
+    });
   });
 
   it("removes the key listener on dispose", async () => {

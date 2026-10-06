@@ -1,4 +1,4 @@
-import type { Settings } from "../../contract/contract";
+import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 import type { Bridge } from "../bridge/types";
 
 /** Edits are saved this long after the last change (C7)... */
@@ -18,6 +18,31 @@ export type Write =
   | { kind: "patch"; patch: Partial<Settings> }
   | { kind: "track"; trackKey: string; ms: number };
 
+/**
+ * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`; the
+ * window shows their defaults. Complete settings come back as the same object.
+ */
+export function withDefaults(settings: Settings): Settings {
+  const s: Partial<Settings> = settings;
+  if (s.enabled !== undefined && s.launchAtLogin !== undefined && s.shortcuts !== undefined) return settings;
+  const defaults = structuredClone(DEFAULT_SETTINGS);
+  return { ...defaults, ...settings, shortcuts: { ...defaults.shortcuts, ...s.shortcuts } };
+}
+
+/**
+ * Reset to defaults: everything but `version`, per-song offsets (those go through `set_track_offset`),
+ * and the two switches that aren't about how lyrics look: resetting must neither turn the lyrics back
+ * on (or off) nor add or remove the login item. The shortcuts are reset, switch and bindings.
+ */
+export function defaultsPatch(): Partial<Settings> {
+  const patch: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+  delete patch.version;
+  delete patch.trackOffsetsMs;
+  delete patch.enabled;
+  delete patch.launchAtLogin;
+  return patch;
+}
+
 /** Settings as they will be once `write` lands. A zero track offset reads the same as none. */
 export function applyWrite(settings: Settings, write: Write): Settings {
   if (write.kind === "patch") return { ...settings, ...write.patch };
@@ -33,7 +58,8 @@ export interface SettingsSyncOptions {
   initial: Settings;
   /** Called with the settings the window should show, after every change from either side. */
   onChange: (view: Settings) => void;
-  onError?: (error: unknown) => void;
+  /** A save the core refused (a login item it couldn't change, say). The window falls back to the core's settings. */
+  onError?: (error: unknown, write: Write) => void;
   debounceMs?: number;
   maxWaitMs?: number;
 }
@@ -57,13 +83,13 @@ export class SettingsSync {
   private disposed = false;
   private readonly bridge: Pick<Bridge, "invoke">;
   private readonly onChange: (view: Settings) => void;
-  private readonly onError: (error: unknown) => void;
+  private readonly onError: (error: unknown, write: Write) => void;
   private readonly debounceMs: number;
   private readonly maxWaitMs: number;
 
   constructor(options: SettingsSyncOptions) {
     this.bridge = options.bridge;
-    this.base = options.initial;
+    this.base = withDefaults(options.initial);
     this.onChange = options.onChange;
     this.onError = options.onError ?? (() => {});
     this.debounceMs = options.debounceMs ?? SAVE_DEBOUNCE_MS;
@@ -84,7 +110,7 @@ export class SettingsSync {
   /** A `settings-changed` echo, from this window or any other. */
   receive(settings: Settings): void {
     if (this.disposed) return;
-    this.base = settings;
+    this.base = withDefaults(settings);
     this.onChange(this.view);
   }
 
@@ -98,6 +124,18 @@ export class SettingsSync {
     if (this.timer) clearTimeout(this.timer);
     const wait = Math.max(0, Math.min(this.debounceMs, this.firstPendingAt + this.maxWaitMs - now));
     this.timer = setTimeout(() => this.flush(), wait);
+  }
+
+  /**
+   * A change that saves at once as its own `update_settings` (after any edits made before it): a
+   * switch with a side effect, such as Launch at login, whose failure must not take other edits with it.
+   */
+  editNow(patch: Partial<Settings>): void {
+    if (this.disposed) return;
+    this.flush();
+    this.queue.push({ kind: "patch", patch });
+    this.onChange(this.view);
+    this.pump();
   }
 
   /** Sets one song's offset right away (after any edits made before it). */
@@ -137,9 +175,9 @@ export class SettingsSync {
     sent
       .then(
         (settings) => {
-          this.base = settings;
+          this.base = withDefaults(settings);
         },
-        (error: unknown) => this.onError(error),
+        (error: unknown) => this.onError(error, write),
       )
       .finally(() => {
         this.queue.shift();

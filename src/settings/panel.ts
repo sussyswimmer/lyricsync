@@ -1,8 +1,19 @@
-import type { MediaStatus, Mode, Settings, Source } from "../../contract/contract";
+import {
+  DEFAULT_SETTINGS,
+  type MediaStatus,
+  type Mode,
+  type Settings,
+  type ShortcutAction,
+  type Shortcuts,
+  type ShortcutsStatus,
+  type Source,
+} from "../../contract/contract";
+import { detectPlatform, displayAccelerator, SHORTCUT_ACTIONS, type KeyLayout, type Platform } from "../core/accelerator";
 import type { Palette } from "../core/palette";
 import { h } from "../overlay/dom";
 import { FONTS, fontFor } from "../overlay/fonts";
 import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle, type Option } from "./controls";
+import { ShortcutRecorder } from "./recorder";
 import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
 /** What the panel draws. */
@@ -19,13 +30,29 @@ export interface PanelState {
   track: { key: string; title: string; artist: string } | null;
   /** why nothing plays, as the core reports it (contract v2); null from an older core */
   media: MediaStatus | null;
+  /** whether each global shortcut works (contract v3); null from an older core */
+  shortcuts: ShortcutsStatus | null;
+  /** the last Launch at login change failed (the OS refused the login item) */
+  loginError: boolean;
 }
 
 /** What the panel asks for. */
 export interface PanelActions {
+  /** a change saved debounced; nested objects (colors, font, shortcuts) always whole */
   edit(patch: Partial<Settings>): void;
+  /** a switch with a side effect (Launch at login), saved at once on its own */
+  editNow(patch: Partial<Settings>): void;
   setTrackOffset(trackKey: string, ms: number): void;
   reset(forgetSongs: boolean): void;
+  /** true while a shortcut row listens for keys, so the current global shortcuts don't take them */
+  suspendShortcuts(suspended: boolean): void;
+}
+
+export interface PanelOptions {
+  /** how shortcuts are written (⌥⇧⌘L or Ctrl+Alt+Shift+L) and the menu is named. Default: detected. */
+  platform?: Platform;
+  /** the keyboard layout a shortcut row reads as it starts listening. Default: the engine's own. */
+  keyLayout?: () => Promise<KeyLayout | null>;
 }
 
 type ColorKey = keyof Settings["colors"];
@@ -81,6 +108,21 @@ const COLORS: readonly { key: ColorKey; label: string; spoken: string }[] = [
 
 const NUDGES = [-100, -50, 50, 100] as const;
 
+/** The shortcut rows: the label beside the key button, and the name a clash message uses. */
+const SHORTCUT_ROWS: Readonly<Record<ShortcutAction, { label: string; name: string }>> = {
+  toggleLyrics: { label: "Show or hide lyrics", name: "Show or hide lyrics" },
+  nudgeEarlier: { label: "Nudge earlier (+50 ms)", name: "Nudge earlier" },
+  nudgeLater: { label: "Nudge later (−50 ms)", name: "Nudge later" },
+};
+const SHORTCUT_NAMES = Object.fromEntries(SHORTCUT_ACTIONS.map((a) => [a, SHORTCUT_ROWS[a].name])) as Record<ShortcutAction, string>;
+
+/** Where the app's own menu lives. */
+function menuPlace(platform: Platform): string {
+  if (platform === "mac") return "the menu bar";
+  if (platform === "windows") return "the tray icon";
+  return "the Undertone menu";
+}
+
 /** The player as its own switch is labeled under Automation in System Settings. */
 function playerName(source: Source | null): string {
   if (source === "spotify") return "Spotify";
@@ -108,23 +150,30 @@ const signed = (v: number): string => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(
 export class SettingsPanel {
   readonly el: HTMLElement;
   private readonly actions: PanelActions;
+  private readonly platform: Platform;
+  private readonly keyLayout: (() => Promise<KeyLayout | null>) | undefined;
   private state: PanelState | null = null;
   private readonly renderers: ((state: PanelState) => void)[] = [];
   private readonly status: HTMLElement;
+  private recorders: ShortcutRecorder[] = [];
 
-  constructor(actions: PanelActions) {
+  constructor(actions: PanelActions, options: PanelOptions = {}) {
     this.actions = actions;
+    this.platform = options.platform ?? detectPlatform(typeof navigator === "undefined" ? undefined : navigator);
+    this.keyLayout = options.keyLayout;
     this.el = h("div", "panel");
     this.status = h("p", "sr-only");
     this.status.setAttribute("role", "status");
     this.el.append(
       this.mediaNotice(),
+      this.generalGroup(),
       this.styleGroup(),
       this.colorGroup(),
       this.fontGroup(),
       this.layoutGroup(),
       this.behaviorGroup(),
       this.syncGroup(),
+      this.shortcutsGroup(),
       this.resetGroup(),
       this.footer(),
       this.status,
@@ -134,6 +183,11 @@ export class SettingsPanel {
   render(state: PanelState): void {
     this.state = state;
     for (const render of this.renderers) render(state);
+  }
+
+  /** Stops a shortcut row that is listening for keys (the window lost focus or is closing). */
+  cancelRecording(): void {
+    for (const recorder of this.recorders) recorder.cancel();
   }
 
   /** Polite screen reader announcement. */
@@ -191,6 +245,58 @@ export class SettingsPanel {
       setText(fixName, name);
     });
     return el;
+  }
+
+  // ---------- general ----------
+
+  private generalGroup(): HTMLElement {
+    const enabledCaptionId = nextId("enabled-caption");
+    const enabled = toggle({
+      label: "Lyrics on the desktop",
+      describedBy: enabledCaptionId,
+      onChange: (on) => this.actions.edit({ enabled: on }),
+    });
+    const enabledCaption = hint("", "toggle-hint");
+    enabledCaption.id = enabledCaptionId;
+
+    const loginNoteId = nextId("login-note");
+    const login = toggle({
+      label: "Launch at login",
+      describedBy: loginNoteId,
+      onChange: (on) => this.actions.editNow({ launchAtLogin: on }),
+    });
+    // Empty unless the OS refused the change; a status region, so the refusal is announced.
+    const loginNote = hint("", "toggle-hint login-note");
+    loginNote.id = loginNoteId;
+    loginNote.setAttribute("role", "status");
+
+    const { el } = group("General", enabled.el, enabledCaption, login.el, loginNote);
+    this.renderers.push((s) => {
+      const on = s.settings.enabled;
+      enabled.set(on);
+      setText(enabledCaption, on ? "Shown on your desktop, under your windows." : this.offCaption(s));
+      login.set(s.settings.launchAtLogin);
+      const where =
+        this.platform === "mac"
+          ? " Try again, or check System Settings › General › Login Items."
+          : this.platform === "windows"
+            ? " Try again, or check Settings › Apps › Startup."
+            : " Try again.";
+      setText(loginNote, s.loginError ? `Couldn't change Undertone's login item.${where}` : "");
+    });
+    return el;
+  }
+
+  /** Where the lyrics can be turned back on: here, the menu, and the toggle shortcut when it works. */
+  private offCaption(s: PanelState): string {
+    const { shortcuts } = s.settings;
+    const state = s.shortcuts?.toggleLyrics;
+    const works = shortcuts.enabled && shortcuts.toggleLyrics !== "" && state !== "unavailable" && state !== "invalid";
+    const key = works ? displayAccelerator(shortcuts.toggleLyrics, this.platform) : "";
+    const menu = menuPlace(this.platform);
+    return key
+      ? `Hidden on the desktop. Turn them back on here, from ${menu}, or with ${key}.`
+      : `Hidden on the desktop. Turn them back on here or from ${menu}.`;
   }
 
   // ---------- style ----------
@@ -342,18 +448,17 @@ export class SettingsPanel {
   // ---------- behavior ----------
 
   private behaviorGroup(): HTMLElement {
+    // The visible word is terse ("When"); the group keeps its spoken name ("When to show lyrics").
     const row = (label: string, control: HTMLElement): HTMLElement => {
       const el = h("div", "row choice");
       const name = h("span", "row-label", label);
-      name.id = nextId("choice");
-      control.setAttribute("aria-labelledby", name.id);
-      control.removeAttribute("aria-label");
+      name.setAttribute("aria-hidden", "true");
       el.append(name, control);
       return el;
     };
     const showWhen = radios<Settings["showWhen"]>({
       name: "showWhen",
-      label: "Show lyrics",
+      label: "When to show lyrics",
       options: [
         { value: "playing", label: "While playing" },
         { value: "always", label: "Always" },
@@ -363,7 +468,7 @@ export class SettingsPanel {
     });
     const displays = radios<Settings["displays"]>({
       name: "displays",
-      label: "Displays",
+      label: "Where to show lyrics",
       options: [
         { value: "primary", label: "Primary display" },
         { value: "all", label: "All displays" },
@@ -371,7 +476,7 @@ export class SettingsPanel {
       className: "seg",
       onChange: (v) => this.actions.edit({ displays: v }),
     });
-    const { el } = group("Behavior", row("Show lyrics", showWhen.el), row("Show on", displays.el));
+    const { el } = group("Behavior", row("When", showWhen.el), row("Where", displays.el));
     this.renderers.push(({ settings: s }) => {
       showWhen.set(s.showWhen);
       displays.set(s.displays);
@@ -493,6 +598,79 @@ export class SettingsPanel {
     return el;
   }
 
+  // ---------- shortcuts ----------
+
+  private shortcutsGroup(): HTMLElement {
+    const captionId = nextId("shortcuts-caption");
+    const master = toggle({
+      label: "Keyboard shortcuts",
+      describedBy: captionId,
+      onChange: (on) => this.editShortcuts({ enabled: on }),
+    });
+    const caption = hint("", "toggle-hint");
+    caption.id = captionId;
+
+    const rows = h("div", "sc-rows");
+    // What to press while a row listens, on the foot's line beside Reset shortcuts: a line under the
+    // row would push every row below it down, away from the pointer.
+    const listenHint = h("p", "sc-hint");
+    listenHint.setAttribute("aria-live", "polite");
+    this.recorders = SHORTCUT_ACTIONS.map(
+      (action) =>
+        new ShortcutRecorder({
+          action,
+          label: SHORTCUT_ROWS[action].label,
+          platform: this.platform,
+          names: SHORTCUT_NAMES,
+          shortcuts: () => this.state?.settings.shortcuts ?? null,
+          onRecording: (recording) => {
+            // One row listens at a time (focus moving on already cancels the other).
+            if (recording) for (const other of this.recorders) if (other.action !== action) other.cancel();
+            this.actions.suspendShortcuts(recording);
+            setText(listenHint, this.recorders.some((r) => r.recording) ? "Esc cancels, Delete clears" : "");
+          },
+          onSave: (binding) => this.editShortcuts({ [action]: binding }),
+          announce: (text) => this.announce(text),
+          keyLayout: this.keyLayout,
+        }),
+    );
+    const resetKeys = h("button", "link-btn", "Reset shortcuts");
+    resetKeys.type = "button";
+    // Inert, not disabled, at the defaults: keyboard focus stays on it after a reset.
+    resetKeys.addEventListener("click", () => {
+      if (resetKeys.getAttribute("aria-disabled") === "true") return;
+      const d = DEFAULT_SETTINGS.shortcuts;
+      this.editShortcuts({ toggleLyrics: d.toggleLyrics, nudgeEarlier: d.nudgeEarlier, nudgeLater: d.nudgeLater });
+      this.announce("Shortcuts are back to their defaults");
+    });
+    const foot = h("div", "sc-foot");
+    foot.append(listenHint, resetKeys);
+    rows.append(...this.recorders.map((r) => r.el), foot);
+
+    const { el } = group("Shortcuts", master.el, caption, rows);
+    this.renderers.push((s) => {
+      const keys = s.settings.shortcuts;
+      master.set(keys.enabled);
+      setText(caption, keys.enabled ? "They work from any app, even with Settings closed." : "Off. Other apps can use these keys.");
+      // Off: the rows stay readable but can't be reached or pressed.
+      rows.classList.toggle("is-disabled", !keys.enabled);
+      setAttr(rows, "inert", keys.enabled ? null : "");
+      for (const recorder of this.recorders) {
+        if (!keys.enabled) recorder.cancel();
+        recorder.set(keys[recorder.action], s.shortcuts?.[recorder.action] ?? null);
+      }
+      const atDefaults = SHORTCUT_ACTIONS.every((a) => keys[a] === DEFAULT_SETTINGS.shortcuts[a]);
+      setAttr(resetKeys, "aria-disabled", atDefaults ? "true" : null);
+    });
+    return el;
+  }
+
+  /** Shortcut changes go out as the whole object, like colors and font. */
+  private editShortcuts(patch: Partial<Shortcuts>): void {
+    const current = this.state?.settings.shortcuts ?? DEFAULT_SETTINGS.shortcuts;
+    this.actions.edit({ shortcuts: { ...current, ...patch } });
+  }
+
   // ---------- reset ----------
 
   private resetGroup(): HTMLElement {
@@ -507,7 +685,9 @@ export class SettingsPanel {
     confirm.setAttribute("aria-labelledby", titleId);
     const title = h("p", "confirm-title", "Reset all settings?");
     title.id = titleId;
-    const body = hint("Style, colors, font, layout, behavior and sync for all songs go back to how Undertone started.");
+    const body = hint(
+      "Style, colors, font, layout, behavior, sync for all songs and shortcuts go back to how Undertone started. Lyrics on the desktop and Launch at login stay as they are.",
+    );
     const forgetRow = h("label", "check");
     const forget = h("input");
     forget.type = "checkbox";

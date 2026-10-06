@@ -7,6 +7,7 @@ import { GAP_GRACE_MS, TrackHold } from "../src/settings/hold";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
 import { applyWrite, clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "../src/settings/store";
+import { pendingFrames, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
 
 /*
  * Regressions from the settings-window QA pass:
@@ -44,136 +45,6 @@ const previewFakes = vi.hoisted(() => {
 vi.mock("../src/overlay/stage", () => ({ LyricStage: previewFakes.Stage }));
 vi.mock("../src/overlay/controller", () => ({ OverlayController: previewFakes.Controller }));
 
-// ---------- a DOM just big enough for SettingsPanel ----------
-
-let active: FakeElement | null = null;
-const frames: (() => void)[] = [];
-
-class FakeElement {
-  readonly tagName: string;
-  className = "";
-  id = "";
-  type = "";
-  name = "";
-  value = "";
-  min = "";
-  max = "";
-  step = "";
-  title = "";
-  hidden = false;
-  checked = false;
-  disabled = false;
-  /** a label's `for` (a string), or an output's token list */
-  htmlFor: unknown = { add: (): void => undefined };
-  readonly dataset: Record<string, string> = {};
-  readonly style = { setProperty: (): void => undefined, removeProperty: (): void => undefined } as Record<string, unknown>;
-  readonly attrs = new Map<string, string>();
-  readonly children: FakeElement[] = [];
-  private readonly listeners = new Map<string, (() => void)[]>();
-  private text = "";
-  /** how many times textContent was assigned */
-  textWrites = 0;
-
-  constructor(tag: string) {
-    this.tagName = tag.toUpperCase();
-  }
-
-  get textContent(): string {
-    return this.text + this.children.map((c) => c.textContent).join("");
-  }
-  set textContent(value: string) {
-    this.textWrites++;
-    this.children.length = 0;
-    this.text = value;
-  }
-  get lastElementChild(): FakeElement | null {
-    return this.children[this.children.length - 1] ?? null;
-  }
-  readonly classList = {
-    add: (...names: string[]): void => {
-      const set = new Set(this.className.split(" ").filter(Boolean));
-      for (const n of names) set.add(n);
-      this.className = [...set].join(" ");
-    },
-    remove: (...names: string[]): void => {
-      this.className = this.className
-        .split(" ")
-        .filter((c) => c && !names.includes(c))
-        .join(" ");
-    },
-    toggle: (name: string, force?: boolean): boolean => {
-      const on = force ?? !this.classList.contains(name);
-      if (on) this.classList.add(name);
-      else this.classList.remove(name);
-      return on;
-    },
-    contains: (name: string): boolean => this.className.split(" ").includes(name),
-  };
-  append(...nodes: FakeElement[]): void {
-    this.children.push(...nodes);
-  }
-  setAttribute(name: string, value: string): void {
-    this.attrs.set(name, String(value));
-  }
-  getAttribute(name: string): string | null {
-    return this.attrs.get(name) ?? null;
-  }
-  hasAttribute(name: string): boolean {
-    return this.attrs.has(name);
-  }
-  removeAttribute(name: string): void {
-    this.attrs.delete(name);
-  }
-  addEventListener(type: string, fn: () => void): void {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), fn]);
-  }
-  /**
-   * What a keyboard press or a click does. A `disabled` button gets no click (and the browser drops its
-   * focus), which is what the old code relied on; an aria-disabled one still gets it.
-   */
-  click(): void {
-    if (this.disabled) return;
-    for (const fn of this.listeners.get("click") ?? []) fn();
-  }
-  focus(): void {
-    active = this;
-  }
-  scrollIntoView(): void {}
-  /** A canvas without a 2D context: the mock's demo covers are left out, as outside a browser. */
-  getContext(): null {
-    return null;
-  }
-  /** Every descendant with this class, in document order. */
-  all(className: string): FakeElement[] {
-    const out: FakeElement[] = [];
-    for (const c of this.children) {
-      if (c.classList.contains(className)) out.push(c);
-      out.push(...c.all(className));
-    }
-    return out;
-  }
-  one(className: string): FakeElement {
-    const el = this.all(className)[0];
-    if (!el) throw new Error(`no .${className}`);
-    return el;
-  }
-  querySelector(selector: string): FakeElement | null {
-    return this.all(selector.replace(/^\./, ""))[0] ?? null;
-  }
-}
-
-function stubDom(): void {
-  vi.stubGlobal("document", {
-    createElement: (tag: string) => new FakeElement(tag),
-    createElementNS: (_ns: string, tag: string) => new FakeElement(tag),
-    get activeElement() {
-      return active;
-    },
-  });
-  vi.stubGlobal("requestAnimationFrame", (fn: () => void) => frames.push(fn));
-  vi.stubGlobal("matchMedia", () => ({ matches: false }));
-}
-
 // The panel module draws its style icons when it loads, so the fake DOM has to be there first.
 let SettingsPanel: typeof Panel;
 beforeAll(async () => {
@@ -182,8 +53,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  active = null;
-  frames.length = 0;
+  resetDom();
   stubDom();
 });
 
@@ -199,18 +69,21 @@ const TRACK = { key: KEY, title: "Placeholder Song", artist: "Nobody" };
 function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
   let settings: Settings = applyWrite(structuredClone(DEFAULT_SETTINGS), { kind: "track", trackKey: KEY, ms: offsetMs });
   const writes: { key: string; ms: number }[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null };
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false };
+  const edit = (patch: Partial<Settings>): void => {
+    settings = { ...settings, ...patch };
+    panel.render((state = { ...state, settings }));
+  };
   const panel = new SettingsPanel({
-    edit: (patch) => {
-      settings = { ...settings, ...patch };
-      panel.render((state = { ...state, settings }));
-    },
+    edit,
+    editNow: edit,
     setTrackOffset: (key, ms) => {
       writes.push({ key, ms });
       settings = applyWrite(settings, { kind: "track", trackKey: key, ms });
       panel.render((state = { ...state, settings }));
     },
     reset: () => undefined,
+    suspendShortcuts: () => undefined,
   });
   panel.render(state);
   const root = panel.el as unknown as FakeElement;
@@ -246,7 +119,7 @@ function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
 
 const inert = (el: FakeElement): boolean => el.getAttribute("aria-disabled") === "true";
 const spoken = (root: FakeElement): string => {
-  for (const f of frames.splice(0)) f();
+  runFrames();
   // the panel's announcer, not the media notice (also a status region)
   return root.children.find((c) => c.getAttribute("role") === "status" && c.classList.contains("sr-only"))?.textContent ?? "";
 };
@@ -322,7 +195,16 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     const p = mountPanel(50);
     const before = p.value.textWrites;
     for (let i = 0; i < 15; i++) p.rerender();
-    p.panel.render({ settings: { ...DEFAULT_SETTINGS, mode: "lens", trackOffsetsMs: { [KEY]: 50 } }, palette: null, paletteFor: null, artPending: false, track: TRACK, media: null });
+    p.panel.render({
+      settings: { ...DEFAULT_SETTINGS, mode: "lens", trackOffsetsMs: { [KEY]: 50 } },
+      palette: null,
+      paletteFor: null,
+      artPending: false,
+      track: TRACK,
+      media: null,
+      shortcuts: null,
+      loginError: false,
+    });
     expect(p.value.textWrites).toBe(before);
     expect(p.value.textContent).toBe("+50 ms");
   });
@@ -337,7 +219,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     expect(spoken(p.root)).toBe("This song's sync is back to 0");
     // nothing left to reset: no second announcement
     p.resetSong.click();
-    expect(frames).toHaveLength(0);
+    expect(pendingFrames()).toHaveLength(0);
   });
 
   it("the announcement says the clamped value the store saves", () => {
@@ -350,7 +232,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     const p = mountPanel(100);
     spoken(p.root);
     p.setTrack({ key: "other|song|x|1", title: "Other", artist: "Someone" });
-    expect(frames).toHaveLength(0);
+    expect(pendingFrames()).toHaveLength(0);
     expect(p.value.textContent).toBe("0 ms");
   });
 });

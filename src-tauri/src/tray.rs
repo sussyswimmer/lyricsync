@@ -1,6 +1,7 @@
 //! X5 tray / menu bar. What the menu shows (labels, check marks, enabled items, tooltip) is a pure
-//! function of settings, now playing and the runtime flags, tested on every OS; `runtime` builds
-//! the native menu, keeps it in step with `settings-changed` and `now-playing`, and runs clicks.
+//! function of settings and now playing, tested on every OS; `runtime` builds the native menu,
+//! keeps it in step with `settings-changed` and `now-playing`, and runs clicks. Hide/Show lyrics
+//! and Launch at login change the settings, like the Settings window's switches.
 use crate::contract::{Mode, NowPlaying, Settings};
 
 /// Tray sync step. Positive offsets show lyrics earlier, as in the settings window.
@@ -76,14 +77,15 @@ impl From<&NowPlaying> for Track {
     }
 }
 
-/// Everything the menu depends on. `offset_ms` is the current song's offset (0 without a song).
+/// Everything the menu depends on. `offset_ms` is the current song's offset (0 without a song);
+/// `enabled` and `launch_at_login` are the settings of those names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inputs {
     pub mode: Mode,
     pub track: Option<Track>,
     pub offset_ms: f64,
-    pub hidden: bool,
-    pub autostart: bool,
+    pub enabled: bool,
+    pub launch_at_login: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,7 +98,7 @@ pub struct MenuState {
     pub reset_label: String,
     pub reset_enabled: bool,
     pub refetch_enabled: bool,
-    pub autostart: bool,
+    pub launch_at_login: bool,
     pub tooltip: String,
 }
 /// Sync and refetch act on the current song, playing or paused, so they need one. A nudge that
@@ -104,10 +106,10 @@ pub struct MenuState {
 pub fn menu_state(inputs: &Inputs) -> MenuState {
     let offset = inputs.track.as_ref().map(|_| inputs.offset_ms);
     MenuState {
-        lyrics_label: if inputs.hidden {
-            "Show lyrics"
-        } else {
+        lyrics_label: if inputs.enabled {
             "Hide lyrics"
+        } else {
+            "Show lyrics"
         },
         mode: inputs.mode.clone(),
         earlier_enabled: offset.is_some_and(|ms| ms < MAX_OFFSET_MS),
@@ -115,7 +117,7 @@ pub fn menu_state(inputs: &Inputs) -> MenuState {
         reset_label: reset_label(offset.unwrap_or(0.0)),
         reset_enabled: offset.is_some_and(|ms| ms != 0.0),
         refetch_enabled: inputs.track.is_some(),
-        autostart: inputs.autostart,
+        launch_at_login: inputs.launch_at_login,
         tooltip: tooltip(inputs.track.as_ref()),
     }
 }
@@ -190,17 +192,13 @@ mod runtime {
         contract::{Mode, NOW_PLAYING_EVENT, SETTINGS_CHANGED_EVENT},
         state::AppState,
     };
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    };
+    use std::sync::{Arc, Mutex};
     use tauri::{
         image::Image,
         menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
         tray::{TrayIconBuilder, TrayIconEvent},
         AppHandle, Listener, Manager, Wry,
     };
-    use tauri_plugin_autostart::AutoLaunchManager;
 
     const TRAY_ID: &str = "undertone";
     /// macOS: an 18 pt @2x template the menu bar tints for light and dark. Windows has no
@@ -219,9 +217,6 @@ mod runtime {
         reset: MenuItem<Wry>,
         refetch: MenuItem<Wry>,
         launch_at_login: CheckMenuItem<Wry>,
-        /// The real autostart state, read at start, after a toggle and when the pointer enters
-        /// the icon (the user can change it in the OS).
-        autostart: AtomicBool,
         shown: Mutex<Option<MenuState>>,
     }
 
@@ -237,8 +232,7 @@ mod runtime {
     }
 
     fn build(app: &AppHandle) -> tauri::Result<()> {
-        let autostart = autostart_enabled(app).unwrap_or(false);
-        let state = super::menu_state(&inputs(app, autostart));
+        let state = super::menu_state(&inputs(app));
         let lyrics = MenuItem::with_id(app, super::LYRICS, state.lyrics_label, true, None::<&str>)?;
         let styles = super::STYLES
             .iter()
@@ -281,7 +275,7 @@ mod runtime {
             super::LAUNCH_AT_LOGIN,
             "Launch at login",
             true,
-            state.autostart,
+            state.launch_at_login,
             None::<&str>,
         )?;
         let quit = MenuItem::with_id(app, super::QUIT, "Quit Undertone", true, None::<&str>)?;
@@ -318,9 +312,10 @@ mod runtime {
             .show_menu_on_left_click(true)
             .on_menu_event(|app, event| handle(app, event.id().as_ref()))
             .on_tray_icon_event(|tray, event| {
+                // The user may have removed the login item in the OS; a change shows through
+                // `settings-changed`.
                 if let TrayIconEvent::Enter { .. } = event {
-                    read_autostart(tray.app_handle());
-                    refresh(tray.app_handle(), false);
+                    crate::settings::runtime::sync_login_item(tray.app_handle());
                 }
             })
             .build(app)?;
@@ -333,7 +328,6 @@ mod runtime {
             reset,
             refetch,
             launch_at_login,
-            autostart: AtomicBool::new(autostart),
             shown: Mutex::new(Some(state)),
         });
         Ok(())
@@ -341,7 +335,7 @@ mod runtime {
 
     /// Reads the inputs one lock at a time, never across an emit, so a listener can't deadlock
     /// with the media loop or a settings change.
-    fn inputs(app: &AppHandle, autostart: bool) -> Inputs {
+    fn inputs(app: &AppHandle) -> Inputs {
         let state = app.state::<AppState>();
         let track = state
             .now_playing
@@ -349,19 +343,15 @@ mod runtime {
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(Track::from);
-        let (mode, offset_ms) = {
-            let settings = state.settings.lock().unwrap_or_else(|e| e.into_inner());
-            let offset = track
-                .as_ref()
-                .map_or(0.0, |track| super::track_offset(&settings, &track.key));
-            (settings.mode.clone(), offset)
-        };
+        let settings = state.settings.lock().unwrap_or_else(|e| e.into_inner());
         Inputs {
-            mode,
+            mode: settings.mode.clone(),
+            offset_ms: track
+                .as_ref()
+                .map_or(0.0, |track| super::track_offset(&settings, &track.key)),
             track,
-            offset_ms,
-            hidden: state.lyrics_hidden.load(Ordering::Acquire),
-            autostart,
+            enabled: settings.enabled,
+            launch_at_login: settings.launch_at_login,
         }
     }
 
@@ -374,7 +364,7 @@ mod runtime {
             return;
         };
         if !force {
-            let next = super::menu_state(&inputs(app, tray.autostart.load(Ordering::Acquire)));
+            let next = super::menu_state(&inputs(app));
             if tray
                 .shown
                 .lock()
@@ -398,7 +388,7 @@ mod runtime {
     impl Tray {
         /// Main thread only: menu setters there run inline instead of waiting on the event loop.
         fn update(&self, app: &AppHandle, force: bool) {
-            let next = super::menu_state(&inputs(app, self.autostart.load(Ordering::Acquire)));
+            let next = super::menu_state(&inputs(app));
             let mut shown = self.shown.lock().unwrap_or_else(|e| e.into_inner());
             if !force && shown.as_ref() == Some(&next) {
                 return;
@@ -410,7 +400,7 @@ mod runtime {
                 self.reset.set_text(&next.reset_label),
                 self.reset.set_enabled(next.reset_enabled),
                 self.refetch.set_enabled(next.refetch_enabled),
-                self.launch_at_login.set_checked(next.autostart),
+                self.launch_at_login.set_checked(next.launch_at_login),
             ];
             for (mode, item) in &self.styles {
                 results.push(item.set_checked(*mode == next.mode));
@@ -435,10 +425,7 @@ mod runtime {
             return;
         };
         let result = match action {
-            Action::ToggleLyrics => {
-                toggle_lyrics(app);
-                Ok(())
-            }
+            Action::ToggleLyrics => crate::settings::runtime::toggle_enabled(app).map(drop),
             Action::Style(mode) => {
                 crate::settings::runtime::update(app, &serde_json::json!({ "mode": mode }))
                     .map(drop)
@@ -449,7 +436,9 @@ mod runtime {
             }),
             Action::Refetch => refetch(app),
             Action::Settings => crate::commands::show_settings(app),
-            Action::LaunchAtLogin => toggle_launch_at_login(app),
+            Action::LaunchAtLogin => {
+                crate::settings::runtime::toggle_launch_at_login(app).map(drop)
+            }
             Action::Quit => {
                 app.exit(0);
                 return;
@@ -459,15 +448,6 @@ mod runtime {
             eprintln!("tray: {error}");
         }
         refresh(app, true);
-    }
-
-    /// Tray "Hide lyrics" / "Show lyrics" and Cmd/Ctrl+Alt+Shift+L.
-    pub fn toggle_lyrics(app: &AppHandle) {
-        app.state::<AppState>()
-            .lyrics_hidden
-            .fetch_xor(true, Ordering::AcqRel);
-        crate::desktop_layer::refresh_now();
-        refresh(app, false);
     }
 
     /// Moves the current song's lyrics `delta_ms` earlier (negative: later). Tray and shortcuts.
@@ -501,37 +481,9 @@ mod runtime {
         });
         Ok(())
     }
-
-    fn toggle_launch_at_login(app: &AppHandle) -> Result<(), String> {
-        let launcher = app
-            .try_state::<AutoLaunchManager>()
-            .ok_or("autostart unavailable")?;
-        let result = match launcher.is_enabled() {
-            Ok(true) => launcher.disable(),
-            Ok(false) => launcher.enable(),
-            Err(error) => Err(error),
-        };
-        read_autostart(app);
-        result.map_err(|e| format!("launch at login: {e}"))
-    }
-
-    fn autostart_enabled(app: &AppHandle) -> Option<bool> {
-        match app.try_state::<AutoLaunchManager>()?.is_enabled() {
-            Ok(enabled) => Some(enabled),
-            Err(error) => {
-                eprintln!("launch at login: {error}");
-                None
-            }
-        }
-    }
-    fn read_autostart(app: &AppHandle) {
-        if let (Some(tray), Some(enabled)) = (app.try_state::<Tray>(), autostart_enabled(app)) {
-            tray.autostart.store(enabled, Ordering::Release);
-        }
-    }
 }
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
-pub use runtime::{install, nudge, toggle_lyrics};
+pub use runtime::{install, nudge};
 
 #[cfg(test)]
 mod tests {
@@ -550,8 +502,8 @@ mod tests {
             mode: Mode::Arc,
             track,
             offset_ms,
-            hidden: false,
-            autostart: false,
+            enabled: true,
+            launch_at_login: false,
         }
     }
 
@@ -582,16 +534,18 @@ mod tests {
         assert!(bottom.earlier_enabled && !bottom.later_enabled);
     }
     #[test]
-    fn hide_label_mode_and_autostart_follow_inputs() {
+    fn hide_label_mode_and_launch_at_login_follow_the_settings() {
         let mut given = inputs(None, 0.0);
-        assert_eq!(menu_state(&given).lyrics_label, "Hide lyrics");
-        given.hidden = true;
+        let state = menu_state(&given);
+        assert_eq!(state.lyrics_label, "Hide lyrics");
+        assert!(!state.launch_at_login);
+        given.enabled = false;
         given.mode = Mode::Drift;
-        given.autostart = true;
+        given.launch_at_login = true;
         let state = menu_state(&given);
         assert_eq!(state.lyrics_label, "Show lyrics");
         assert_eq!(state.mode, Mode::Drift);
-        assert!(state.autostart);
+        assert!(state.launch_at_login);
     }
     #[test]
     fn reset_label_says_which_way() {

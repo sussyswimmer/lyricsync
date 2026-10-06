@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../contract/contract";
 import { MOCK_TRACKS } from "../src/bridge/mock";
+import { displayAccelerator } from "../src/core/accelerator";
 
 /*
  * Regressions from the docs QA pass:
@@ -172,6 +173,41 @@ describe("user guide", () => {
     expect(guide).toContain(`from 20% to 100% (default ${d.opacity}%)`);
     for (const hex of Object.values(d.colors)) expect(guide).toContain(`\`${hex.toUpperCase()}\``);
     expect(guide).toContain("from −2000 to +2000 ms");
+  });
+});
+
+// Contract v3: the docs show the default shortcuts exactly as the Settings window writes them
+// (Apple's ⌃⌥⇧⌘ order on a Mac), and name the controls the way the window labels them.
+describe("shortcuts and the General switches in the docs", () => {
+  const d = DEFAULT_SETTINGS.shortcuts;
+  const defaults = [d.toggleLyrics, d.nudgeEarlier, d.nudgeLater];
+
+  it("quote every default shortcut in the macOS and Windows notation Settings uses", () => {
+    for (const doc of ["README.md", "docs/USER_GUIDE.md"]) {
+      const text = read(doc);
+      for (const binding of defaults) {
+        expect(text, doc).toContain(displayAccelerator(binding, "mac"));
+        expect(text, doc).toContain(displayAccelerator(binding, "windows"));
+      }
+      // the old, non-Apple order
+      expect(text, doc).not.toMatch(/⌘⌥⇧/);
+      // they are defaults, which Settings can change
+      expect(text, doc).toMatch(/Settings › Shortcuts/);
+    }
+  });
+
+  it("the guide names the window's controls as it labels them", () => {
+    const guide = read("docs/USER_GUIDE.md");
+    for (const heading of ["## General", "### Lyrics on the desktop", "### Launch at login", "### When", "### Where", "## Shortcuts"]) {
+      expect(guide).toContain(`\n${heading}\n`);
+    }
+    for (const label of ["Keyboard shortcuts", "Reset shortcuts", "Press keys…", "Another app is using this combination.", "Off on the desktop"]) {
+      expect(guide).toContain(label);
+    }
+    // Reset to defaults leaves the two General switches alone
+    expect(guide).toContain("**Lyrics on the desktop** and **Launch at login** stay as they are.");
+    // the Behavior rows were "Show lyrics" and "Show on" before the lyrics switch existed
+    expect(guide).not.toMatch(/Show lyrics: |Show on: /);
   });
 });
 

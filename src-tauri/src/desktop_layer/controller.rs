@@ -203,11 +203,12 @@ fn build_overlay(app: &AppHandle, label: &str) -> Result<WebviewWindow, String> 
 fn reconcile(app: &AppHandle, target: Target) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut settings: Settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
-    let lyrics_hidden = state.lyrics_hidden.load(Ordering::Acquire);
     let test_page =
         cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--desktop-layer-test");
     if test_page {
+        // The test page is shown whatever the saved settings say, lyrics switched off included.
         settings.show_when = ShowWhen::Always;
+        settings.enabled = true;
     }
     if cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--desktop-layer-all") {
         settings.displays = Displays::All;
@@ -229,7 +230,7 @@ fn reconcile(app: &AppHandle, target: Target) -> Result<(), String> {
     let show = shown(
         &settings.show_when,
         PLAYING.load(Ordering::Acquire),
-        lyrics_hidden,
+        settings.enabled,
     );
     for (index, label) in planned {
         let monitor = &monitors[index];

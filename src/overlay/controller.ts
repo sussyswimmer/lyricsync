@@ -13,7 +13,10 @@ const QUERY_RETRY_MS = 1500;
 const ARTWORK_GRACE_MS = 1500;
 
 export interface ControllerOptions {
-  /** Hide the stage when `showWhen` says so and stop drawing (the overlay). The settings preview leaves it off. */
+  /**
+   * Hide the stage and stop drawing when the lyrics are turned off (`enabled`) or `showWhen` says so
+   * (the overlay). The settings preview leaves it off, so it keeps playing while the user customizes.
+   */
   gate?: boolean;
   /** Take settings from the bridge (default) or only from `setSettings` (a preview showing unsaved values). */
   followSettings?: boolean;
@@ -203,7 +206,9 @@ export class OverlayController {
 
   private update(): void {
     const np = this.nowPlaying;
-    this.visible = !this.gate || (np !== null && (this.settings.showWhen === "always" || np.isPlaying));
+    // `enabled` is new in contract v3: settings without it (an older core) count as on.
+    const on = this.settings.enabled !== false;
+    this.visible = !this.gate || (np !== null && on && (this.settings.showWhen === "always" || np.isPlaying));
     this.stage.setVisible(this.visible);
     this.stage.setPaused(!np?.isPlaying);
     this.kick();

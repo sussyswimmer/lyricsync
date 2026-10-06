@@ -27,6 +27,8 @@
   --btn-hover: rgba(24, 26, 32, 0.1);
   /* white "Reset" label at ≥ 4.5:1 (about 4.7:1) */
   --danger: #d0402f;
+  /* a shortcut another app holds, a login item the OS refused: ≥ 4.5:1 on --card and --bg */
+  --warn: #9a5200;
   --scroll: rgba(24, 26, 32, 0.22);
 }
 
@@ -53,6 +55,7 @@
     --btn-hover: rgba(255, 255, 255, 0.11);
     /* white "Reset" label at ≥ 4.5:1 (about 5.1:1) */
     --danger: #c63d2c;
+    --warn: #f0b35e;
     --scroll: rgba(255, 255, 255, 0.2);
   }
 }
@@ -265,6 +268,35 @@ html.is-scrolled .top {
 .pv-badge[data-kind="demo"] {
   background: rgba(242, 166, 90, 0.26);
   color: #ffd6ab;
+}
+
+/* Lyrics turned off on the desktop: a calm note in the corner; the preview keeps playing. */
+.pv-off {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: rgba(8, 10, 14, 0.52);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  animation: ut-fade 0.2s ease-out;
+}
+
+.pv-off .icon {
+  width: 12px;
+  height: 12px;
 }
 
 /* ---------- groups and cards ---------- */
@@ -515,6 +547,17 @@ html.is-scrolled .top {
 .toggle-hint {
   padding: 0 0 10px;
   margin-top: -4px;
+}
+
+/* empty (and without height) unless the OS refused the login item */
+.login-note {
+  color: var(--warn);
+}
+
+/* as specific as `.card > .hint`, which pads every caption in a card */
+.card > .login-note:empty {
+  padding: 0;
+  margin: 0;
 }
 
 /* ---------- swatches ---------- */
@@ -896,6 +939,150 @@ html.is-scrolled .top {
   color: var(--muted);
 }
 
+/* ---------- shortcuts ---------- */
+/* The rows share one column for their key buttons (subgrid), so the buttons line up at one width. */
+.sc-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  border-top: 1px solid var(--line);
+  transition: opacity 0.15s ease;
+}
+
+/* Shortcuts off: readable, but dimmed and out of reach (the container is inert). */
+.sc-rows.is-disabled {
+  opacity: 0.45;
+}
+
+.sc-row {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: subgrid;
+  padding: 6px 0;
+}
+
+.sc-row + .sc-row {
+  border-top: 1px solid var(--line);
+}
+
+/* Wraps rather than cutting off: a long binding narrows the label column, and the ms in
+   "Nudge earlier (+50 ms)" is what tells the two nudges apart. */
+.sc-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* A key cap showing the binding; it listens for the new one when pressed. Wide enough for
+   "Press keys…" and "Ctrl+Alt+Shift+L" alike; while it listens it keeps its width (set by the
+   recorder) and cuts off a longer "Win+Ctrl+Alt+Shift+…", so the key column doesn't jump. */
+.sc-key {
+  min-width: 8.5em;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--btn);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+}
+
+.sc-key:hover {
+  background: var(--btn-hover);
+}
+
+.sc-key.is-none {
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.sc-key.is-recording {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--accent-strong);
+  letter-spacing: 0;
+  animation: ut-listen 1.4s ease-in-out infinite;
+}
+
+.sc-key.is-warning {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 65%, transparent);
+}
+
+/* Always present (a live region); without height while empty. */
+.sc-msg {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sc-msg:empty {
+  padding: 0;
+}
+
+.sc-msg[data-tone="warn"],
+.sc-msg[data-tone="error"] {
+  color: var(--warn);
+}
+
+.sc-msg[data-tone="warn"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+
+.sc-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0 10px;
+}
+
+/* One line, so the prompt appearing never moves anything. */
+.sc-hint {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@keyframes ut-listen {
+  50% {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+}
+
+@keyframes ut-fade {
+  from {
+    opacity: 0;
+  }
+}
+
 /* ---------- reset ---------- */
 .reset {
   margin-top: 22px;
@@ -1004,11 +1191,15 @@ html.is-scrolled .top {
   .modes .icon,
   .range::-webkit-slider-thumb,
   .step,
-  .btn {
+  .btn,
+  .sc-rows,
+  .sc-key {
     transition: none;
   }
   .confirm,
-  .notice-card {
+  .notice-card,
+  .pv-off,
+  .sc-key.is-recording {
     animation: none;
   }
 }

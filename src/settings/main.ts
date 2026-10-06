@@ -2,33 +2,32 @@ import "@fontsource/figtree/400.css";
 import "@fontsource/figtree/500.css";
 import "@fontsource/figtree/600.css";
 import "../styles/settings.css";
-import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings } from "../../contract/contract";
+import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, type ShortcutsStatus } from "../../contract/contract";
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
 import { SettingsPreview, type PreviewInfo } from "./preview";
-import { SettingsSync } from "./store";
-
-/** Everything but `version` and per-song offsets (those go through `set_track_offset`). */
-function defaultsPatch(): Partial<Settings> {
-  const patch: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-  delete patch.version;
-  delete patch.trackOffsetsMs;
-  return patch;
-}
+import { defaultsPatch, SettingsSync, withDefaults } from "./store";
 
 async function boot(host: HTMLElement): Promise<void> {
   const bridge = await connect();
 
   // Subscribe first, then read the initial state, so nothing that happens in between is lost.
   // An event that beats its query's reply is newer than the reply.
-  const early: { settings: Settings | null; track: NowPlaying | null; heardTrack: boolean; media: MediaStatus | null } = {
+  const early: {
+    settings: Settings | null;
+    track: NowPlaying | null;
+    heardTrack: boolean;
+    media: MediaStatus | null;
+    shortcuts: ShortcutsStatus | null;
+  } = {
     settings: null,
     track: null,
     heardTrack: false,
     media: null,
+    shortcuts: null,
   };
   let onSettings = (s: Settings): void => {
     early.settings = s;
@@ -40,19 +39,31 @@ async function boot(host: HTMLElement): Promise<void> {
   let onMedia = (m: MediaStatus): void => {
     early.media = m;
   };
+  let onShortcuts = (status: ShortcutsStatus): void => {
+    early.shortcuts = status;
+  };
   await bridge.listen("settings-changed", (s) => onSettings(s));
   await bridge.listen("now-playing", (np) => onTrack(np));
   await bridge.listen("media-status", (m) => onMedia(m));
-  const [fetched, fetchedTrack, fetchedMedia] = await Promise.all([
+  await bridge.listen("shortcuts-status", (status) => onShortcuts(status));
+  const [fetched, fetchedTrack, fetchedMedia, fetchedShortcuts] = await Promise.all([
     bridge.invoke("get_settings").catch(() => structuredClone(DEFAULT_SETTINGS)),
     bridge.invoke("get_now_playing").catch(() => null),
     // Contract v2. A core without it rejects, and the window stays as it was before media-status.
     bridge.invoke("get_media_status").catch(() => null),
+    // Contract v3. A core without it rejects, and the shortcut rows show no status.
+    bridge.invoke("get_shortcuts_status").catch(() => null),
   ]);
 
   const track: NowPlaying | null = early.heardTrack ? early.track : fetchedTrack;
-  let view: Settings = early.settings ?? fetched;
+  // An older core's settings lack the contract v3 fields; the window shows their defaults.
+  let view: Settings = withDefaults(early.settings ?? fetched);
   let media: MediaStatus | null = early.media ?? fetchedMedia;
+  let shortcuts: ShortcutsStatus | null = early.shortcuts ?? fetchedShortcuts;
+  let loginError = false;
+  /** The value a refused Launch at login change asked for: once the settings reach it (from the menu, or the
+   * core taking the login item's real state), the note under the switch no longer applies. */
+  let loginErrorFor: boolean | null = null;
   let info: PreviewInfo = { track: null, demo: false, palette: null, paletteFrom: null, artPending: false };
 
   const palettes = new PaletteCache();
@@ -75,6 +86,8 @@ async function boot(host: HTMLElement): Promise<void> {
       artPending: info.artPending,
       track: song ? { key: song.trackKey, title: song.title, artist: song.artist } : null,
       media,
+      shortcuts,
+      loginError,
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -86,17 +99,40 @@ async function boot(host: HTMLElement): Promise<void> {
     initial: view,
     onChange: (next) => {
       view = next;
+      if (loginError && next.launchAtLogin === loginErrorFor) loginError = false;
       preview?.setSettings(next);
       render();
     },
-    onError: (error) => {
+    onError: (error, write) => {
       console.warn("Undertone: couldn't save settings", error);
+      // The core keeps Launch at login as it was when the OS refuses the login item; the switch has
+      // already snapped back to it, and the note under it says why.
+      if (write.kind === "patch" && write.patch.launchAtLogin !== undefined) {
+        loginError = true;
+        loginErrorFor = write.patch.launchAtLogin;
+        render();
+        panel?.announce("Couldn't change Launch at login");
+        return;
+      }
       panel?.announce("Couldn't save that change");
     },
   });
 
+  // In order, so a quick start and stop of the key recorder can't reach the core the other way round.
+  let suspending: Promise<void> = Promise.resolve();
+  const suspendShortcuts = (suspended: boolean): void => {
+    suspending = suspending
+      .then(() => bridge.invoke("suspend_shortcuts", { suspended }))
+      // An older core has no such command; its shortcuts just stay on while recording.
+      .catch(() => undefined);
+  };
+
   panel = new SettingsPanel({
     edit: (patch) => sync.edit(patch),
+    editNow: (patch) => {
+      if (patch.launchAtLogin !== undefined) loginError = false;
+      sync.editNow(patch);
+    },
     setTrackOffset: (key, ms) => sync.setTrackOffset(key, ms),
     reset: (forgetSongs) => {
       const offsets = Object.entries(view.trackOffsetsMs);
@@ -104,6 +140,7 @@ async function boot(host: HTMLElement): Promise<void> {
       sync.flush();
       if (forgetSongs) for (const [key, ms] of offsets) if (ms !== 0) sync.setTrackOffset(key, 0);
     },
+    suspendShortcuts,
   });
 
   preview = new SettingsPreview({
@@ -130,14 +167,22 @@ async function boot(host: HTMLElement): Promise<void> {
     media = m;
     render();
   };
+  onShortcuts = (status) => {
+    shortcuts = status;
+    render();
+  };
   render();
 
-  // Don't drop an edit made just before the window hides or closes.
-  const flush = (): void => sync.flush();
-  window.addEventListener("pagehide", flush);
-  window.addEventListener("blur", flush);
+  // Don't drop an edit made just before the window hides or closes, and never leave the global
+  // shortcuts suspended by a key recorder still listening in a window that is gone.
+  const leave = (): void => {
+    panel?.cancelRecording();
+    sync.flush();
+  };
+  window.addEventListener("pagehide", leave);
+  window.addEventListener("blur", leave);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") flush();
+    if (document.visibilityState === "hidden") leave();
   });
 
   // Keyboard focus and scrollIntoView stop below the pinned preview, never under it.
@@ -170,7 +215,11 @@ function samePanelState(a: PanelState, b: PanelState): boolean {
     a.track?.title === b.track?.title &&
     a.track?.artist === b.track?.artist &&
     a.media?.source === b.media?.source &&
-    a.media?.problem === b.media?.problem
+    a.media?.problem === b.media?.problem &&
+    a.shortcuts?.toggleLyrics === b.shortcuts?.toggleLyrics &&
+    a.shortcuts?.nudgeEarlier === b.shortcuts?.nudgeEarlier &&
+    a.shortcuts?.nudgeLater === b.shortcuts?.nudgeLater &&
+    a.loginError === b.loginError
   );
 }
 

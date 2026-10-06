@@ -23,10 +23,10 @@ pub fn visible(show_when: &ShowWhen, is_playing: bool) -> bool {
     *show_when == ShowWhen::Always || is_playing
 }
 
-/// Whether attached overlays are shown: the `showWhen` rule, unless the tray or the
-/// Cmd/Ctrl+Alt+Shift+L shortcut has hidden the lyrics.
-pub fn shown(show_when: &ShowWhen, is_playing: bool, lyrics_hidden: bool) -> bool {
-    visible(show_when, is_playing) && !lyrics_hidden
+/// Whether attached overlays are shown: the `showWhen` rule, while the lyrics are on
+/// (`Settings.enabled`: the Settings switch, the tray's Hide/Show lyrics, the toggle shortcut).
+pub fn shown(show_when: &ShowWhen, is_playing: bool, enabled: bool) -> bool {
+    visible(show_when, is_playing) && enabled
 }
 
 pub fn monitor_indices(displays: &Displays, count: usize, primary: Option<usize>) -> Vec<usize> {
@@ -72,8 +72,8 @@ pub fn plan(
 /// What starts a reconcile pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pass {
-    /// Find the desktop again, then reconcile: settings, Hide lyrics, OS notifications, startup,
-    /// or a desktop that disappeared.
+    /// Find the desktop again, then reconcile: settings (lyrics on or off among them), OS
+    /// notifications, startup, or a desktop that disappeared.
     Full,
     /// Reconcile against the desktop found last time: play/pause, which mustn't wait on Explorer.
     Reuse,
@@ -192,13 +192,13 @@ mod tests {
         assert!(visible(&ShowWhen::Always, false));
     }
     #[test]
-    fn hidden_lyrics_win_over_every_show_when() {
-        assert!(shown(&ShowWhen::Playing, true, false));
-        assert!(shown(&ShowWhen::Always, false, false));
-        assert!(!shown(&ShowWhen::Playing, false, false));
-        assert!(!shown(&ShowWhen::Playing, true, true));
-        assert!(!shown(&ShowWhen::Always, false, true));
-        assert!(!shown(&ShowWhen::Always, true, true));
+    fn lyrics_off_win_over_every_show_when() {
+        assert!(shown(&ShowWhen::Playing, true, true));
+        assert!(shown(&ShowWhen::Always, false, true));
+        assert!(!shown(&ShowWhen::Playing, false, true));
+        assert!(!shown(&ShowWhen::Playing, true, false));
+        assert!(!shown(&ShowWhen::Always, false, false));
+        assert!(!shown(&ShowWhen::Always, true, false));
     }
     #[test]
     fn primary_is_not_assumed_to_be_first() {
@@ -315,7 +315,7 @@ mod tests {
             // showWhen: always, play ↔ pause: nothing at all, so nothing blinks.
             assert_eq!(steps(Attachment::Placed, true, true, windows), NOTHING);
             assert_eq!(steps(Attachment::Placed, false, false, windows), NOTHING);
-            // showWhen: playing, or Hide lyrics.
+            // showWhen: playing, or lyrics turned off.
             assert_eq!(steps(Attachment::Placed, true, false, windows), HIDE);
             assert_eq!(steps(Attachment::Placed, false, true, windows), SHOW);
         }

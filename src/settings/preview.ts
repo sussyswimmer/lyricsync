@@ -5,7 +5,7 @@ import { hexToHsl, hslToHex, type Palette, type PaletteCache } from "../core/pal
 import { OverlayController } from "../overlay/controller";
 import { h } from "../overlay/dom";
 import { LyricStage } from "../overlay/stage";
-import { setText } from "./controls";
+import { icon, setText } from "./controls";
 import { GAP_GRACE_MS } from "./hold";
 
 /**
@@ -70,6 +70,7 @@ export class SettingsPreview {
   private readonly title: HTMLElement;
   private readonly artist: HTMLElement;
   private readonly badge: HTMLElement;
+  private readonly offPill: HTMLElement;
   private readonly wallpaper: HTMLElement;
   private settings: Settings;
   private controller: OverlayController | null = null;
@@ -103,7 +104,19 @@ export class SettingsPreview {
     text.append(this.title, this.artist);
     this.badge = h("span", "pv-badge");
     bar.append(this.cover, text, this.badge);
-    this.wallpaper.append(stageHost, bar);
+    // Lyrics turned off: the preview still plays (so they can be styled), and says they're off.
+    this.offPill = h("p", "pv-off");
+    this.offPill.append(
+      icon(
+        [
+          ["M2 8 C4.2 4.4 11.8 4.4 14 8 C11.8 11.6 4.2 11.6 2 8 Z", 1.4, 1],
+          ["M3.2 13 L12.8 3", 1.4, 1],
+        ],
+        "0 0 16 16",
+      ),
+      h("span", "", "Off on the desktop"),
+    );
+    this.wallpaper.append(stageHost, bar, this.offPill);
     this.el.append(this.wallpaper);
 
     this.stage = new LyricStage(stageHost, {
@@ -112,6 +125,7 @@ export class SettingsPreview {
     });
     this.stage.setSettings(this.settings);
     this.renderBar();
+    this.renderOff();
   }
 
   /**
@@ -126,6 +140,7 @@ export class SettingsPreview {
   setSettings(settings: Settings): void {
     this.settings = settings;
     this.controller?.setSettings(settings);
+    this.renderOff();
   }
 
   /**
@@ -276,6 +291,12 @@ export class SettingsPreview {
     if (this.badge.dataset.kind !== kind) this.badge.dataset.kind = kind;
     const tip = track ? `${demo ? "Demo: " : ""}${track.title} by ${track.artist}` : "";
     if (this.el.title !== tip) this.el.title = tip;
+  }
+
+  private renderOff(): void {
+    // Settings without `enabled` (an older core) count as on.
+    const off = this.settings.enabled === false;
+    if (this.offPill.hidden === off) this.offPill.hidden = !off;
   }
 
   /** A dark wallpaper tinted with the song's colors, like the prototype's desktop. */

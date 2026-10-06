@@ -179,3 +179,28 @@ First real-machine run (Maxwell, macOS 26.5, merged into this branch):
 Not verified: Windows, Apple Music, and the rest of the acceptance steps in docs/DESKTOP_LAYER.md, NOW_PLAYING.md and LYRICS.md.
 Needs from Codex: nothing.
 Contract: unchanged (v2).
+
+## 2026-10-06 · Claude Code · Settings: lyrics on/off, launch at login, custom shortcuts (contract v3)
+Done: at Maxwell's request, a Settings area to turn Undertone on and off and customize it. Contract v3 is additive (SPEC.md lists it).
+- **General** (top of Settings):
+  - "Lyrics on the desktop" is `Settings.enabled`. It persists and replaces the runtime-only `lyrics_hidden`; the tray's Hide/Show lyrics, the toggle shortcut and the switch all change it. When it's off, the preview shows an "Off on the desktop" pill.
+  - "Launch at login" is `Settings.launchAtLogin`. The login item changes in the same update; a refusal keeps the old value and shows a note. The real login-item state is adopted at startup, when Settings opens and on tray hover.
+- **Shortcuts** (before Reset):
+  - An on/off switch and a key recorder per action: Esc cancels, Delete clears, and a duplicate is turned down.
+  - The recorder also turns down combinations every app relies on (⌘/Ctrl+C/V/X/Z/A/S/W/Q/Tab, ⌘Space, Alt+Tab, Alt+F4). On Windows it notes when a Ctrl+Alt binding may block an AltGr character.
+  - Per-row warnings come from `shortcuts-status`.
+  - While recording, `suspend_shortcuts(true)` frees the keys. Rust resumes on false, after 30 s, or when Settings closes, minimizes or loses focus.
+  - Registration runs off the main thread: re-registering from a shortcut handler would deadlock the plugin.
+  - On Windows a letter is recorded as the letter it types, read from the keyboard layout (`navigator.keyboard`), because that's how Windows registers it. macOS records the key position.
+- "When" and "Where" are the new labels for the old Behavior rows. **Reset to defaults** resets shortcuts but keeps the on/off switch and the login item.
+- One accelerator grammar, CmdOrCtrl, Control, Super, Alt, Shift and then one key, is shared by Rust's `merge_patch` and the TS validator. `tests/fixtures/accelerators.json` holds both the accept/reject table and the clash-merge cases, and both languages run it.
+- Settings changes are refused until the saved settings are loaded. Without that, a second launch on macOS could save the defaults over settings.json.
+- `--diagnose` prints the switches and each binding.
+Tests: 660 vitest, 183 Rust. Clean on Linux and in the Windows and macOS cross-checks. I looked at it in Chromium in light and dark at 360 and 380 px.
+Known gaps:
+- On macOS, turning Undertone off under System Settings › "Allow in the Background" isn't visible to the app: the autostart plugin only checks that its LaunchAgent plist exists.
+- On non-US Windows layouts, the default `[` and `]` may sit on other keys.
+- F21–F24 can't be registered on macOS.
+Not verified: registration, conflicts, suspend and resume, the login item, and hiding the overlays when lyrics are off, all on a real Mac and PC.
+Needs from Codex: nothing.
+Contract: v3 (additive: `Settings.enabled`, `launchAtLogin`, `shortcuts`; `ShortcutAction`, `ShortcutState`, `ShortcutsStatus`; `shortcuts-status`, `get_shortcuts_status`, `suspend_shortcuts`).

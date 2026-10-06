@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 2;
-/// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`.
+pub const CONTRACT_VERSION: u8 = 3;
+/// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`, and
+/// contract v3 only added fields, which stored settings without them get as defaults.
 pub const SETTINGS_VERSION: u8 = 1;
 pub static DEFAULT_SETTINGS: std::sync::LazyLock<Settings> =
     std::sync::LazyLock::new(Settings::default);
@@ -10,6 +11,7 @@ pub const NOW_PLAYING_EVENT: &str = "now-playing";
 pub const LYRICS_EVENT: &str = "lyrics";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
 pub const MEDIA_STATUS_EVENT: &str = "media-status";
+pub const SHORTCUTS_STATUS_EVENT: &str = "shortcuts-status";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -92,6 +94,49 @@ pub enum Displays {
     Primary,
     All,
 }
+/// A global shortcut's action. Added in contract v3.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ShortcutAction {
+    ToggleLyrics,
+    NudgeEarlier,
+    NudgeLater,
+}
+/// Global keyboard shortcuts: accelerators such as "CmdOrCtrl+Alt+Shift+L"; "" leaves that action
+/// without one. Added in contract v3.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Shortcuts {
+    /// false turns every global shortcut off.
+    pub enabled: bool,
+    pub toggle_lyrics: String,
+    /// +50 ms for the current song (lyrics earlier).
+    pub nudge_earlier: String,
+    /// −50 ms for the current song (lyrics later).
+    pub nudge_later: String,
+}
+/// Whether a shortcut is working. Added in contract v3.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ShortcutState {
+    /// Registered with the OS.
+    Ok,
+    /// Shortcuts are off, or the action has none.
+    #[default]
+    Off,
+    /// Another app or the OS holds that key combination.
+    Unavailable,
+    /// Not a usable key combination.
+    Invalid,
+}
+/// `Record<ShortcutAction, ShortcutState>`: one key per action. Added in contract v3.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutsStatus {
+    pub toggle_lyrics: ShortcutState,
+    pub nudge_earlier: ShortcutState,
+    pub nudge_later: ShortcutState,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Colors {
     pub lyric: String,
@@ -120,6 +165,14 @@ pub struct Settings {
     pub displays: Displays,
     pub global_offset_ms: f64,
     pub track_offsets_ms: BTreeMap<String, f64>,
+    /// false hides the lyrics on every display (Settings, the tray and the toggle shortcut).
+    /// Added in contract v3.
+    pub enabled: bool,
+    /// The OS login item follows it; at startup it adopts the login item's real state. Added in
+    /// contract v3.
+    pub launch_at_login: bool,
+    /// Added in contract v3.
+    pub shortcuts: Shortcuts,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -145,6 +198,15 @@ impl Default for Settings {
             displays: Displays::Primary,
             global_offset_ms: 0.0,
             track_offsets_ms: BTreeMap::new(),
+            enabled: true,
+            launch_at_login: false,
+            // Why every default includes Shift: `crate::shortcuts`.
+            shortcuts: Shortcuts {
+                enabled: true,
+                toggle_lyrics: "CmdOrCtrl+Alt+Shift+L".into(),
+                nudge_earlier: "CmdOrCtrl+Alt+Shift+]".into(),
+                nudge_later: "CmdOrCtrl+Alt+Shift+[".into(),
+            },
         }
     }
 }
@@ -304,6 +366,34 @@ mod tests {
             },
             &["export interface Settings {", "displays:"],
         );
+        assert_wire(
+            &[
+                ShortcutAction::ToggleLyrics,
+                ShortcutAction::NudgeEarlier,
+                ShortcutAction::NudgeLater,
+            ],
+            |v| match v {
+                ShortcutAction::ToggleLyrics => "toggleLyrics",
+                ShortcutAction::NudgeEarlier => "nudgeEarlier",
+                ShortcutAction::NudgeLater => "nudgeLater",
+            },
+            &["export type ShortcutAction ="],
+        );
+        assert_wire(
+            &[
+                ShortcutState::Ok,
+                ShortcutState::Off,
+                ShortcutState::Unavailable,
+                ShortcutState::Invalid,
+            ],
+            |v| match v {
+                ShortcutState::Ok => "ok",
+                ShortcutState::Off => "off",
+                ShortcutState::Unavailable => "unavailable",
+                ShortcutState::Invalid => "invalid",
+            },
+            &["export type ShortcutState ="],
+        );
         // Wire strings are exact: no Rust variant names, no other case.
         assert!(serde_json::from_value::<Source>(json!("AppleMusic")).is_err());
         assert!(serde_json::from_value::<LyricsStatus>(json!("Plain-Only")).is_err());
@@ -373,10 +463,27 @@ mod tests {
                 "Settings",
                 serde_json::to_value(&*DEFAULT_SETTINGS).unwrap(),
             ),
+            (
+                "Shortcuts",
+                serde_json::to_value(&DEFAULT_SETTINGS.shortcuts).unwrap(),
+            ),
         ] {
             assert_eq!(json_keys(&value), ts_fields(name), "{name}");
         }
+        // `Record<ShortcutAction, ShortcutState>`: exactly one key per action.
+        assert_eq!(
+            json_keys(&serde_json::to_value(ShortcutsStatus::default()).unwrap()),
+            ts_union(&["export type ShortcutAction ="])
+        );
         let settings = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        // The default bindings are the ones contract.ts's DEFAULT_SETTINGS spells out.
+        for action in ["toggleLyrics", "nudgeEarlier", "nudgeLater"] {
+            let binding = settings["shortcuts"][action].as_str().unwrap();
+            assert!(
+                CONTRACT_TS.contains(&format!("{action}: \"{binding}\"")),
+                "{action}: {binding}"
+            );
+        }
         assert_eq!(
             json_keys(&settings["colors"]),
             ["dim", "highlight", "lyric"]
@@ -393,7 +500,14 @@ mod tests {
                 "colors": { "lyric": "#f1ece3", "highlight": "#f2a65a", "dim": "#8d93a0" },
                 "font": { "family": "Fraunces", "weight": 700.0 },
                 "size": 58.0, "curve": 38.0, "yPos": 46.0, "glow": 40.0, "opacity": 100.0,
-                "showWhen": "playing", "displays": "primary", "globalOffsetMs": 0.0, "trackOffsetsMs": {}
+                "showWhen": "playing", "displays": "primary", "globalOffsetMs": 0.0, "trackOffsetsMs": {},
+                "enabled": true, "launchAtLogin": false,
+                "shortcuts": {
+                    "enabled": true,
+                    "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+                    "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+                    "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+                }
             })
         );
     }
@@ -452,8 +566,36 @@ mod tests {
         );
     }
     #[test]
-    fn contract_v2_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 2);
+    fn shortcuts_status_json_shape_matches() {
+        assert_eq!(SHORTCUTS_STATUS_EVENT, "shortcuts-status");
+        // Nothing registered yet: every action off.
+        assert_eq!(
+            serde_json::to_value(ShortcutsStatus::default()).unwrap(),
+            json!({ "toggleLyrics": "off", "nudgeEarlier": "off", "nudgeLater": "off" })
+        );
+        let mixed = ShortcutsStatus {
+            toggle_lyrics: ShortcutState::Ok,
+            nudge_earlier: ShortcutState::Unavailable,
+            nudge_later: ShortcutState::Invalid,
+        };
+        let wire = json!({
+            "toggleLyrics": "ok", "nudgeEarlier": "unavailable", "nudgeLater": "invalid"
+        });
+        assert_eq!(serde_json::to_value(&mixed).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<ShortcutsStatus>(wire).unwrap(),
+            mixed
+        );
+    }
+    #[test]
+    fn contract_v3_keeps_the_v1_settings_schema() {
+        assert_eq!(CONTRACT_VERSION, 3);
+        assert!(
+            CONTRACT_TS.contains(&format!(
+                "export const CONTRACT_VERSION = {CONTRACT_VERSION};"
+            )),
+            "contract.ts declares another version"
+        );
         assert_eq!(SETTINGS_VERSION, 1);
         assert_eq!(DEFAULT_SETTINGS.version, 1);
     }

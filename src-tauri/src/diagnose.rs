@@ -8,7 +8,10 @@
 //! The report holds no lyrics (line counts only), no artwork and no secrets. The formatting takes
 //! plain data and is tested on every OS; `native` gathers that data on Windows and macOS.
 use crate::{
-    contract::{Lyrics, LyricsStatus, NowPlaying, Settings, Source, CONTRACT_VERSION},
+    contract::{
+        Lyrics, LyricsStatus, NowPlaying, Settings, ShortcutAction, Shortcuts, Source,
+        CONTRACT_VERSION,
+    },
     desktop_layer::geometry::Rect,
     lyrics::{
         cache::Cache,
@@ -21,6 +24,7 @@ use crate::{
         RawTrack, Watcher,
     },
     settings,
+    shortcuts::{plan, Plan},
 };
 use reqwest::{Client, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -686,7 +690,7 @@ pub enum StoredSettings {
     Unreadable(String),
     /// `current` is false when Undertone repairs or migrates (rewrites) `stored` on start.
     Loaded {
-        settings: Settings,
+        settings: Box<Settings>,
         current: bool,
         stored: serde_json::Value,
     },
@@ -695,7 +699,7 @@ impl StoredSettings {
     /// The settings Undertone runs with.
     pub fn effective(&self) -> Settings {
         match self {
-            StoredSettings::Loaded { settings, .. } => settings.clone(),
+            StoredSettings::Loaded { settings, .. } => Settings::clone(settings),
             _ => Settings::default(),
         }
     }
@@ -715,7 +719,7 @@ pub fn read_settings(path: &Path) -> StoredSettings {
     };
     let (settings, rewrite) = settings::load(Some(stored));
     StoredSettings::Loaded {
-        settings,
+        settings: Box::new(settings),
         current: !rewrite,
         stored: stored.clone(),
     }
@@ -753,6 +757,7 @@ pub fn settings_section(
         let effective = serde_json::to_value(stored.effective())
             .map_err(|error| format!("settings: {error}"))?;
         let mut lines = vec![field("file", path.display()), field("state", state)];
+        lines.extend(switch_lines(&stored.effective(), cfg!(target_os = "macos")));
         // What is on disk, when it differs from what Undertone runs with.
         if let StoredSettings::Loaded {
             current: false,
@@ -768,6 +773,59 @@ pub fn settings_section(
         Ok(lines)
     });
     Section::new("Settings", body)
+}
+
+/// Lyrics on or off, launch at login, and the shortcuts, ahead of the full settings. Whether
+/// another app holds a key combination only the running app can tell (Settings › Shortcuts).
+pub fn switch_lines(settings: &Settings, macos: bool) -> Vec<String> {
+    let lyrics = if settings.enabled {
+        "on"
+    } else {
+        "off: hidden on every display until turned on in Settings, the menu or the shortcut"
+    };
+    let shortcuts = &settings.shortcuts;
+    let mut lines = vec![
+        field("lyrics", lyrics),
+        field(
+            "at login",
+            if settings.launch_at_login {
+                "launch Undertone"
+            } else {
+                "off"
+            },
+        ),
+        field(
+            "shortcuts",
+            if shortcuts.enabled {
+                "on"
+            } else {
+                "off (the bindings below are kept)"
+            },
+        ),
+    ];
+    // Planned as if on, so a binding this OS can't use shows even while shortcuts are off.
+    let planned = plan(
+        &Shortcuts {
+            enabled: true,
+            ..shortcuts.clone()
+        },
+        macos,
+    );
+    for (action, plan) in planned {
+        let binding = shortcuts.binding(action);
+        let text = match plan {
+            Plan::Off => "none".to_owned(),
+            Plan::Invalid => format!("{binding} (not usable on this OS)"),
+            Plan::Register(accelerator) => accelerator,
+        };
+        let name = match action {
+            ShortcutAction::ToggleLyrics => "  toggle",
+            ShortcutAction::NudgeEarlier => "  earlier",
+            ShortcutAction::NudgeLater => "  later",
+        };
+        lines.push(field(name, text));
+    }
+    lines
 }
 
 pub struct CacheDir {
@@ -2271,7 +2329,7 @@ mod tests {
         for expected in [
             "generated:   2023-11-14 22:13:20 UTC",
             "os:          Windows 11 24H2 (10.0.26100), x86_64",
-            "build:       release, contract v2",
+            "build:       release, contract v3",
             "executable:  /Apps/undertone",
             "report file: not saved: read-only temp dir",
         ] {
@@ -2600,7 +2658,7 @@ mod tests {
         assert_eq!(
             read_settings(&path),
             StoredSettings::Loaded {
-                settings: Settings::default(),
+                settings: Box::default(),
                 current: true,
                 stored: defaults,
             }
@@ -2631,6 +2689,10 @@ mod tests {
         for expected in [
             "file:        /data/settings.json",
             "state:       no file yet: Undertone uses the defaults",
+            "lyrics:      on\n",
+            "at login:    off\n",
+            "shortcuts:   on\n",
+            "  toggle:    CmdOrCtrl+Alt+Shift+L\n",
             "effective:\n    {\n",
             "\"mode\": \"arc\"",
         ] {
@@ -2639,10 +2701,10 @@ mod tests {
         assert!(!text.contains("stored:"));
         // A value Undertone repairs on start: both what is on disk and what it runs with.
         let repaired = StoredSettings::Loaded {
-            settings: Settings {
+            settings: Box::new(Settings {
                 size: 140.0,
                 ..Settings::default()
-            },
+            }),
             current: false,
             stored: serde_json::json!({"size": 999}),
         };
@@ -2661,6 +2723,48 @@ mod tests {
             settings_section(&unknown, &Err("HOME is not set".into())).render(),
             "\n== Settings ==\n  unavailable: HOME is not set\n"
         );
+    }
+
+    #[test]
+    fn the_switches_show_lyrics_login_and_each_binding() {
+        let defaults = switch_lines(&Settings::default(), false).join("\n");
+        assert_eq!(
+            defaults,
+            [
+                "lyrics:      on",
+                "at login:    off",
+                "shortcuts:   on",
+                "  toggle:    CmdOrCtrl+Alt+Shift+L",
+                "  earlier:   CmdOrCtrl+Alt+Shift+]",
+                "  later:     CmdOrCtrl+Alt+Shift+[",
+            ]
+            .join("\n")
+        );
+        let settings = Settings {
+            enabled: false,
+            launch_at_login: true,
+            shortcuts: Shortcuts {
+                enabled: false,
+                toggle_lyrics: "Alt+F22".into(),
+                nudge_earlier: String::new(),
+                nudge_later: "Control+K".into(),
+            },
+            ..Settings::default()
+        };
+        let mac = switch_lines(&settings, true).join("\n");
+        for expected in [
+            "lyrics:      off: hidden on every display",
+            "at login:    launch Undertone",
+            "shortcuts:   off (the bindings below are kept)",
+            "  toggle:    Alt+F22 (not usable on this OS)",
+            "  earlier:   none",
+            "  later:     Control+K",
+        ] {
+            assert!(mac.contains(expected), "{expected}\n{mac}");
+        }
+        assert!(switch_lines(&settings, false)
+            .join("\n")
+            .contains("  toggle:    Alt+F22\n"));
     }
 
     #[test]

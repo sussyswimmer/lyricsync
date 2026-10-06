@@ -4,7 +4,11 @@
 //! Every field is validated on its own: unknown keys are dropped, numbers are clamped to the SPEC
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
-use crate::contract::{Colors, Font, Settings, SETTINGS_VERSION};
+//!
+//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts` without a new settings version:
+//! a stored file without them loads with their defaults and is rewritten once with them (`load`).
+use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
+use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{collections::BTreeMap, ops::RangeInclusive, sync::Mutex};
@@ -95,6 +99,54 @@ fn merge_font(font: &mut Font, patch: &Value) {
     );
 }
 
+/// A partial `shortcuts` object changes only the keys it has. A binding must be an accelerator
+/// (`crate::shortcuts::normalize`, stored in its one spelling) or "" for none. A binding that would
+/// press the same keys as another action's, once the patch is applied, keeps its current value; so
+/// does the other action's if the patch changes it too. That rule is checked again after each
+/// revert, so the result never has two actions on one accelerator, and a complete set of distinct
+/// bindings (Reset shortcuts, a swap) always applies whatever the current ones are.
+pub fn merge_shortcuts(current: &Shortcuts, patch: &Value) -> Shortcuts {
+    let Some(patch) = patch.as_object() else {
+        return current.clone();
+    };
+    let mut next = current.clone();
+    keep_or_set(
+        &mut next.enabled,
+        patch.get("enabled").and_then(Value::as_bool),
+    );
+    let mut changed = Vec::new();
+    for action in ACTIONS {
+        let binding = patch
+            .get(shortcut_field(action))
+            .and_then(Value::as_str)
+            .and_then(accelerator);
+        if let Some(binding) = binding.filter(|binding| binding != current.binding(action)) {
+            *next.binding_mut(action) = binding;
+            changed.push(action);
+        }
+    }
+    loop {
+        let clashing: Vec<_> = changed
+            .iter()
+            .copied()
+            .filter(|action| {
+                let binding = next.binding(*action);
+                !binding.is_empty()
+                    && ACTIONS
+                        .iter()
+                        .any(|other| other != action && next.binding(*other) == binding)
+            })
+            .collect();
+        if clashing.is_empty() {
+            return next;
+        }
+        for action in clashing {
+            *next.binding_mut(action) = current.binding(action).to_owned();
+            changed.retain(|other| *other != action);
+        }
+    }
+}
+
 /// `update_settings`: a shallow top-level merge, validated field by field. Anything that isn't an
 /// object changes nothing. `trackOffsetsMs` replaces the whole map (the settings window never
 /// sends it; per-song changes go through `with_track_offset`).
@@ -121,6 +173,9 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
                 keep_or_set(&mut next.global_offset_ms, clamp_number(value, &OFFSET_MS))
             }
             "trackOffsetsMs" => keep_or_set(&mut next.track_offsets_ms, track_offsets(value)),
+            "enabled" => keep_or_set(&mut next.enabled, value.as_bool()),
+            "launchAtLogin" => keep_or_set(&mut next.launch_at_login, value.as_bool()),
+            "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -145,11 +200,45 @@ pub fn load(stored: Option<&Value>) -> (Settings, bool) {
     (settings, !unchanged)
 }
 
+/// Takes the OS login item's real state (`None`: it couldn't be read) into `settings`: the user
+/// may have added or removed it in the OS. True when that changed them.
+pub fn adopt_login_item(settings: &mut Settings, login_item: Option<bool>) -> bool {
+    match login_item {
+        Some(real) if real != settings.launch_at_login => {
+            settings.launch_at_login = real;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A change that may turn launch at login on or off: when `next` changes `launchAtLogin`, `set`
+/// changes the OS login item to match. If that fails, `launchAtLogin` keeps its current value, the
+/// rest of `next` still applies, and the error comes back with the settings.
+pub fn with_login_item(
+    current: &Settings,
+    mut next: Settings,
+    set: impl FnOnce(bool) -> Result<(), String>,
+) -> (Settings, Option<String>) {
+    if next.launch_at_login == current.launch_at_login {
+        return (next, None);
+    }
+    match set(next.launch_at_login) {
+        Ok(()) => (next, None),
+        Err(error) => {
+            next.launch_at_login = current.launch_at_login;
+            (next, Some(error))
+        }
+    }
+}
+
 /// Whether a change concerns the desktop layer: how many overlays there are and when they show.
 /// Everything else is drawn by the overlay webviews from `settings-changed`, and a layer refresh
 /// re-attaches (hides and shows) every overlay, so a slider drag must not trigger one.
 pub fn affects_layer(before: &Settings, after: &Settings) -> bool {
-    before.show_when != after.show_when || before.displays != after.displays
+    before.show_when != after.show_when
+        || before.displays != after.displays
+        || before.enabled != after.enabled
 }
 
 /// Sets one song's sync offset, clamped to ±2000 ms. Zero removes the song from the map.
@@ -172,15 +261,22 @@ pub fn with_track_offset(current: &Settings, track_key: &str, ms: f64) -> Result
 pub enum Committed {
     /// The change left the settings as they were: nothing was saved.
     Unchanged(Settings),
-    /// The new settings, saved; `refresh` when they concern the desktop layer (`affects_layer`).
-    Changed { settings: Settings, refresh: bool },
+    /// The new settings, saved; `refresh` when they concern the desktop layer (`affects_layer`),
+    /// `reregister` when the shortcuts changed.
+    Changed {
+        settings: Settings,
+        refresh: bool,
+        reregister: bool,
+    },
 }
 
 /// One settings change, safe from any thread at once: commands run on the async runtime, the tray
 /// and shortcuts on the main thread. `writer` is held from reading the current settings to saving
 /// the new ones, so concurrent changes can't lose each other or reach the disk out of order.
-/// `settings` is held only to read and replace them in memory, so readers (the desktop layer and
-/// the tray on the main thread, `get_settings`) never wait for the disk. Always `writer` first.
+/// `settings` is held only to copy them and to replace them in memory, so readers (the desktop
+/// layer and the tray on the main thread, `get_settings`) never wait for the disk, nor for
+/// `change`, which may turn the OS login item on or off. Only writers replace the settings and
+/// they all hold `writer`, so the copy stays current until replaced. Always `writer` first.
 pub fn commit(
     writer: &Mutex<()>,
     settings: &Mutex<Settings>,
@@ -189,20 +285,17 @@ pub fn commit(
 ) -> Result<Committed, String> {
     // Guards no data: a writer that panicked left nothing half-done to protect.
     let _writer = writer.lock().unwrap_or_else(|e| e.into_inner());
-    let (next, refresh) = {
-        let mut current = settings.lock().map_err(|e| e.to_string())?;
-        let next = change(&current)?;
-        if *current == next {
-            return Ok(Committed::Unchanged(next));
-        }
-        let refresh = affects_layer(&current, &next);
-        *current = next.clone();
-        (next, refresh)
-    };
+    let current = settings.lock().map_err(|e| e.to_string())?.clone();
+    let next = change(&current)?;
+    if current == next {
+        return Ok(Committed::Unchanged(next));
+    }
+    *settings.lock().map_err(|e| e.to_string())? = next.clone();
     save(&next);
     Ok(Committed::Changed {
+        refresh: affects_layer(&current, &next),
+        reregister: current.shortcuts != next.shortcuts,
         settings: next,
-        refresh,
     })
 }
 
@@ -210,8 +303,12 @@ pub fn commit(
 pub mod runtime {
     use super::Committed;
     use crate::{contract::Settings, contract::SETTINGS_CHANGED_EVENT, state::AppState};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
     use tauri::{AppHandle, Emitter, Manager, Wry};
+    use tauri_plugin_autostart::AutoLaunchManager;
     use tauri_plugin_store::{Store, StoreExt};
 
     /// In the app data dir. Settings live under one key, so the file stays one readable object.
@@ -219,6 +316,11 @@ pub mod runtime {
     const STORE_KEY: &str = "settings";
     /// Held by every change from reading the settings to saving them (`super::commit`).
     static WRITER: Mutex<()> = Mutex::new(());
+    /// Set by `install`, with `WRITER` held, once the stored settings are in AppState. Before that a
+    /// change would start from the defaults and its save would overwrite the stored file, so
+    /// `modify` refuses it: on macOS a second launch reaches `show_settings` (and its login-item
+    /// sync) from a tokio task that can run before the app's setup has called `install`.
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
 
     /// The store, opened (and read from disk) on first use. Every change is saved right away, so
     /// there is no debounced auto-save task.
@@ -244,9 +346,33 @@ pub mod runtime {
         }
     }
 
+    /// The OS login item's real state; `None` (logged) when it can't be read.
+    fn login_item(app: &AppHandle) -> Option<bool> {
+        match app.try_state::<AutoLaunchManager>()?.is_enabled() {
+            Ok(enabled) => Some(enabled),
+            Err(error) => {
+                eprintln!("launch at login: {error}");
+                None
+            }
+        }
+    }
+    fn set_login_item(app: &AppHandle, enabled: bool) -> Result<(), String> {
+        let launcher = app
+            .try_state::<AutoLaunchManager>()
+            .ok_or("launch at login: unavailable")?;
+        let result = if enabled {
+            launcher.enable()
+        } else {
+            launcher.disable()
+        };
+        result.map_err(|e| format!("launch at login: {e}"))
+    }
+
     /// Loads stored settings into AppState before any window or service reads them, migrated to
-    /// the current shape (and written back when that changed them). A missing or corrupt file
-    /// starts from the defaults; an unusable store is logged and doesn't stop the app.
+    /// the current shape, with `launchAtLogin` taken from the OS login item (the user may have
+    /// removed it while Undertone wasn't running), and written back when either changed them. A
+    /// missing or corrupt file starts from the defaults; an unusable store is logged and doesn't
+    /// stop the app. The autostart plugin is set up before the app's setup, so it can be read here.
     pub fn install(app: &AppHandle) -> Result<(), String> {
         // A change that arrives meanwhile applies on top of the stored settings, not the defaults.
         let _writer = WRITER.lock().unwrap_or_else(|e| e.into_inner());
@@ -267,35 +393,81 @@ pub mod runtime {
                 None
             }
         };
-        let (settings, rewrite) = super::load(stored.as_ref());
-        if rewrite {
+        let (mut settings, migrated) = super::load(stored.as_ref());
+        let adopted = super::adopt_login_item(&mut settings, login_item(app));
+        if migrated || adopted {
             persist(app, &settings);
         }
         *app.state::<AppState>()
             .settings
             .lock()
             .map_err(|e| e.to_string())? = settings;
+        INSTALLED.store(true, Ordering::Release);
         Ok(())
     }
 
     /// Changes the settings through `super::commit`, so a command (async runtime) and a tray click
     /// (main thread) at once can't lose each other's change or reach the disk out of order. Real
-    /// changes are saved, applied (overlay count, visibility) and broadcast to every webview;
-    /// no-op when unchanged. No lock is held while broadcasting, so Rust listeners may call
-    /// `current`, and nothing here waits for the main thread, which may itself be waiting here.
+    /// changes are saved, applied (overlay count and visibility, shortcut registration) and
+    /// broadcast to every webview; no-op when unchanged. No lock is held while broadcasting, so
+    /// Rust listeners may call `current`, and nothing here waits for the main thread, which may
+    /// itself be waiting here: shortcuts register on the blocking pool. Returns the settings and
+    /// whether they changed. Refused until `install` has loaded the stored settings.
     fn modify(
         app: &AppHandle,
         change: impl FnOnce(&Settings) -> Result<Settings, String>,
-    ) -> Result<Settings, String> {
+    ) -> Result<(Settings, bool), String> {
         let state = app.state::<AppState>();
-        match super::commit(&WRITER, &state.settings, change, |next| persist(app, next))? {
-            Committed::Unchanged(settings) => Ok(settings),
-            Committed::Changed { settings, refresh } => {
+        // Checked with `WRITER` held: `install` has either finished or not started.
+        let loaded = |current: &Settings| {
+            if !INSTALLED.load(Ordering::Acquire) {
+                return Err("settings aren't loaded yet".to_owned());
+            }
+            change(current)
+        };
+        match super::commit(&WRITER, &state.settings, loaded, |next| persist(app, next))? {
+            Committed::Unchanged(settings) => Ok((settings, false)),
+            Committed::Changed {
+                settings,
+                refresh,
+                reregister,
+            } => {
                 if refresh {
                     crate::desktop_layer::refresh_now();
                 }
+                if reregister {
+                    crate::shortcuts::refresh(app);
+                }
                 broadcast(app);
-                Ok(settings)
+                Ok((settings, true))
+            }
+        }
+    }
+
+    /// A change that may turn launch at login on or off. The OS login item changes inside the
+    /// change (`super::with_login_item`), before the settings are stored, so the two can't
+    /// disagree. If the OS refuses,
+    /// `launchAtLogin` keeps its value, the rest of the change still applies, and the error is
+    /// returned; every window hears `settings-changed` even when nothing else changed, so a
+    /// switch that moved goes back.
+    fn modify_with_login_item(
+        app: &AppHandle,
+        change: impl FnOnce(&Settings) -> Settings,
+    ) -> Result<Settings, String> {
+        let mut refused = None;
+        let (settings, changed) = modify(app, |current| {
+            let (next, error) =
+                super::with_login_item(current, change(current), |on| set_login_item(app, on));
+            refused = error;
+            Ok(next)
+        })?;
+        match refused {
+            None => Ok(settings),
+            Some(error) => {
+                if !changed {
+                    broadcast(app);
+                }
+                Err(error)
             }
         }
     }
@@ -329,7 +501,7 @@ pub mod runtime {
     /// out-of-range or invalid value keeps the current one.
     pub fn apply(app: &AppHandle, next: Settings) -> Result<Settings, String> {
         let patch = serde_json::to_value(next).map_err(|e| e.to_string())?;
-        modify(app, |current| Ok(super::merge_patch(current, &patch)))
+        update(app, &patch)
     }
 
     pub fn current(app: &AppHandle) -> Result<Settings, String> {
@@ -341,14 +513,50 @@ pub mod runtime {
             .clone())
     }
 
+    /// `update_settings`, and every tray item that sets one field.
     pub fn update(app: &AppHandle, patch: &serde_json::Value) -> Result<Settings, String> {
-        modify(app, |current| Ok(super::merge_patch(current, patch)))
+        modify_with_login_item(app, |current| super::merge_patch(current, patch))
+    }
+
+    /// Tray "Hide lyrics" / "Show lyrics" and the toggle shortcut. Read inside the change, so a
+    /// Settings switch at the same moment can't be lost.
+    pub fn toggle_enabled(app: &AppHandle) -> Result<Settings, String> {
+        modify(app, |current| {
+            Ok(Settings {
+                enabled: !current.enabled,
+                ..current.clone()
+            })
+        })
+        .map(|(settings, _)| settings)
+    }
+
+    /// Tray "Launch at login".
+    pub fn toggle_launch_at_login(app: &AppHandle) -> Result<Settings, String> {
+        modify_with_login_item(app, |current| Settings {
+            launch_at_login: !current.launch_at_login,
+            ..current.clone()
+        })
+    }
+
+    /// Takes the OS login item's real state into the settings while Undertone runs (tray hover,
+    /// Settings shown): the user may have removed it in the OS. Read inside the change, which
+    /// every login-item change also runs in, so a toggle at the same moment can't be undone.
+    pub fn sync_login_item(app: &AppHandle) {
+        let adopted = modify(app, |current| {
+            let mut next = current.clone();
+            super::adopt_login_item(&mut next, login_item(app));
+            Ok(next)
+        });
+        if let Err(error) = adopted {
+            eprintln!("launch at login: {error}");
+        }
     }
 
     pub fn set_track_offset(app: &AppHandle, track_key: &str, ms: f64) -> Result<Settings, String> {
         modify(app, |current| {
             super::with_track_offset(current, track_key, ms)
         })
+        .map(|(settings, _)| settings)
     }
 
     /// Moves one song's offset by `delta_ms`, kept within ±2000 ms. The offset is read inside the
@@ -366,6 +574,7 @@ pub mod runtime {
                 crate::tray::nudged(current_ms, delta_ms),
             )
         })
+        .map(|(settings, _)| settings)
     }
 }
 
@@ -373,6 +582,7 @@ pub mod runtime {
 mod tests {
     use super::*;
     use crate::contract::{Displays, Mode, ShowWhen};
+    use crate::shortcuts::ACTIONS;
     use serde_json::json;
 
     fn defaults() -> Settings {
@@ -389,8 +599,21 @@ mod tests {
             "font": { "family": "Syne", "weight": 500 },
             "size": 80, "curve": -20, "yPos": 70, "glow": 10, "opacity": 60,
             "showWhen": "always", "displays": "all", "globalOffsetMs": 250,
-            "trackOffsetsMs": { "a|b|c|1": -150 }
+            "trackOffsetsMs": { "a|b|c|1": -150 },
+            "enabled": false, "launchAtLogin": true,
+            "shortcuts": {
+                "enabled": false, "toggleLyrics": "Alt+F1", "nudgeEarlier": "",
+                "nudgeLater": "Control+Shift+K"
+            }
         }))
+    }
+    fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
+        Shortcuts {
+            enabled: true,
+            toggle_lyrics: toggle.into(),
+            nudge_earlier: earlier.into(),
+            nudge_later: later.into(),
+        }
     }
 
     #[test]
@@ -423,6 +646,14 @@ mod tests {
         assert_eq!(
             s.track_offsets_ms,
             BTreeMap::from([("a|b|c|1".to_owned(), -150.0)])
+        );
+        assert!(!s.enabled && s.launch_at_login);
+        assert_eq!(
+            s.shortcuts,
+            Shortcuts {
+                enabled: false,
+                ..shortcuts("Alt+F1", "", "Control+Shift+K")
+            }
         );
         assert_eq!(s.version, SETTINGS_VERSION);
     }
@@ -488,12 +719,13 @@ mod tests {
             let patch = json!({
                 "mode": junk, "autoColor": junk, "colors": junk, "font": junk, "size": junk,
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
-                "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk
+                "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
+                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
-                // An object is the right type for the maps: colors and font change nothing, and
-                // the offsets map is replaced by one whose only entry is dropped.
+                // An object is the right type for the maps: colors, font and shortcuts change
+                // nothing, and the offsets map is replaced by one whose only entry is dropped.
                 assert_eq!(next.track_offsets_ms, BTreeMap::new());
                 assert_eq!(
                     Settings {
@@ -515,6 +747,17 @@ mod tests {
         let next = merge_patch(
             &current,
             &json!({ "size": true, "glow": false, "displays": true, "colors": { "dim": true } }),
+        );
+        assert_eq!(next, current);
+        let next = merge_patch(
+            &current,
+            &json!({
+                "enabled": 1, "launchAtLogin": "true",
+                "shortcuts": {
+                    "enabled": "yes", "toggleLyrics": 76, "nudgeEarlier": null,
+                    "nudgeLater": ["Alt+L"]
+                }
+            }),
         );
         assert_eq!(next, current);
     }
@@ -653,7 +896,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 14);
+        assert_eq!(keys.len(), 17);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -702,15 +945,19 @@ mod tests {
 
     #[test]
     fn the_whole_settings_object_is_a_valid_patch() {
-        // The settings window's "Reset to defaults" sends everything but version and offsets.
+        // The settings window's "Reset to defaults" sends everything but version, offsets, and
+        // whether the lyrics are on and Undertone launches at login. Shortcuts are reset too.
         let mut reset = serde_json::to_value(defaults()).unwrap();
         let reset_fields = reset.as_object_mut().unwrap();
-        reset_fields.remove("version");
-        reset_fields.remove("trackOffsetsMs");
+        for kept in ["version", "trackOffsetsMs", "enabled", "launchAtLogin"] {
+            reset_fields.remove(kept);
+        }
         assert_eq!(
             merge_patch(&custom(), &reset),
             Settings {
                 track_offsets_ms: custom().track_offsets_ms,
+                enabled: false,
+                launch_at_login: true,
                 ..defaults()
             }
         );
@@ -741,13 +988,20 @@ mod tests {
     }
 
     #[test]
-    fn only_show_when_and_displays_refresh_the_desktop_layer() {
+    fn only_show_when_displays_and_enabled_refresh_the_desktop_layer() {
         let current = custom();
         let drag = merge_patch(
             &current,
-            &json!({ "size": 30, "yPos": 10, "colors": { "dim": "#000000" }, "mode": "arc" }),
+            &json!({
+                "size": 30, "yPos": 10, "colors": { "dim": "#000000" }, "mode": "arc",
+                "launchAtLogin": false, "shortcuts": { "enabled": true }
+            }),
         );
         assert!(!affects_layer(&current, &drag));
+        assert!(affects_layer(
+            &current,
+            &merge_patch(&current, &json!({ "enabled": true }))
+        ));
         assert!(!affects_layer(
             &current,
             &with_track_offset(&current, "k", 50.0).unwrap()
@@ -920,6 +1174,331 @@ mod tests {
                 ..defaults()
             }
         );
+    }
+
+    #[test]
+    fn lyrics_on_and_launch_at_login_are_booleans() {
+        let next = patched(json!({ "enabled": false, "launchAtLogin": true }));
+        assert!(!next.enabled && next.launch_at_login);
+        let back = merge_patch(&next, &json!({ "enabled": true, "launchAtLogin": false }));
+        assert_eq!(back, defaults());
+    }
+
+    #[test]
+    fn shortcut_bindings_are_stored_in_one_spelling() {
+        let next = patched(json!({ "shortcuts": { "toggleLyrics": "shift+option+cmd+k" } }));
+        assert_eq!(
+            next.shortcuts,
+            Shortcuts {
+                toggle_lyrics: "Super+Alt+Shift+K".into(),
+                ..defaults().shortcuts
+            }
+        );
+        // "" is no shortcut.
+        let next = patched(json!({ "shortcuts": { "nudgeEarlier": "" } }));
+        assert_eq!(next.shortcuts.nudge_earlier, "");
+        let next = patched(json!({ "shortcuts": { "enabled": false } }));
+        assert_eq!(
+            next.shortcuts,
+            Shortcuts {
+                enabled: false,
+                ..defaults().shortcuts
+            }
+        );
+        // A partial object changes only its keys; unknown keys are dropped.
+        let next = merge_patch(
+            &custom(),
+            &json!({ "shortcuts": { "nudgeEarlier": "Alt+2", "openSettings": "Alt+S" } }),
+        );
+        assert_eq!(
+            next.shortcuts,
+            Shortcuts {
+                nudge_earlier: "Alt+2".into(),
+                ..custom().shortcuts
+            }
+        );
+        assert_eq!(
+            merge_patch(&custom(), &json!({ "shortcuts": {} })),
+            custom()
+        );
+    }
+
+    #[test]
+    fn an_unusable_binding_keeps_the_current_one() {
+        let current = custom();
+        for bad in [
+            "Shift+K",
+            "K",
+            "Alt+",
+            "Alt+Escape",
+            " ",
+            "Ctrl+Control+K",
+            "Alt + K",
+        ] {
+            let patch = json!({ "shortcuts": { "toggleLyrics": bad, "nudgeEarlier": bad } });
+            assert_eq!(merge_patch(&current, &patch), current, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_binding_another_action_has_keeps_the_current_one() {
+        let current = defaults();
+        // The toggle's keys for a nudge, spelled another way.
+        let patch = json!({ "shortcuts": { "nudgeLater": "alt+shift+cmdorctrl+l" } });
+        assert_eq!(merge_patch(&current, &patch), current);
+        // Two new bindings on the same keys: both keep their current ones.
+        let patch = json!({ "shortcuts": { "toggleLyrics": "Alt+K", "nudgeEarlier": "Alt+K" } });
+        assert_eq!(merge_patch(&current, &patch), current);
+        // Any number of actions may have none.
+        let patch =
+            json!({ "shortcuts": { "toggleLyrics": "", "nudgeEarlier": "", "nudgeLater": "" } });
+        assert_eq!(
+            merge_patch(&current, &patch).shortcuts,
+            shortcuts("", "", "")
+        );
+        // A binding freed by the same patch can be taken: a swap.
+        let patch = json!({ "shortcuts": {
+            "toggleLyrics": "CmdOrCtrl+Alt+Shift+]", "nudgeEarlier": "CmdOrCtrl+Alt+Shift+L"
+        } });
+        let swapped = merge_patch(&current, &patch);
+        assert_eq!(
+            swapped.shortcuts,
+            shortcuts(
+                "CmdOrCtrl+Alt+Shift+]",
+                "CmdOrCtrl+Alt+Shift+L",
+                "CmdOrCtrl+Alt+Shift+["
+            )
+        );
+        // And back: Reset shortcuts sends the three defaults, whatever the current ones are.
+        let reset = json!({ "shortcuts": serde_json::to_value(defaults().shortcuts).unwrap() });
+        assert_eq!(merge_patch(&swapped, &reset), defaults());
+    }
+
+    #[test]
+    fn rejecting_a_binding_also_rejects_a_new_one_that_now_clashes_with_it() {
+        let current = defaults();
+        // The toggle can't have the later nudge's [ and keeps its L, so the earlier nudge can't
+        // have L either.
+        let patch = json!({ "shortcuts": {
+            "toggleLyrics": "CmdOrCtrl+Alt+Shift+[", "nudgeEarlier": "CmdOrCtrl+Alt+Shift+L"
+        } });
+        assert_eq!(merge_patch(&current, &patch), current);
+    }
+
+    #[test]
+    fn no_patch_leaves_two_actions_on_one_accelerator_and_distinct_sets_always_apply() {
+        let candidates = [
+            "",
+            "Alt+A",
+            "alt+b",
+            "CmdOrCtrl+Alt+Shift+L",
+            "CmdOrCtrl+Alt+Shift+[",
+        ];
+        for current in [
+            defaults(),
+            custom(),
+            patched(json!({ "shortcuts": {
+            "toggleLyrics": "Alt+A", "nudgeEarlier": "Alt+B", "nudgeLater": ""
+        } })),
+        ] {
+            for toggle in candidates {
+                for earlier in candidates {
+                    for later in candidates {
+                        let patch = json!({ "shortcuts": {
+                            "toggleLyrics": toggle, "nudgeEarlier": earlier, "nudgeLater": later
+                        } });
+                        let next = merge_patch(&current, &patch).shortcuts;
+                        let bindings = ACTIONS.map(|action| next.binding(action).to_owned());
+                        let bound: Vec<_> = bindings.iter().filter(|b| !b.is_empty()).collect();
+                        let mut distinct = bound.clone();
+                        distinct.sort();
+                        distinct.dedup();
+                        assert_eq!(distinct.len(), bound.len(), "{patch}: {next:?}");
+                        let wanted = [toggle, earlier, later].map(|b| accelerator(b).unwrap());
+                        let wanted_bound: Vec<_> =
+                            wanted.iter().filter(|b| !b.is_empty()).collect();
+                        let mut wanted_distinct = wanted_bound.clone();
+                        wanted_distinct.sort();
+                        wanted_distinct.dedup();
+                        if wanted_distinct.len() == wanted_bound.len() {
+                            assert_eq!(bindings, wanted, "{patch}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stored_shortcuts_are_repaired_like_a_patch() {
+        // The toggle would take the default earlier nudge's keys; Shift+X isn't usable.
+        let stored = json!({ "shortcuts": {
+            "enabled": "no", "toggleLyrics": "CmdOrCtrl+Alt+Shift+]", "nudgeLater": "Shift+X"
+        } });
+        assert_eq!(migrate(&stored).shortcuts, defaults().shortcuts);
+        // A complete set of distinct bindings loads as saved.
+        let stored = json!({ "shortcuts": {
+            "enabled": true, "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+            "nudgeEarlier": "CmdOrCtrl+Alt+Shift+L", "nudgeLater": ""
+        } });
+        assert_eq!(
+            migrate(&stored).shortcuts,
+            shortcuts("CmdOrCtrl+Alt+Shift+]", "CmdOrCtrl+Alt+Shift+L", "")
+        );
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v3_get_the_new_defaults_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        for added in ["enabled", "launchAtLogin", "shortcuts"] {
+            saved.as_object_mut().unwrap().remove(added);
+        }
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                enabled: true,
+                launch_at_login: false,
+                shortcuts: defaults().shortcuts,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+    }
+
+    #[test]
+    fn the_login_item_is_adopted_only_when_known_and_different() {
+        let mut settings = defaults();
+        assert!(!adopt_login_item(&mut settings, None));
+        assert!(!adopt_login_item(&mut settings, Some(false)));
+        assert!(adopt_login_item(&mut settings, Some(true)));
+        assert!(settings.launch_at_login);
+        assert!(!adopt_login_item(&mut settings, None), "unknown keeps it");
+        assert!(adopt_login_item(&mut settings, Some(false)));
+        assert_eq!(settings, defaults());
+    }
+
+    /// The mock bridge's `mergeSettings` runs the same cases (`tests/accelerator.test.ts`).
+    #[test]
+    fn both_halves_merge_the_shared_shortcut_cases_alike() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/accelerators.json")).unwrap();
+        let cases = fixture["merge"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let why = case["why"].as_str().unwrap();
+            let current = Settings {
+                shortcuts: serde_json::from_value(case["current"].clone()).unwrap(),
+                ..defaults()
+            };
+            let expected: Shortcuts = serde_json::from_value(case["expected"].clone()).unwrap();
+            let next = merge_patch(&current, &json!({ "shortcuts": case["patch"] }));
+            assert_eq!(next.shortcuts, expected, "{why}");
+        }
+    }
+
+    #[test]
+    fn the_login_item_follows_a_change_or_keeps_its_value_when_the_os_refuses() {
+        let current = defaults();
+        let on = merge_patch(&current, &json!({ "launchAtLogin": true, "size": 80 }));
+        // Turned on: the OS is asked once, for the new value.
+        let mut asked = Vec::new();
+        let (next, error) = with_login_item(&current, on.clone(), |enabled| {
+            asked.push(enabled);
+            Ok(())
+        });
+        assert_eq!((next, error, asked), (on.clone(), None, vec![true]));
+        // Refused: launchAtLogin keeps its value, the rest of the change applies, the error returns.
+        let (next, error) = with_login_item(&current, on, |_| Err("denied".into()));
+        assert_eq!(
+            next,
+            Settings {
+                size: 80.0,
+                ..defaults()
+            }
+        );
+        assert_eq!(error.as_deref(), Some("denied"));
+        // Not part of the change: the OS isn't asked.
+        let sized = merge_patch(&current, &json!({ "size": 80 }));
+        let (next, error) = with_login_item(&current, sized.clone(), |_| {
+            panic!("the login item didn't change")
+        });
+        assert_eq!((next, error), (sized, None));
+    }
+
+    #[test]
+    fn a_refused_login_item_alone_changes_nothing_to_save() {
+        // So the runtime broadcasts the settings itself, and a switch that moved goes back.
+        let writer = Mutex::new(());
+        let settings = Mutex::new(defaults());
+        let mut refused = None;
+        let committed = commit(
+            &writer,
+            &settings,
+            |current| {
+                let next = merge_patch(current, &json!({ "launchAtLogin": true }));
+                let (next, error) = with_login_item(current, next, |_| Err("denied".into()));
+                refused = error;
+                Ok(next)
+            },
+            |_| panic!("nothing to save"),
+        )
+        .unwrap();
+        assert_eq!(committed, Committed::Unchanged(defaults()));
+        assert_eq!(refused.as_deref(), Some("denied"));
+    }
+
+    #[test]
+    fn a_change_runs_without_the_settings_lock_and_says_what_to_redo() {
+        let writer = Mutex::new(());
+        let settings = Mutex::new(defaults());
+        let committed = commit(
+            &writer,
+            &settings,
+            |current| {
+                // Readers aren't kept waiting while a change turns the login item on or off;
+                // other changes are.
+                assert!(settings.try_lock().is_ok());
+                assert!(writer.try_lock().is_err());
+                Ok(merge_patch(
+                    current,
+                    &json!({ "shortcuts": { "toggleLyrics": "Alt+K" } }),
+                ))
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert!(matches!(
+            committed,
+            Committed::Changed {
+                refresh: false,
+                reregister: true,
+                ..
+            }
+        ));
+        let committed = commit(
+            &writer,
+            &settings,
+            |current| {
+                Ok(merge_patch(
+                    current,
+                    &json!({ "enabled": false, "launchAtLogin": true }),
+                ))
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert!(matches!(
+            committed,
+            Committed::Changed {
+                refresh: true,
+                reregister: false,
+                ..
+            }
+        ));
+        assert_eq!(settings.lock().unwrap().shortcuts.toggle_lyrics, "Alt+K");
     }
 
     #[test]

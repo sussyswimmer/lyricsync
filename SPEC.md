@@ -178,6 +178,37 @@ export interface MediaStatus {
 | `media-status` event | `MediaStatus` | Right after the `now-playing` it goes with, only when it changed. A reported track (playing or paused) gives `{ source, problem: null }`; otherwise a running player with Automation denied gives `"automation-denied"` (Spotify first), no supported player or media session gives `"no-player"`, and anything else gives `{ source: null, problem: null }`. |
 | `get_media_status()` | `MediaStatus` | The last status sent. |
 
+**Contract v3 (additive, 2026-10-06).** `CONTRACT_VERSION = 3`. `Settings.version` stays 1; stored settings without the new fields get their defaults.
+
+```ts
+export type ShortcutAction = "toggleLyrics" | "nudgeEarlier" | "nudgeLater";
+
+/** Accelerators such as "CmdOrCtrl+Alt+Shift+L": modifiers (at least one of CmdOrCtrl, Control,
+ *  Alt or Super, plus optional Shift) then one key. "" leaves that action without a shortcut. */
+export interface Shortcuts {
+  enabled: boolean;      // false turns every global shortcut off
+  toggleLyrics: string;
+  nudgeEarlier: string;  // +50 ms for the current song
+  nudgeLater: string;    // −50 ms for the current song
+}
+
+export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
+export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
+
+// Settings gains:
+enabled: boolean;        // default true; false hides the lyrics everywhere
+launchAtLogin: boolean;  // default false; the OS login item follows it
+shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
+```
+
+| Event / command | Payload / returns | When |
+|---|---|---|
+| `shortcuts-status` event | `ShortcutsStatus` | After every registration pass, only when it changed. `"unavailable"` means another app or the OS holds the combination. |
+| `get_shortcuts_status()` | `ShortcutsStatus` | The last status sent. |
+| `suspend_shortcuts(suspended: boolean)` | `()` | Settings suspends the global shortcuts while it records a new one, so the old binding doesn't swallow the keys. Rust resumes on `false`, after 30 s, or when Settings hides. |
+
+`enabled` replaces the tray's runtime-only "Hide lyrics" state: the tray item, the toggle shortcut and the Settings switch all change it, and it persists. `launchAtLogin` changes the login item in the same update (a failure keeps the old value and returns an error); at startup Rust adopts the login item's real state. Invalid or duplicate shortcut bindings keep their current value, like every other field. **Reset to defaults** in Settings resets the shortcuts but keeps `enabled` and `launchAtLogin`.
+
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 
 **Auto colors** are computed in TypeScript from `artwork` and never written to settings. `colors` holds the user's manual choice, used when `autoColor` is false.

@@ -65,19 +65,30 @@ pub fn run() {
                 return;
             }
             // Its page hides and shows with it (desktop_layer::set_shown), so the preview stops
-            // drawing and the settings page saves a pending edit as it goes.
+            // drawing and the settings page saves a pending edit as it goes. Hidden, minimized or
+            // in the background, it can't be recording a shortcut: any suspension it left ends.
             let result = match event {
                 // Closing Settings hides it, so the tray and a second launch can show it again.
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
+                    shortcuts::resume(window.app_handle());
                     window
                         .get_webview_window("settings")
                         .map(|settings| desktop_layer::set_shown(&settings, false))
                 }
                 // Minimized or restored.
-                tauri::WindowEvent::Resized(_) => window
-                    .get_webview_window("settings")
-                    .map(|settings| desktop_layer::sync_page_visibility(&settings)),
+                tauri::WindowEvent::Resized(_) => {
+                    if window.is_minimized().unwrap_or(false) {
+                        shortcuts::resume(window.app_handle());
+                    }
+                    window
+                        .get_webview_window("settings")
+                        .map(|settings| desktop_layer::sync_page_visibility(&settings))
+                }
+                tauri::WindowEvent::Focused(false) => {
+                    shortcuts::resume(window.app_handle());
+                    None
+                }
                 _ => None,
             };
             if let Some(Err(error)) = result {
@@ -97,7 +108,7 @@ pub fn run() {
                     eprintln!("settings page: {error}");
                 }
             }
-            // Settings first: every service and window below reads them.
+            // Settings first: every service and window below reads them (and the shortcuts).
             settings::runtime::install(handle).map_err(std::io::Error::other)?;
             lyrics::runtime::install(handle).map_err(std::io::Error::other)?;
             desktop_layer::start(handle).map_err(std::io::Error::other)?;
@@ -111,6 +122,8 @@ pub fn run() {
             commands::update_settings,
             commands::get_now_playing,
             commands::get_media_status,
+            commands::get_shortcuts_status,
+            commands::suspend_shortcuts,
             commands::get_lyrics,
             commands::refetch_lyrics,
             commands::set_track_offset,

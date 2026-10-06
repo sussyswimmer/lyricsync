@@ -2,7 +2,7 @@
 
 Undertone draws the lyrics of the song you're playing on your desktop, above the wallpaper and below your icons and windows. You can't click the lyrics: clicks go through to the desktop, and any window you open covers them.
 
-To change how they look, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. Every change applies right away and is saved.
+To turn them off, change how they look or set up the shortcuts, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. Every change applies right away and is saved.
 
 The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height and curve match what you'll see.
 
@@ -10,17 +10,38 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 
 ## Contents
 
+- [General](#general): Lyrics on the desktop, Launch at login
 - [Style](#style)
 - [Color](#color)
 - [Font](#font)
 - [Layout](#layout): Size, Curve, Height, Glow, Opacity
-- [Behavior](#behavior): Show lyrics, Show on
+- [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
+- [Shortcuts](#shortcuts)
 - [Reset to defaults](#reset-to-defaults)
 - [Menu and shortcuts](#menu-and-shortcuts)
 - [Loading, missing and unsynced lyrics](#loading-missing-and-unsynced-lyrics)
 - [Song changes, pauses and breaks](#song-changes-pauses-and-breaks)
 - [Reduced motion](#reduced-motion)
+
+## General
+
+### Lyrics on the desktop
+
+On by default. Switch it off to hide the lyrics on every display. Undertone keeps running in the menu bar or tray, and remembers the choice the next time it starts. The preview at the top keeps playing, marked **Off on the desktop**, so you can still change how the lyrics look. The note under the switch says how to bring them back.
+
+Three things turn the lyrics on and off, and they always agree: this switch, **Hide lyrics** / **Show lyrics** in the menu, and the [Show or hide lyrics shortcut](#shortcuts) (⌥⇧⌘L on a Mac, Ctrl+Alt+Shift+L on Windows, unless you've changed it).
+
+Don't confuse this with [When](#when), which decides whether the lyrics stay up while a song is paused.
+
+### Launch at login
+
+Off by default. Switch it on to start Undertone when you log in. It's the same setting as **Launch at login** in the menu.
+
+Undertone adds itself to the apps your system starts at login. If the system refuses the change, the switch flips back and a note under it says so.
+
+- On Windows it's listed in **Settings › Apps › Startup**. If you turn it off there, this switch follows the next time you open Settings or Undertone starts.
+- On a Mac it's listed under **Allow in the Background** in **System Settings › General › Login Items**. Undertone can't see that switch: turned off there, Undertone no longer starts at login but this switch still shows on. To stop it starting at login, turn off this switch (or **Launch at login** in the menu) instead.
 
 ## Style
 
@@ -86,7 +107,7 @@ For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. I
 
 How big the current line is, from 22 to 140 (default 58). Neighboring lines are drawn smaller in proportion.
 
-Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Show on: All displays](#show-on), each screen scales them to its own height.
+Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height.
 
 ### Curve
 
@@ -116,16 +137,16 @@ How see-through the lyrics are, from 20% to 100% (default 100%). It applies to e
 
 ## Behavior
 
-### Show lyrics
+### When
+
+When the lyrics are on screen.
 
 - **While playing** (default): lyrics show only while a song is playing. They fade out when you pause and come back when you press play.
 - **Always**: lyrics stay on screen while paused, stopped where the song stopped.
 
-When no song is loaded in your player at all, nothing shows either way.
+When no song is loaded in your player at all, nothing shows either way. To hide the lyrics whatever is playing, switch off [Lyrics on the desktop](#lyrics-on-the-desktop).
 
-You can also hide the lyrics completely with **Show/Hide lyrics** in the menu, or ⌘⌥⇧L (Ctrl+Alt+Shift+L on Windows).
-
-### Show on
+### Where
 
 Which screens show lyrics.
 
@@ -155,13 +176,61 @@ The buttons are grayed out when nothing is playing. If Undertone finds no music 
 You can nudge without opening Settings:
 
 - Menu: **Sync ▸ Earlier 100 ms**, **Sync ▸ Later 100 ms**, **Sync ▸ Reset for this song**.
-- Shortcuts: ⌘⌥⇧] for 50 ms earlier and ⌘⌥⇧[ for 50 ms later (Ctrl+Alt+Shift+] and Ctrl+Alt+Shift+[ on Windows).
+- Shortcuts: ⌥⇧⌘] for 50 ms earlier and ⌥⇧⌘[ for 50 ms later (Ctrl+Alt+Shift+] and Ctrl+Alt+Shift+[ on Windows), unless you've [changed them](#shortcuts).
+
+## Shortcuts
+
+Three keyboard shortcuts work from any app, even with Settings closed. These are the defaults:
+
+| Action | macOS | Windows |
+|---|---|---|
+| **Show or hide lyrics** | ⌥⇧⌘L | Ctrl+Alt+Shift+L |
+| **Nudge earlier (+50 ms)** | ⌥⇧⌘] | Ctrl+Alt+Shift+] |
+| **Nudge later (−50 ms)** | ⌥⇧⌘[ | Ctrl+Alt+Shift+[ |
+
+Show or hide lyrics flips [Lyrics on the desktop](#lyrics-on-the-desktop). The nudges move the song playing now 50 ms earlier or later, like the buttons under [This song](#this-song).
+
+### Changing a shortcut
+
+In **Settings › Shortcuts**, click the shortcut next to an action, or Tab to it and press Space or Enter. It says **Press keys…**. Now press the new combination:
+
+- It needs ⌘, ⌥ or ⌃ on a Mac, or Ctrl, Alt or the Windows key on Windows. Shift can be added, but isn't enough on its own, so a shortcut never takes ordinary typing.
+- It ends with one key: a letter, a digit, F1 to F24, Space, an arrow, Home, End, Page Up, Page Down, Insert, Delete, Backspace, Tab, Enter, or one of `[` `]` `;` `'` `,` `.` `/` `\` `` ` `` `-` `=`.
+- Combinations every app relies on are turned down, such as ⌘C, ⌘Q and ⌘Space on a Mac, or Ctrl+V, Alt+Tab and Alt+F4 on Windows.
+- On a Mac, Undertone records where the key is, not what it types, so on a keyboard layout other than US English the key may carry a different label (on a French keyboard, the key labeled A shows as Q).
+- On Windows, a letter is recorded as the letter it types on your current keyboard layout, and a digit by its place on the number row. A punctuation key works only where it types the same character as on a US English keyboard; Settings turns the others down. On other layouts the default `[` and `]` shortcuts may sit on other keys (on a German keyboard, ß and ´); record new ones if that's awkward.
+
+While Settings listens, Undertone's own shortcuts are paused, so pressing the current one records it instead of hiding the lyrics. They come back as soon as you're done.
+
+- **Esc** stops listening and keeps the shortcut.
+- **Delete** (or Backspace) removes the shortcut. The action shows **None**; use the menu or Settings for it instead.
+- Clicking elsewhere, switching to another app, or 25 seconds without a key also stop listening.
+- A combination another action already has is turned down, for example "⌥⇧⌘] is already used for Nudge earlier." Press another one, or change that action first.
+
+**Reset shortcuts** puts all three back to the defaults.
+
+### Turning shortcuts off
+
+Switch off **Keyboard shortcuts** to leave all three combinations to other apps. Your shortcuts are kept for when you switch it back on.
+
+### When a shortcut doesn't work
+
+If another app or the system already uses a combination, Undertone can't have it, and Settings says **Another app is using this combination.** under it. Record a different one. **Not a usable combination.** means the saved shortcut is one Undertone can't register; record a new one.
+
+### Why you might change them
+
+The defaults hold three modifier keys to stay out of other apps' way, but no combination is free everywhere:
+
+- On Windows, the AltGr key counts as Ctrl+Alt. Some keyboard layouts type characters with AltGr+Shift (Polish Ł, for example), and a shortcut on that key takes the character away. Without Shift the clash is far more common (German @ is AltGr+Q), so when you record a Ctrl+Alt shortcut without Shift, Settings reminds you.
+- JetBrains IDEs (IntelliJ IDEA, PyCharm and the others) use ⌥⇧⌘L, or Ctrl+Alt+Shift+L on Windows, for Reformat File.
+
+If either gets in your way, record another combination, or remove the shortcut you don't use.
 
 ## Reset to defaults
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts the style, colors, font, layout, behavior and the **All songs** sync back to how Undertone started. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts the style, colors, font, layout, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Menu and shortcuts
 
@@ -169,21 +238,21 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 
 | Item | What it does |
 |---|---|
-| **Show/Hide lyrics** | Hides the lyrics or brings them back |
+| **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as [Lyrics on the desktop](#lyrics-on-the-desktop) in Settings |
 | **Style ▸** Arc / Lens / Drift / Stack | Switches the style |
 | **Sync ▸** Earlier 100 ms / Later 100 ms / Reset for this song | Nudges this song's sync (see [This song](#this-song)) |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
-| **Launch at login** | Starts Undertone when you log in |
+| **Launch at login** | Starts Undertone when you log in, the same as [Launch at login](#launch-at-login) in Settings |
 | **Quit Undertone** | Quits Undertone |
 
-Shortcuts that work from any app:
+Shortcuts that work from any app, by default (change or turn them off in [Settings › Shortcuts](#shortcuts)):
 
 | macOS | Windows | What it does |
 |---|---|---|
-| ⌘⌥⇧L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
-| ⌘⌥⇧[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
-| ⌘⌥⇧] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
+| ⌥⇧⌘L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
+| ⌥⇧⌘[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
+| ⌥⇧⌘] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
 
 ## Loading, missing and unsynced lyrics
 
@@ -199,7 +268,7 @@ Shortcuts that work from any app:
 - **New song:** the old lyrics fade out over a quarter of a second, then the new song's lyrics fade in.
 - **Before the first line:** the first line waits on screen in the lyric color until it starts.
 - **Long instrumental breaks:** the line just sung stays up for at most about 2.5 seconds after its last word (less when the lyrics mark where the break starts), then the next line shows, waiting, until it starts.
-- **Paused:** the lyrics stop where the song stopped, and Undertone stops animating. With **Show lyrics: While playing** they also fade out until you press play.
+- **Paused:** the lyrics stop where the song stopped, and Undertone stops animating. With **When: While playing** they also fade out until you press play.
 
 ## Reduced motion
 
@@ -211,6 +280,6 @@ If you've asked your system to reduce motion (macOS: System Settings → Accessi
 - The loading dots fade in once and then stay still instead of pulsing.
 - The instrumental **♪** stays still instead of breathing.
 - Word colors change instantly instead of fading.
-- With **Show lyrics: While playing**, pausing hides the lyrics at once instead of fading them out.
+- With **When: While playing**, pausing hides the lyrics at once instead of fading them out.
 
 Song changes still fade out and in.
