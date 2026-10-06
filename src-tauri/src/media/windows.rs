@@ -290,7 +290,7 @@ impl WindowsSource {
         {
             let mut cache = self.art.lock().unwrap_or_else(|e| e.into_inner());
             if cache.key.as_ref() == Some(&key)
-                && !cache.retry_after.is_some_and(|time| Instant::now() >= time)
+                && cache.retry_after.is_none_or(|time| Instant::now() < time)
             {
                 return cache.value.clone();
             }
