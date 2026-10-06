@@ -1,0 +1,127 @@
+name: CI
+
+# Every branch push and pull request: frontend tests and build, Rust lint and tests on both
+# desktop OSes, then unsigned installers you can download from the run's Artifacts.
+# Tags are left to release.yml.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # corepack fetches the pnpm that package.json's packageManager pins, without asking.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+
+  rust:
+    name: Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # On Windows, a test exe that links the desktop feature imports TaskDialogIndirect
+        # (comctl32 v6, via muda and tauri-runtime-wry) and dies at load with 0xc0000139 unless it
+        # carries the Common Controls v6 manifest. build.rs has the MSVC linker embed it in every
+        # executable, tests included.
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml pins stable; this installs it with clippy and rustfmt.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      # Plain cargo builds are dev builds: generate_context! points at devUrl and embeds no
+      # frontend, so dist/ isn't read. The empty folder only guards a build with `custom-protocol`
+      # on, which panics when frontendDist is missing.
+      - name: Stand-in frontend dist
+        run: mkdir -p ../dist
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --features desktop --all-targets -- -D warnings
+      - run: cargo test --locked --features desktop
+
+  bundle:
+    name: Bundle (${{ matrix.name }})
+    needs: [frontend, rust]
+    # A pull request from a branch of this repo already gets installers from that branch's push
+    # run, so only pull requests from forks build them a second time.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS universal
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            installer: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          - os: windows-latest
+            name: Windows x64
+            args: ""
+            rust-targets: ""
+            installer: src-tauri/target/release/bundle/nsis/*-setup.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      # Unsigned: no certificates or notarization. macOS gets an ad-hoc signature from
+      # bundle.macOS.signingIdentity "-" so Apple silicon Macs don't call the app damaged.
+      # The Tauri CLI runs `pnpm build` first (beforeBuildCommand) and enables the desktop feature.
+      - name: Build installer
+        run: pnpm tauri build ${{ matrix.args }}
+      # One file per artifact, uploaded as-is, so the run page links straight to the installer.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ matrix.installer }}
+          archive: false
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14

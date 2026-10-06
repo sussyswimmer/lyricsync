@@ -1,0 +1,114 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the macOS universal .dmg and the Windows NSIS setup .exe and
+# attaches them to a draft GitHub release. Review the draft, then publish it by hand.
+# Builds are unsigned for now; docs/INSTALL.md walks users past Gatekeeper and SmartScreen.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  # One draft for both builds, created up front so the two matrix jobs can't race to make two.
+  draft:
+    name: Draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      release-id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches the app version
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+      - name: Create or reuse the draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: |
+            Unsigned test build.
+
+            - **macOS 14 or later** (Apple silicon and Intel): download the `.dmg`.
+            - **Windows 10/11**: download the `-setup.exe`.
+
+            macOS and Windows warn about unsigned apps the first time you open them. [docs/INSTALL.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md) shows how to get past the warning.
+        run: |
+          # A rerun reuses the draft it made last time.
+          ids=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")
+          id=${ids%%$'\n'*}
+          if [ -z "$id" ]; then
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="Undertone $GITHUB_REF_NAME" \
+              -f body="$BODY" \
+              -F draft=true \
+              --jq .id)
+          fi
+          # Without an id, tauri-action would build and quietly upload nothing.
+          if [ -z "$id" ]; then
+            echo "::error::Couldn't create or find the draft release for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS universal
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: windows-latest
+            name: Windows x64
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - run: pnpm install --frozen-lockfile
+      # Runs `pnpm tauri build` and uploads the bundles to the draft: the .dmg (plus the .app as a
+      # .tar.gz) on macOS, the NSIS setup .exe on Windows. No updater, so no latest.json.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release-id }}
+          args: ${{ matrix.args }}
+          includeUpdaterJson: false

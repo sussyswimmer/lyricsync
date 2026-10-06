@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shown in the Automation prompt the first time Undertone asks Spotify or Music what's playing. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Undertone reads what's playing in Spotify and Music to show its lyrics.</string>
+	<!-- Menu bar app: no Dock icon or app menu from launch (matches the Accessory activation policy). -->
+	<key>LSUIElement</key>
+	<true/>
+</dict>
+</plist>
