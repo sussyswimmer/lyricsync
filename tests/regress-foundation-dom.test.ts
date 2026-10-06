@@ -1,10 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
+import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { parseLrc, type Line } from "../src/core/lrc";
+import { PaletteCache } from "../src/core/palette";
+import { OverlayController } from "../src/overlay/controller";
 import { resolveLook, type Frame, type Look } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
-import { LyricStage } from "../src/overlay/stage";
+import { LINGER_MS, LyricStage } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -508,5 +511,248 @@ describe("the not-found chip", () => {
     const host = new FakeElement("div");
     buildState(asHtml(host), "not-found", lookFor(), 6000);
     expect(host.children[0]?.style["animationDelay"]).toBe("-1300ms");
+  });
+});
+
+// Regression (reduced-motion-loading-pulse): under reduced motion the loading dots kept pulsing forever;
+// only the instrumental ♪ had stopped breathing. C6: reduced motion means crossfades only.
+describe("stage.css under reduced motion", () => {
+  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
+  // non-literal specifier, because the strict type check runs without node's types.
+  let css = "";
+  beforeAll(async () => {
+    const fsModule = "node:fs";
+    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+    css = fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  });
+
+  /** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
+  function blocks(sheet: string): { prelude: string; body: string }[] {
+    const out: { prelude: string; body: string }[] = [];
+    let depth = 0;
+    let start = 0;
+    let open = 0;
+    for (let i = 0; i < sheet.length; i++) {
+      if (sheet[i] === "{" && depth++ === 0) open = i;
+      if (sheet[i] === "}" && --depth === 0) {
+        out.push({ prelude: sheet.slice(start, open).trim(), body: sheet.slice(open + 1, i) });
+        start = i + 1;
+      }
+    }
+    return out;
+  }
+
+  const animationOf = (body: string): string => /(?:^|;)\s*animation\s*:\s*([^;]*)/.exec(body)?.[1]?.trim() ?? "";
+  /** The rules inside `@media (prefers-reduced-motion: reduce)`, by selector. */
+  const reducedRules = (): Map<string, string> => {
+    const media = blocks(css).find((b) => /^@media\s*\(prefers-reduced-motion:\s*reduce\)$/.test(b.prelude));
+    const rules = new Map<string, string>();
+    for (const rule of blocks(media?.body ?? "")) for (const sel of rule.prelude.split(",")) rules.set(sel.trim(), rule.body);
+    return rules;
+  };
+
+  it("stops every endless state animation", () => {
+    const endless = blocks(css).filter((b) => !b.prelude.startsWith("@") && /\binfinite\b/.test(animationOf(b.body)));
+    expect(endless.map((b) => b.prelude)).toEqual(expect.arrayContaining([".state-loading", ".state-instrumental"]));
+    const reduced = reducedRules();
+    for (const rule of endless) {
+      for (const sel of rule.prelude.split(",").map((x) => x.trim())) {
+        const body = reduced.get(sel);
+        expect(body, sel).toBeDefined();
+        expect(animationOf(body ?? ""), sel).not.toMatch(/\binfinite\b/);
+      }
+    }
+  });
+
+  it("brings the loading dots in with one fade after the same quiet start, then holds them still", () => {
+    const animation = animationOf(reducedRules().get(".state-loading") ?? "");
+    expect(animation).toMatch(/\bforwards\b/);
+    const name = animation.split(/\s+/)[0] ?? "";
+    const frames = blocks(css).find((b) => b.prelude === `@keyframes ${name}`)?.body ?? "";
+    // a fade from nothing, no movement
+    expect(frames).toMatch(/from\s*\{\s*opacity:\s*0;?\s*\}/);
+    expect(frames).not.toMatch(/transform/);
+    // to a level that can still be seen
+    expect(Number(/\bto\s*\{\s*opacity:\s*([\d.]+)/.exec(frames)?.[1])).toBeGreaterThan(0.1);
+    // the quiet start is the inline delay states.ts sets, which the sheet's shorthand can't override
+    const host = new FakeElement("div");
+    buildState(asHtml(host), "loading", lookFor());
+    expect(host.children[0]?.style["animationDelay"]).toBe("600ms");
+  });
+});
+
+// DoD (C6 performance budget): with nothing to sing, the stage gives the frame loop nothing to wake
+// for, so the controller only takes its 250 ms safety wake (tests/regress-foundation-controller.test.ts).
+describe("the stage with nothing to sing", () => {
+  it("asks for no frames in any state", () => {
+    for (const kind of ["loading", "not-found", "instrumental", "error"] as const) {
+      const { stage: s } = stage();
+      s.show({ kind }, "a");
+      for (const t of [0, 5000, 60_000]) {
+        expect(s.render(t), kind).toBe(false);
+        expect(s.nextChange(t), kind).toBe(Infinity);
+      }
+    }
+  });
+
+  it("asks for none once the last line has lingered", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    // Paper Lanterns' last word ends at 20 s; its line stays lit for LINGER_MS, then nothing changes
+    s.render(19_500);
+    expect(s.nextChange(19_500)).toBe(500);
+    expect(s.nextChange(20_000 + LINGER_MS - 100)).toBe(100);
+    for (const t of [20_000 + LINGER_MS + 1, 30_000]) {
+      expect(s.render(t)).toBe(false);
+      expect(s.nextChange(t)).toBe(Infinity);
+    }
+  });
+});
+
+/** A bridge that answers commands from fixed values and lets the test send events. */
+class StubBridge implements Bridge {
+  readonly kind = "mock" as const;
+  readonly answers: Partial<{ [C in Command]: ResultOf<C> }> = {};
+  private readonly handlers = new Map<Event, Set<(payload: never) => void>>();
+
+  invoke<C extends Command>(command: C, ..._args: ArgsOf<C>): Promise<ResultOf<C>> {
+    return Promise.resolve(this.answers[command] as ResultOf<C>);
+  }
+
+  listen<E extends Event>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
+    const set = this.handlers.get(event) ?? new Set();
+    set.add(handler as (payload: never) => void);
+    this.handlers.set(event, set);
+    return Promise.resolve(() => set.delete(handler as (payload: never) => void));
+  }
+
+  emit<E extends Event>(event: E, payload: Events[E]): void {
+    for (const h of this.handlers.get(event) ?? []) (h as (p: Events[E]) => void)(payload);
+  }
+}
+
+// DoD (C6 performance budget), end to end: the overlay as overlay/main.ts builds it (a gated controller,
+// the stage invalidating through it) on the real stage, through a song, its states and a pause.
+describe("the overlay's frame loop on a real stage", () => {
+  const T0 = 1_760_000_000_000;
+  let frames = new Map<number, FrameRequestCallback>();
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    vi.setSystemTime(T0);
+    frames = new Map();
+    let lastId = 0;
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback): number => {
+      frames.set(++lastId, cb);
+      return lastId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
+      frames.delete(id);
+    });
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeElement(tag),
+      visibilityState: "visible",
+      addEventListener: (): void => undefined,
+      removeEventListener: (): void => undefined,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Lets `ms` pass in 16 ms vsyncs, the stage's animation clock with it; frames requested by each vsync run. */
+  function run(ms: number): void {
+    for (let elapsed = 0; elapsed < ms; elapsed += 16) {
+      vi.advanceTimersByTime(16);
+      clock += 16;
+      const due = [...frames.values()];
+      frames.clear();
+      for (const cb of due) cb(Date.now());
+    }
+  }
+
+  const SONG = 24_000;
+  const track = (trackKey: string, over: Partial<NowPlaying> = {}): NowPlaying => ({
+    source: "spotify",
+    trackKey,
+    title: trackKey,
+    artist: "Demo Artist",
+    album: "Undertone Demo",
+    durationMs: SONG,
+    positionMs: 0,
+    sampledAt: Date.now(),
+    isPlaying: true,
+    artwork: null,
+    ...over,
+  });
+  const result = (trackKey: string, status: Lyrics["status"], synced: string | null = null): Lyrics => ({
+    trackKey,
+    status,
+    synced,
+    plain: null,
+    source: "lrclib",
+  });
+
+  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; controller: OverlayController }> {
+    const bridge = new StubBridge();
+    bridge.answers.get_settings = settings({ mode: "stack" });
+    bridge.answers.get_now_playing = track("a");
+    bridge.answers.get_lyrics = result("a", "loading");
+    // as overlay/main.ts wires them
+    const host = new FakeElement("main");
+    let controller: OverlayController | null = null;
+    const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick() });
+    controller = new OverlayController(bridge, s, { gate: true, palettes: new PaletteCache(async () => null) });
+    const paints: number[] = [];
+    const render = s.render.bind(s);
+    s.render = (t: number): boolean => {
+      paints.push(Date.now());
+      return render(t);
+    };
+    await controller.start();
+    return { bridge, host, paints, controller };
+  }
+
+  /**
+   * Over the next `ms`, the loop only takes its 250 ms safety wake: the timer (246 ms) plus the next
+   * vsync, never two paints closer together, yet still awake.
+   */
+  function expectAsleep(paints: number[], ms: number, what: string): void {
+    const from = paints.length;
+    run(ms);
+    const times = paints.slice(from);
+    const gaps = times.slice(1).map((t, i) => t - (times[i] ?? t));
+    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / 262));
+    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / 246));
+    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(246);
+  }
+
+  it("sleeps through loading, after the last line and in empty states, and stops on pause", async () => {
+    const { bridge, host, paints, controller } = await overlay();
+    // past the start-up kicks and the 1.5 s wait for artwork
+    run(1600);
+    expectAsleep(paints, 2000, "loading");
+
+    // the song plays through, then sits after its last line
+    bridge.emit("lyrics", result("a", "found", paperLanterns));
+    expect(host.find("drift-row").length).toBeGreaterThan(0);
+    run(20_000 + LINGER_MS + 600 - (Date.now() - T0));
+    expectAsleep(paints, 5000, "after the last line");
+
+    for (const status of ["instrumental", "not-found"] as const) {
+      bridge.emit("now-playing", track(status));
+      bridge.emit("lyrics", result(status, status));
+      expect(host.find(`state-${status}`), status).toHaveLength(1);
+      run(2000);
+      expectAsleep(paints, 5000, status);
+    }
+
+    bridge.emit("now-playing", track("not-found", { isPlaying: false, positionMs: 9000 }));
+    run(16);
+    const from = paints.length;
+    run(10_000);
+    expect(paints.length - from).toBe(0);
+    controller.destroy();
   });
 });

@@ -152,7 +152,238 @@ impl Default for Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde::de::DeserializeOwned;
+    use serde_json::{json, Value};
+    use std::fmt::Debug;
+
+    /// The TypeScript side of the contract, read at compile time so the two can't drift apart.
+    const CONTRACT_TS: &str = include_str!("../../contract/contract.ts");
+
+    /// The type declarations of contract.ts, without the `DEFAULT_SETTINGS` value below them.
+    fn ts_types() -> &'static str {
+        CONTRACT_TS
+            .split("export const DEFAULT_SETTINGS")
+            .next()
+            .unwrap()
+    }
+
+    /// The quoted strings of the union that follows `anchors` (each found after the previous one),
+    /// up to its `;`, sorted.
+    fn ts_union(anchors: &[&str]) -> Vec<String> {
+        let mut rest = ts_types();
+        for anchor in anchors {
+            let at = rest
+                .find(anchor)
+                .unwrap_or_else(|| panic!("{anchor:?} not in contract.ts"));
+            rest = &rest[at + anchor.len()..];
+        }
+        let union = &rest[..rest.find(';').unwrap()];
+        let mut values: Vec<String> = union
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_owned)
+            .collect();
+        values.sort();
+        values
+    }
+
+    /// The field names of `export interface <name>`, sorted. Nested objects (`colors`, `font`)
+    /// are written on one line, so only their own key is a field here.
+    fn ts_fields(name: &str) -> Vec<String> {
+        let start = format!("export interface {name} {{");
+        let body = &ts_types()[ts_types().find(&start).unwrap() + start.len()..];
+        let body = &body[..body.find("\n}").unwrap()];
+        let field = regex::Regex::new(r"(?m)^\s*(\w+):").unwrap();
+        let mut fields: Vec<String> = field.captures_iter(body).map(|c| c[1].to_owned()).collect();
+        fields.sort();
+        fields
+    }
+
+    fn json_keys(value: &Value) -> Vec<String> {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    /// Every variant serializes to its wire string and reads back from it, and the wire strings
+    /// are exactly the union contract.ts declares (none missing on either side).
+    fn assert_wire<T>(variants: &[T], wire: fn(&T) -> &'static str, ts: &[&str])
+    where
+        T: Serialize + DeserializeOwned + PartialEq + Debug,
+    {
+        for variant in variants {
+            let text = wire(variant);
+            assert_eq!(serde_json::to_value(variant).unwrap(), json!(text));
+            assert_eq!(
+                &serde_json::from_value::<T>(json!(text)).unwrap(),
+                variant,
+                "{text}"
+            );
+        }
+        let mut ours: Vec<String> = variants.iter().map(|v| wire(v).to_owned()).collect();
+        ours.sort();
+        assert_eq!(ours, ts_union(ts), "{ts:?}");
+    }
+
+    // The `wire` matches have no wildcard: a new variant doesn't compile until it is listed.
+    #[test]
+    fn every_enum_variant_has_the_wire_string_contract_ts_declares() {
+        assert_wire(
+            &[Source::Spotify, Source::AppleMusic, Source::System],
+            |v| match v {
+                Source::Spotify => "spotify",
+                Source::AppleMusic => "apple-music",
+                Source::System => "system",
+            },
+            &["export type Source ="],
+        );
+        assert_wire(
+            &[MediaProblem::AutomationDenied, MediaProblem::NoPlayer],
+            |v| match v {
+                MediaProblem::AutomationDenied => "automation-denied",
+                MediaProblem::NoPlayer => "no-player",
+            },
+            &["export type MediaProblem ="],
+        );
+        assert_wire(
+            &[
+                LyricsStatus::Loading,
+                LyricsStatus::Found,
+                LyricsStatus::PlainOnly,
+                LyricsStatus::Instrumental,
+                LyricsStatus::NotFound,
+                LyricsStatus::Error,
+            ],
+            |v| match v {
+                LyricsStatus::Loading => "loading",
+                LyricsStatus::Found => "found",
+                LyricsStatus::PlainOnly => "plain-only",
+                LyricsStatus::Instrumental => "instrumental",
+                LyricsStatus::NotFound => "not-found",
+                LyricsStatus::Error => "error",
+            },
+            &["export type LyricsStatus ="],
+        );
+        assert_wire(
+            &[
+                LyricsSource::Lrclib,
+                LyricsSource::Cache,
+                LyricsSource::User,
+            ],
+            |v| match v {
+                LyricsSource::Lrclib => "lrclib",
+                LyricsSource::Cache => "cache",
+                LyricsSource::User => "user",
+            },
+            &["export interface Lyrics {", "source:"],
+        );
+        assert_wire(
+            &[Mode::Arc, Mode::Lens, Mode::Drift, Mode::Stack],
+            |v| match v {
+                Mode::Arc => "arc",
+                Mode::Lens => "lens",
+                Mode::Drift => "drift",
+                Mode::Stack => "stack",
+            },
+            &["export type Mode ="],
+        );
+        assert_wire(
+            &[ShowWhen::Playing, ShowWhen::Always],
+            |v| match v {
+                ShowWhen::Playing => "playing",
+                ShowWhen::Always => "always",
+            },
+            &["export interface Settings {", "showWhen:"],
+        );
+        assert_wire(
+            &[Displays::Primary, Displays::All],
+            |v| match v {
+                Displays::Primary => "primary",
+                Displays::All => "all",
+            },
+            &["export interface Settings {", "displays:"],
+        );
+        // Wire strings are exact: no Rust variant names, no other case.
+        assert!(serde_json::from_value::<Source>(json!("AppleMusic")).is_err());
+        assert!(serde_json::from_value::<LyricsStatus>(json!("Plain-Only")).is_err());
+    }
+
+    #[test]
+    fn now_playing_json_shape_matches_with_and_without_artwork() {
+        let mut track = NowPlaying {
+            source: Source::Spotify,
+            track_key: "demo artist|paper lantern|demo album|180".into(),
+            title: "Paper Lantern".into(),
+            artist: "Demo Artist".into(),
+            album: "Demo Album".into(),
+            duration_ms: 180_000.0,
+            position_ms: 12_345.5,
+            sampled_at: 1_700_000_000_000.0,
+            is_playing: true,
+            artwork: None,
+        };
+        let without = json!({
+            "source": "spotify", "trackKey": "demo artist|paper lantern|demo album|180",
+            "title": "Paper Lantern", "artist": "Demo Artist", "album": "Demo Album",
+            "durationMs": 180_000.0, "positionMs": 12_345.5, "sampledAt": 1_700_000_000_000.0,
+            "isPlaying": true, "artwork": null
+        });
+        assert_eq!(serde_json::to_value(&track).unwrap(), without);
+        assert_eq!(
+            serde_json::from_value::<NowPlaying>(without.clone()).unwrap(),
+            track
+        );
+        assert_eq!(json_keys(&without), ts_fields("NowPlaying"));
+
+        track.source = Source::AppleMusic;
+        track.is_playing = false;
+        track.artwork = Some("data:image/png;base64,iVBORw0KGgo=".into());
+        let with = json!({
+            "source": "apple-music", "trackKey": "demo artist|paper lantern|demo album|180",
+            "title": "Paper Lantern", "artist": "Demo Artist", "album": "Demo Album",
+            "durationMs": 180_000.0, "positionMs": 12_345.5, "sampledAt": 1_700_000_000_000.0,
+            "isPlaying": false, "artwork": "data:image/png;base64,iVBORw0KGgo="
+        });
+        assert_eq!(serde_json::to_value(&track).unwrap(), with);
+        assert_eq!(serde_json::from_value::<NowPlaying>(with).unwrap(), track);
+        // `get_now_playing` and the `now-playing` event send null when nothing plays.
+        assert_eq!(
+            serde_json::to_value(None::<NowPlaying>).unwrap(),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn every_payload_has_exactly_the_fields_contract_ts_declares() {
+        let lyrics = Lyrics {
+            track_key: "k".into(),
+            status: LyricsStatus::Found,
+            synced: Some("[00:01.00]placeholder".into()),
+            plain: None,
+            source: LyricsSource::Cache,
+        };
+        for (name, value) in [
+            ("Lyrics", serde_json::to_value(lyrics).unwrap()),
+            (
+                "MediaStatus",
+                serde_json::to_value(MediaStatus::default()).unwrap(),
+            ),
+            (
+                "Settings",
+                serde_json::to_value(&*DEFAULT_SETTINGS).unwrap(),
+            ),
+        ] {
+            assert_eq!(json_keys(&value), ts_fields(name), "{name}");
+        }
+        let settings = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        assert_eq!(
+            json_keys(&settings["colors"]),
+            ["dim", "highlight", "lyric"]
+        );
+        assert_eq!(json_keys(&settings["font"]), ["family", "weight"]);
+    }
+
     #[test]
     fn default_settings_json_keys_and_values_match_contract() {
         assert_eq!(

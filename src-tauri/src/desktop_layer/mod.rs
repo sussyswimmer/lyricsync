@@ -3,7 +3,21 @@
 use crate::contract::{Displays, ShowWhen};
 
 pub mod geometry;
+pub mod styles;
 use geometry::Bounds;
+
+/// WebView2 browser arguments for every webview in the app: the `overlay` and `settings` windows
+/// in tauri.conf.json (a test checks they match) and the `overlay-<n>` windows the controller
+/// builds. WebView2 refuses a second set of arguments for the same user-data folder, and setting
+/// them replaces wry's defaults, so the first three features repeat those.
+///
+/// `CalculateNativeWinOcclusion` is off because an overlay sits under every app window: Chromium
+/// would report it occluded and the renderer would stop drawing (it pauses while
+/// `document.visibilityState` is "hidden"). Without it a hidden window's page stays visible too,
+/// so `set_shown` hides the page itself (ICoreWebView2Controller::SetIsVisible). wry's default
+/// autoplay flag is not kept: nothing in Undertone plays media.
+pub const WEBVIEW2_BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 
 pub fn visible(show_when: &ShowWhen, is_playing: bool) -> bool {
     *show_when == ShowWhen::Always || is_playing
@@ -55,6 +69,66 @@ pub fn plan(
     }
 }
 
+/// What starts a reconcile pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pass {
+    /// Find the desktop again, then reconcile: settings, Hide lyrics, OS notifications, startup,
+    /// or a desktop that disappeared.
+    Full,
+    /// Reconcile against the desktop found last time: play/pause, which mustn't wait on Explorer.
+    Reuse,
+}
+
+/// `refresh`: a full refresh was requested. `playback`: play/pause changed. `target_valid`: the
+/// last desktop found is still there.
+pub fn pass(refresh: bool, playback: bool, target_valid: bool) -> Option<Pass> {
+    if refresh || !target_valid {
+        Some(Pass::Full)
+    } else if playback {
+        Some(Pass::Reuse)
+    } else {
+        None
+    }
+}
+
+/// How an existing overlay hangs on the desktop layer, as the native adapter finds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attachment {
+    /// Where `attach` put it: right parent or level, frame and z-order. Left alone.
+    Placed,
+    /// On this desktop layer, but its frame, z-order or styles are off: re-attached in place.
+    Misplaced,
+    /// Not on this desktop layer (new, or Explorer restarted): attached from scratch.
+    Detached,
+}
+
+/// What one pass does to one overlay, in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Steps {
+    pub hide_first: bool,
+    pub attach: bool,
+    pub show_after: bool,
+}
+
+/// A placed overlay is never re-attached, and a window is shown or hidden only when that changes,
+/// so play/pause with `showWhen: always` leaves the overlay alone instead of blinking it.
+/// `hide_while_attaching`: Windows reparents hidden windows only; moving a child within its
+/// parent, or restyling on macOS, happens in place.
+pub fn steps(
+    attachment: Attachment,
+    visible: bool,
+    show: bool,
+    hide_while_attaching: bool,
+) -> Steps {
+    let reparent = attachment == Attachment::Detached && hide_while_attaching;
+    let hide_first = visible && (!show || reparent);
+    Steps {
+        hide_first,
+        attach: attachment != Attachment::Placed,
+        show_after: show && (!visible || hide_first),
+    }
+}
+
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 mod controller;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
@@ -62,7 +136,9 @@ mod macos;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 mod windows;
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
-pub use controller::{describe, refresh_now, request_refresh, set_playing, start};
+pub use controller::{
+    describe, refresh_now, request_refresh, set_playing, set_shown, start, sync_page_visibility,
+};
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub trait DesktopLayer {
@@ -85,7 +161,19 @@ pub trait DesktopLayer {
         monitor: &tauri::Monitor,
         target: Self::Target,
     ) -> Result<(), String>;
+    /// Where `window` hangs now compared with where `attach` would put it, read from the OS.
+    fn attachment(
+        window: &tauri::WebviewWindow,
+        monitor: &tauri::Monitor,
+        target: Self::Target,
+    ) -> Attachment;
+    /// Back to a plain top-level window. The controller hides it first and destroys it after.
     fn detach(window: &tauri::WebviewWindow) -> Result<(), String>;
+    /// Whether the page counts as visible to the renderer. Windows: WebView2 no longer follows its
+    /// window (occlusion is off, see `WEBVIEW2_BROWSER_ARGS`). macOS: WebKit already does.
+    fn set_page_visible(window: &tauri::WebviewWindow, visible: bool) -> Result<(), String>;
+    /// One line on a shown overlay's native state, for the debug `--desktop-layer-test` log.
+    fn report(window: &tauri::WebviewWindow) -> String;
     /// One line for `undertone --diagnose`.
     fn describe(target: Self::Target) -> String;
 }
@@ -171,5 +259,177 @@ mod tests {
             plan(&Displays::Primary, &[LAPTOP, RIGHT, LAPTOP], Some(2)),
             vec![(2, "overlay".to_owned())]
         );
+    }
+
+    #[test]
+    fn play_pause_reuses_the_desktop_and_settings_find_it_again() {
+        assert_eq!(pass(false, false, true), None);
+        assert_eq!(pass(false, true, true), Some(Pass::Reuse));
+        assert_eq!(pass(true, false, true), Some(Pass::Full));
+        assert_eq!(pass(true, true, true), Some(Pass::Full));
+        // No desktop yet, or Explorer restarted: every pass looks for it, play/pause included.
+        assert_eq!(pass(false, false, false), Some(Pass::Full));
+        assert_eq!(pass(false, true, false), Some(Pass::Full));
+    }
+
+    const NOTHING: Steps = Steps {
+        hide_first: false,
+        attach: false,
+        show_after: false,
+    };
+    const HIDE: Steps = Steps {
+        hide_first: true,
+        ..NOTHING
+    };
+    const SHOW: Steps = Steps {
+        show_after: true,
+        ..NOTHING
+    };
+    const ATTACH: Steps = Steps {
+        attach: true,
+        ..NOTHING
+    };
+    const ATTACH_SHOW: Steps = Steps {
+        attach: true,
+        show_after: true,
+        ..NOTHING
+    };
+    const HIDE_ATTACH: Steps = Steps {
+        hide_first: true,
+        attach: true,
+        ..NOTHING
+    };
+    const REPARENT: Steps = Steps {
+        hide_first: true,
+        attach: true,
+        show_after: true,
+    };
+
+    #[test]
+    fn a_placed_overlay_only_changes_when_its_shown_state_does() {
+        for windows in [true, false] {
+            // showWhen: always, play ↔ pause: nothing at all, so nothing blinks.
+            assert_eq!(steps(Attachment::Placed, true, true, windows), NOTHING);
+            assert_eq!(steps(Attachment::Placed, false, false, windows), NOTHING);
+            // showWhen: playing, or Hide lyrics.
+            assert_eq!(steps(Attachment::Placed, true, false, windows), HIDE);
+            assert_eq!(steps(Attachment::Placed, false, true, windows), SHOW);
+        }
+    }
+
+    #[test]
+    fn windows_reparents_only_hidden_overlays() {
+        assert_eq!(steps(Attachment::Detached, true, true, true), REPARENT);
+        assert_eq!(steps(Attachment::Detached, true, false, true), HIDE_ATTACH);
+        assert_eq!(steps(Attachment::Detached, false, true, true), ATTACH_SHOW);
+        assert_eq!(steps(Attachment::Detached, false, false, true), ATTACH);
+        // Already under the right parent: moved and restacked in place, without a blink.
+        assert_eq!(steps(Attachment::Misplaced, true, true, true), ATTACH);
+        assert_eq!(steps(Attachment::Misplaced, true, false, true), HIDE_ATTACH);
+        assert_eq!(steps(Attachment::Misplaced, false, true, true), ATTACH_SHOW);
+    }
+
+    #[test]
+    fn macos_restyles_in_place() {
+        for attachment in [Attachment::Detached, Attachment::Misplaced] {
+            assert_eq!(steps(attachment, true, true, false), ATTACH);
+            assert_eq!(steps(attachment, true, false, false), HIDE_ATTACH);
+            assert_eq!(steps(attachment, false, true, false), ATTACH_SHOW);
+            assert_eq!(steps(attachment, false, false, false), ATTACH);
+        }
+    }
+
+    fn configured_windows() -> Vec<serde_json::Value> {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        config["app"]["windows"].as_array().unwrap().clone()
+    }
+
+    #[test]
+    fn every_configured_webview_uses_the_shared_webview2_args() {
+        let windows = configured_windows();
+        assert!(windows.iter().any(|w| w["label"] == "overlay"));
+        assert!(windows.iter().any(|w| w["label"] == "settings"));
+        for window in &windows {
+            assert_eq!(
+                window["additionalBrowserArgs"].as_str(),
+                Some(WEBVIEW2_BROWSER_ARGS),
+                "window {}",
+                window["label"]
+            );
+        }
+    }
+
+    #[test]
+    fn every_runtime_webview_uses_the_shared_webview2_args() {
+        // The controller only compiles for Windows and macOS, so its builders are checked as
+        // source. Needles are joined here so this test's own text never matches.
+        fn sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    sources(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    out.push((path.display().to_string(), text));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        sources(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        let builders = [
+            ["WebviewWindowBuilder", "::new("].concat(),
+            ["WebviewBuilder", "::new("].concat(),
+        ];
+        let mut built = 0;
+        for (path, text) in &files {
+            for builder in &builders {
+                for (start, _) in text.match_indices(builder.as_str()) {
+                    let chain = &text[start..];
+                    let chain = &chain[..chain.find(".build()").expect(path)];
+                    assert!(
+                        chain.contains(".additional_browser_args(WEBVIEW2_BROWSER_ARGS)"),
+                        "{path}: {builder} without the shared WebView2 arguments"
+                    );
+                    built += 1;
+                }
+            }
+        }
+        // The `overlay-<n>` windows of `displays: all` (desktop_layer/controller.rs).
+        assert!(built >= 1);
+    }
+
+    #[test]
+    fn webview2_args_keep_wrys_defaults_in_one_flag() {
+        // Chromium reads only the last --disable-features, so every feature shares one flag.
+        assert_eq!(WEBVIEW2_BROWSER_ARGS.matches("--").count(), 1);
+        let features = WEBVIEW2_BROWSER_ARGS
+            .strip_prefix("--disable-features=")
+            .unwrap();
+        assert_eq!(
+            features.split(',').collect::<Vec<_>>(),
+            [
+                "msWebOOUI",
+                "msPdfOOUI",
+                "msSmartScreenProtection",
+                "CalculateNativeWinOcclusion"
+            ]
+        );
+    }
+
+    #[test]
+    fn configured_overlays_are_never_throttled() {
+        let windows = configured_windows();
+        let overlays: Vec<_> = windows
+            .iter()
+            .filter(|w| w["label"].as_str().is_some_and(is_overlay))
+            .collect();
+        assert!(!overlays.is_empty());
+        for overlay in overlays {
+            assert_eq!(overlay["backgroundThrottling"], "disabled");
+        }
     }
 }

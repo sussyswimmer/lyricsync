@@ -7,7 +7,7 @@
 use crate::contract::{Colors, Font, Settings, SETTINGS_VERSION};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::{collections::BTreeMap, ops::RangeInclusive};
+use std::{collections::BTreeMap, ops::RangeInclusive, sync::Mutex};
 
 pub const SIZE: RangeInclusive<f64> = 22.0..=140.0;
 pub const CURVE: RangeInclusive<f64> = -100.0..=100.0;
@@ -167,16 +167,58 @@ pub fn with_track_offset(current: &Settings, track_key: &str, ms: f64) -> Result
     Ok(next)
 }
 
+/// What one settings change did.
+#[derive(Debug, PartialEq)]
+pub enum Committed {
+    /// The change left the settings as they were: nothing was saved.
+    Unchanged(Settings),
+    /// The new settings, saved; `refresh` when they concern the desktop layer (`affects_layer`).
+    Changed { settings: Settings, refresh: bool },
+}
+
+/// One settings change, safe from any thread at once: commands run on the async runtime, the tray
+/// and shortcuts on the main thread. `writer` is held from reading the current settings to saving
+/// the new ones, so concurrent changes can't lose each other or reach the disk out of order.
+/// `settings` is held only to read and replace them in memory, so readers (the desktop layer and
+/// the tray on the main thread, `get_settings`) never wait for the disk. Always `writer` first.
+pub fn commit(
+    writer: &Mutex<()>,
+    settings: &Mutex<Settings>,
+    change: impl FnOnce(&Settings) -> Result<Settings, String>,
+    save: impl FnOnce(&Settings),
+) -> Result<Committed, String> {
+    // Guards no data: a writer that panicked left nothing half-done to protect.
+    let _writer = writer.lock().unwrap_or_else(|e| e.into_inner());
+    let (next, refresh) = {
+        let mut current = settings.lock().map_err(|e| e.to_string())?;
+        let next = change(&current)?;
+        if *current == next {
+            return Ok(Committed::Unchanged(next));
+        }
+        let refresh = affects_layer(&current, &next);
+        *current = next.clone();
+        (next, refresh)
+    };
+    save(&next);
+    Ok(Committed::Changed {
+        settings: next,
+        refresh,
+    })
+}
+
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub mod runtime {
+    use super::Committed;
     use crate::{contract::Settings, contract::SETTINGS_CHANGED_EVENT, state::AppState};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tauri::{AppHandle, Emitter, Manager, Wry};
     use tauri_plugin_store::{Store, StoreExt};
 
     /// In the app data dir. Settings live under one key, so the file stays one readable object.
     const STORE_FILE: &str = "settings.json";
     const STORE_KEY: &str = "settings";
+    /// Held by every change from reading the settings to saving them (`super::commit`).
+    static WRITER: Mutex<()> = Mutex::new(());
 
     /// The store, opened (and read from disk) on first use. Every change is saved right away, so
     /// there is no debounced auto-save task.
@@ -206,6 +248,8 @@ pub mod runtime {
     /// the current shape (and written back when that changed them). A missing or corrupt file
     /// starts from the defaults; an unusable store is logged and doesn't stop the app.
     pub fn install(app: &AppHandle) -> Result<(), String> {
+        // A change that arrives meanwhile applies on top of the stored settings, not the defaults.
+        let _writer = WRITER.lock().unwrap_or_else(|e| e.into_inner());
         let stored = match store(app) {
             Ok(store) => {
                 let stored = store.get(STORE_KEY);
@@ -234,35 +278,51 @@ pub mod runtime {
         Ok(())
     }
 
-    /// Changes the settings under their lock, so a command and a tray click in quick succession
-    /// can't lose each other's change or reach the disk out of order. Real changes are saved,
-    /// broadcast to every webview and applied (overlay count, visibility); no-op when unchanged.
-    /// The event goes out after the lock is released, so Rust listeners may call `current`.
+    /// Changes the settings through `super::commit`, so a command (async runtime) and a tray click
+    /// (main thread) at once can't lose each other's change or reach the disk out of order. Real
+    /// changes are saved, applied (overlay count, visibility) and broadcast to every webview;
+    /// no-op when unchanged. No lock is held while broadcasting, so Rust listeners may call
+    /// `current`, and nothing here waits for the main thread, which may itself be waiting here.
     fn modify(
         app: &AppHandle,
         change: impl FnOnce(&Settings) -> Result<Settings, String>,
     ) -> Result<Settings, String> {
-        let (next, refresh) = {
-            let state = app.state::<AppState>();
-            let mut settings = state.settings.lock().map_err(|e| e.to_string())?;
-            let next = change(&settings)?;
-            if *settings == next {
-                return Ok(next);
+        let state = app.state::<AppState>();
+        match super::commit(&WRITER, &state.settings, change, |next| persist(app, next))? {
+            Committed::Unchanged(settings) => Ok(settings),
+            Committed::Changed { settings, refresh } => {
+                if refresh {
+                    crate::desktop_layer::refresh_now();
+                }
+                broadcast(app);
+                Ok(settings)
             }
-            let refresh = super::affects_layer(&settings, &next);
-            *settings = next.clone();
-            persist(app, &next);
-            (next, refresh)
-        };
-        if refresh {
-            crate::desktop_layer::refresh_now();
         }
-        // The change is stored and saved, so a failed broadcast is logged rather than reported as a
-        // failed save; the windows catch up on the next change.
-        if let Err(error) = app.emit(SETTINGS_CHANGED_EVENT, &next) {
+    }
+
+    /// `settings-changed`, emitted on the main thread with the settings as they are when it gets
+    /// there. An emit on the main thread reaches the webviews at once, but one from another
+    /// thread is queued behind the main thread's work, so a command's change and a tray click
+    /// emitted where they happen could arrive in the wrong order and leave every window showing
+    /// the older settings. Read on delivery, the last event always carries the latest settings
+    /// (a window may get the same settings twice). Inline when already on the main thread.
+    fn broadcast(app: &AppHandle) {
+        let handle = app.clone();
+        let queued = app.run_on_main_thread(move || {
+            // The change is stored and saved, so a failed broadcast is logged rather than reported
+            // as a failed save; the windows catch up on the next change.
+            let sent = current(&handle).and_then(|settings| {
+                handle
+                    .emit(SETTINGS_CHANGED_EVENT, &settings)
+                    .map_err(|e| e.to_string())
+            });
+            if let Err(error) = sent {
+                eprintln!("settings-changed broadcast failed: {error}");
+            }
+        });
+        if let Err(error) = queued {
             eprintln!("settings-changed broadcast failed: {error}");
         }
-        Ok(next)
     }
 
     /// Stores whole settings built in Rust. They go through the same field rules as a patch, so an
@@ -288,6 +348,23 @@ pub mod runtime {
     pub fn set_track_offset(app: &AppHandle, track_key: &str, ms: f64) -> Result<Settings, String> {
         modify(app, |current| {
             super::with_track_offset(current, track_key, ms)
+        })
+    }
+
+    /// Moves one song's offset by `delta_ms`, kept within ±2000 ms. The offset is read inside the
+    /// change, so a nudge from the settings window at the same moment can't be lost.
+    pub fn nudge_track_offset(
+        app: &AppHandle,
+        track_key: &str,
+        delta_ms: f64,
+    ) -> Result<Settings, String> {
+        modify(app, |current| {
+            let current_ms = crate::tray::track_offset(current, track_key);
+            super::with_track_offset(
+                current,
+                track_key,
+                crate::tray::nudged(current_ms, delta_ms),
+            )
         })
     }
 }
@@ -683,6 +760,95 @@ mod tests {
             &current,
             &merge_patch(&current, &json!({ "displays": "primary" }))
         ));
+    }
+
+    /// One song's offset plus one, as a tray nudge and a settings-window nudge both compute it.
+    fn bump(current: &Settings) -> Result<Settings, String> {
+        let ms = current.track_offsets_ms.get("k").copied().unwrap_or(0.0);
+        with_track_offset(current, "k", ms + 1.0)
+    }
+
+    #[test]
+    fn concurrent_commits_lose_nothing_and_save_in_change_order() {
+        let writer = Mutex::new(());
+        let settings = Mutex::new(defaults());
+        let saved = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        let committed = commit(&writer, &settings, bump, |next| {
+                            saved.lock().unwrap().push(next.track_offsets_ms["k"]);
+                        })
+                        .unwrap();
+                        assert!(matches!(
+                            committed,
+                            Committed::Changed { refresh: false, .. }
+                        ));
+                    }
+                });
+            }
+        });
+        assert_eq!(settings.lock().unwrap().track_offsets_ms["k"], 400.0);
+        // Every change saved exactly once, each after the one it was made on top of.
+        let expected: Vec<f64> = (1..=400).map(f64::from).collect();
+        assert_eq!(*saved.lock().unwrap(), expected);
+    }
+
+    #[test]
+    fn readers_do_not_wait_for_a_save_but_the_next_change_does() {
+        let writer = Mutex::new(());
+        let settings = Mutex::new(defaults());
+        let (saving_tx, saving) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel::<()>();
+        let (writer_ref, settings_ref) = (&writer, &settings);
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let patch = json!({ "showWhen": "always" });
+                let committed = commit(
+                    writer_ref,
+                    settings_ref,
+                    |current| Ok(merge_patch(current, &patch)),
+                    |_| {
+                        saving_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                    },
+                );
+                assert!(matches!(
+                    committed,
+                    Ok(Committed::Changed { refresh: true, .. })
+                ));
+            });
+            saving.recv().unwrap();
+            // Mid-save: the new settings are readable, and another change has to wait its turn.
+            assert_eq!(settings.try_lock().unwrap().show_when, ShowWhen::Always);
+            assert!(writer.try_lock().is_err());
+            release.send(()).unwrap();
+        });
+        assert!(writer.try_lock().is_ok());
+    }
+
+    #[test]
+    fn a_commit_that_changes_nothing_or_fails_saves_nothing() {
+        let writer = Mutex::new(());
+        let settings = Mutex::new(custom());
+        let unsaved = |_: &Settings| panic!("nothing to save");
+        assert_eq!(
+            commit(&writer, &settings, |s| Ok(s.clone()), unsaved),
+            Ok(Committed::Unchanged(custom()))
+        );
+        assert_eq!(
+            commit(
+                &writer,
+                &settings,
+                |s| with_track_offset(s, "k", f64::NAN),
+                unsaved
+            ),
+            Err("offset must be finite".into())
+        );
+        assert_eq!(*settings.lock().unwrap(), custom());
+        // Neither left a lock held.
+        assert!(writer.try_lock().is_ok());
     }
 
     #[test]

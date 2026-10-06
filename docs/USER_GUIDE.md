@@ -138,6 +138,8 @@ Lyrics are timed by whoever submitted them to LRCLIB, and your audio setup can a
 
 A quick way to judge it: pick a line that starts with a clear word and watch when it lights up. If it lights up before you hear it, move toward **Later**. If it lights up after, move toward **Earlier**.
 
+Judge by the first word of a line, because line starts are always real timestamps. The words inside a line are exact only when the lyrics time every word. Otherwise Undertone estimates them (see [Loading, missing and unsynced lyrics](#loading-missing-and-unsynced-lyrics)), so a word mid-line can run a little ahead of or behind the singer even when the line itself is in sync. No offset fixes that.
+
 ### All songs
 
 The global offset, from −2000 to +2000 ms in 10 ms steps (default 0). Use it when every song is off by about the same amount, for example with Bluetooth headphones, which delay the sound. When it isn't 0, a button next to the slider sets it back.
@@ -185,7 +187,7 @@ Shortcuts that work from any app:
 
 ## Loading, missing and unsynced lyrics
 
-- **Loading.** Nothing for the first 0.6 seconds (lyrics Undertone has seen before usually arrive sooner), then three faint pulsing dots until the lyrics arrive.
+- **Loading.** Nothing for the first 0.6 seconds (lyrics Undertone has seen before usually arrive sooner), then three faint pulsing dots until the lyrics arrive (steady, without the pulse, if you've asked your system to reduce motion).
 - **No lyrics found.** A small "No lyrics for this song" note fades in, stays for about 4 seconds, then fades out. Nothing else shows for the rest of the song. **Refetch lyrics** in the menu tries again.
 - **Couldn't load.** If the lookup fails (no connection, or LRCLIB doesn't answer), a "Couldn't load lyrics" note appears and fades out the same way. **Refetch lyrics** tries again.
 - **Instrumental.** For songs LRCLIB marks as instrumental, a ♪ slowly breathes in and out where the lyrics would be.
@@ -206,6 +208,7 @@ If you've asked your system to reduce motion (macOS: System Settings → Accessi
 - **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
 - **Lens** doesn't magnify. The line stays flat, and words still light up as they're sung.
 - **Arc** lines don't glide between their places; they crossfade.
+- The loading dots fade in once and then stay still instead of pulsing.
 - The instrumental **♪** stays still instead of breathing.
 - Word colors change instantly instead of fading.
 - With **Show lyrics: While playing**, pausing hides the lyrics at once instead of fading them out.

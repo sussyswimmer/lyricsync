@@ -8,7 +8,7 @@ The SMTC adapter observes manager session/current-session changes and each sessi
 
 Selection prefers playing Spotify, then playing Apple Music, then other playing sessions. When everything is paused, it retains the most recently active session, breaking ties with the current session and then Spotify. This applies the SPEC watcher priority so a paused Spotify session cannot mask another app that is playing. Track keys use the exact lowercase artist/title/album/rounded-duration contract; metadata is not normalized for matching at this stage.
 
-`sampledAt` comes from SMTC `LastUpdatedTime` (100-nanosecond ticks since 1601 converted to Unix milliseconds). Valid coarse timestamps are preserved across polls, so the frontend can extrapolate from the actual observation. Unset timestamps fall back to read time, and future timestamps are bounded by read time. Expected playback is compared at a common sample time to detect seeks greater than one second. Changes emit immediately; unchanged playing tracks resync every second, including while metadata awaits a response. Identical paused/idle state does not produce repeated events.
+`sampledAt` comes from SMTC `LastUpdatedTime` (100-nanosecond ticks since 1601 converted to Unix milliseconds). Valid coarse timestamps are preserved across polls, so the frontend can extrapolate from the actual observation. Unset timestamps fall back to read time, and future timestamps are bounded by read time. Expected playback is compared at a common sample time to detect seeks greater than one second. Changes emit immediately, with one exception: a player publishes a new track's metadata and timeline separately, so a read where only the metadata or only the duration changed waits up to 300 ms for the other half (`Settle` in `media/mod.rs`). That keeps a trackKey from pairing two songs. Unchanged playing tracks resync every second, including while metadata awaits a response. Identical paused/idle state does not produce repeated events.
 
 `get_now_playing` reads the watcher's cached state. Playback transitions drive the X1 overlay visibility hook, and a track change starts the lyrics lookup before `now-playing` is emitted.
 
@@ -37,10 +37,10 @@ On Windows with Spotify and the Tauri prerequisites:
 
 ```
 pnpm install --frozen-lockfile
-pnpm tauri dev -- --media-test
+pnpm tauri dev -- -- --media-test
 ```
 
-The debug-only flag prints emitted track keys, positions, sample times, playback state, artwork data-URL byte counts and seek flags, and each `media-status` change. It does not print artwork content or lyrics. In normal mode the overlay hides while idle; use `--desktop-layer-test` only when separately testing the desktop placement, since that flag forces visibility.
+The first `--` ends the Tauri CLI's options and the second ends cargo's, so the flag reaches the app. This debug-only flag prints emitted track keys, positions, sample times, playback state, artwork data-URL byte counts and seek flags, and each `media-status` change. It does not print artwork content or lyrics. In normal mode the overlay hides while idle; use `--desktop-layer-test` only when separately testing the desktop placement, since that flag forces visibility.
 
 Verify:
 
@@ -61,7 +61,7 @@ Linux validation covers the portable timing, selection, key and image tests plus
 - **Automation consent:** asked with `AEDeterminePermissionToAutomateTarget` on a blocking thread before any script runs, so the macOS prompt never freezes the app. While the prompt is open the player is skipped. Denial publishes `null` with `media-status` `automation-denied` for that player, and logs one hint naming System Settings → Privacy & Security → Automation; a denied player is checked again every 5 s, so turning it back on needs no restart. `Info.plist` carries `NSAppleEventsUsageDescription`.
 - **Selection:** a playing Spotify beats a playing Music, which beats whichever played last. With Spotify playing, Music isn't asked at all.
 - **Hiccups:** one slow or failed read keeps the player's last reading for up to 5 s, so it doesn't publish `null` and reload the lyrics mid-song. A denial, a quit or a player with no track drops it at once.
-- **Artwork:** Spotify's artwork URL is fetched over HTTPS only (5 s timeout, 8 MiB cap); Music's comes from `data of artwork 1 of current track`. Both become PNG data URLs of at most 300 px, cached per track. An image the decoder refuses means no artwork and isn't retried.
+- **Artwork:** Spotify's artwork URL is fetched over HTTPS only (5 s timeout, 8 MiB cap); Music's comes from `raw data of artwork 1 of current track` (the image as stored, normally JPEG or PNG). Only if that returns nothing or fails with an error other than a timeout does it fall back to `data`, a picture Music may hand over as TIFF or PICT. Both become PNG data URLs of at most 300 px, cached per track. An image the decoder refuses means no artwork and isn't retried.
 - **Polling:** every second while playing, every 3 s while paused or idle. `com.spotify.client.PlaybackStateChanged` and `com.apple.Music.playerInfo` wake the loop at once.
 
 ## macOS acceptance still required
@@ -70,7 +70,7 @@ On macOS 14 or 15:
 
 ```
 pnpm install --frozen-lockfile
-pnpm tauri dev -- --media-test
+pnpm tauri dev -- -- --media-test
 ```
 
 Verify:
@@ -79,6 +79,6 @@ Verify:
 2. First run: macOS asks whether Undertone may control Spotify. The tray menu and Settings keep working while the prompt is open, and `media-status` stays `{ null, null }`. Deny it: `now-playing` goes `null`, the Automation hint is logged once, `media-status` reports `automation-denied` for `spotify`, and Settings shows "Undertone can't see what Spotify is playing." Turn it back on in System Settings: lyrics come back and the notice goes away within about 5 s, without a restart. Repeat with Music. Quit both players: `media-status` reports `no-player`.
 3. Play, pause and skip in Spotify and in Music with Undertone in the background: `now-playing` follows within a fraction of a second, not after the 3 s idle poll.
 4. With both players open: a playing Spotify beats a playing Music; pause Spotify while Music plays and Music is picked; with both paused, the one that played last stays selected.
-5. Artwork shows for both players. If Music's never does, `data of artwork 1` may be returning TIFF or PICT: switch the script to `raw data`, or enable the `image` crate's `tiff` feature.
+5. Artwork shows for both players. Music's `raw data` is normally JPEG or PNG; the `data` fallback can be TIFF, which decodes too (the `image` crate is built with png, jpeg, webp, bmp, gif and tiff). Only PICT can't be decoded: if Music's art never shows, the terminal shows one "Music artwork unusable" line saying why.
 6. Set a decimal-comma region (for example German) and check `positionMs` and `durationMs`.
 7. Quit Spotify while it plays and watch that it doesn't relaunch. Check that the highlight stays within ±150 ms of the vocals in both players.

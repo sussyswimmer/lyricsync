@@ -67,11 +67,18 @@ class FakeStage {
   setPaused(paused: boolean): void {
     this.paused = paused;
   }
+  /** What render returns: true while the stage has motion of its own in flight (a glide, Lens following a word). */
+  busy = false;
+  /** What nextChange returns: song time to the next word boundary, Infinity when nothing will change. */
+  next = Infinity;
+  /** When each paint happened (fake wall-clock ms). */
+  frames: number[] = [];
   render(): boolean {
-    return false;
+    this.frames.push(Date.now());
+    return this.busy;
   }
   nextChange(): number {
-    return Infinity;
+    return this.next;
   }
 }
 
@@ -315,5 +322,253 @@ describe("an error reply to the first lyrics query", () => {
     await settle();
     expect(calls).toBe(1);
     expect(stage.shows).toEqual(["none ", "loading a", "loading b"]);
+  });
+});
+
+/**
+ * A 60 Hz display and the page's visibility, for the frame loop: every 16 ms of fake time, the frames
+ * requested by then run. They keep running while the page is hidden (an embedded webview may keep
+ * ticking a hidden window), so a test sees the controller stop by itself, not the browser throttle it.
+ */
+class FakeDisplay {
+  visibility: DocumentVisibilityState = "visible";
+  /** Vsyncs so far. */
+  vsyncs = 0;
+  private sinceVsync = 0;
+  private readonly queued = new Map<number, FrameRequestCallback>();
+  private readonly listeners = new Set<() => void>();
+  private lastId = 0;
+
+  install(): void {
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback): number => {
+      this.queued.set(++this.lastId, cb);
+      return this.lastId;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
+      this.queued.delete(id);
+    });
+    const visibility = (): DocumentVisibilityState => this.visibility;
+    const listeners = this.listeners;
+    vi.stubGlobal("document", {
+      get visibilityState(): DocumentVisibilityState {
+        return visibility();
+      },
+      addEventListener(type: string, fn: () => void): void {
+        if (type === "visibilitychange") listeners.add(fn);
+      },
+      removeEventListener(type: string, fn: () => void): void {
+        if (type === "visibilitychange") listeners.delete(fn);
+      },
+    });
+  }
+
+  /** Hides or shows the page (the tray's Hide lyrics, a minimized settings window), as browsers announce it. */
+  setVisibility(visibility: DocumentVisibilityState): void {
+    this.visibility = visibility;
+    for (const fn of [...this.listeners]) fn();
+  }
+
+  /** Frames requested and not run yet. */
+  get pending(): number {
+    return this.queued.size;
+  }
+
+  get listening(): number {
+    return this.listeners.size;
+  }
+
+  /** Lets `ms` pass: timers fire when due, and at every vsync (each 16 ms) the frames requested by then run. */
+  run(ms: number): void {
+    for (let left = ms; left > 0; ) {
+      const step = Math.min(left, 16 - this.sinceVsync);
+      vi.advanceTimersByTime(step);
+      left -= step;
+      this.sinceVsync += step;
+      if (this.sinceVsync < 16) continue;
+      this.sinceVsync = 0;
+      this.vsyncs++;
+      const due = [...this.queued.values()];
+      this.queued.clear();
+      for (const cb of due) cb(Date.now());
+    }
+  }
+}
+
+const gaps = (times: number[]): number[] => times.slice(1).map((t, i) => t - (times[i] ?? t));
+
+// DoD (C6 performance budget): the frame loop runs only while a track plays and the stage can be seen.
+// It stops on pause, a hidden page, showWhen gating and a null track, and starts again on the way back.
+// Between word boundaries, and with nothing to sing, it sleeps instead of drawing identical frames.
+describe("the frame loop", () => {
+  let display: FakeDisplay;
+
+  beforeEach(() => {
+    display = new FakeDisplay();
+    display.install();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** When the stage painted over the next `ms`. */
+  const paintsIn = (stage: FakeStage, ms: number): number[] => {
+    const from = stage.frames.length;
+    display.run(ms);
+    return stage.frames.slice(from);
+  };
+
+  const track = (key: string, over: Partial<NowPlaying> = {}): NowPlaying => np(key, { artwork: "data:cover", ...over });
+
+  /** A controller playing track "a" (gated, as overlay/main.ts makes the overlay's), its stage wanting every frame. */
+  async function playing(gate = true): Promise<ReturnType<typeof setup>> {
+    const env = setup(gate);
+    env.stage.busy = true;
+    await env.controller.start();
+    env.bridge.emit("now-playing", track("a"));
+    await settle();
+    display.run(100);
+    return env;
+  }
+
+  it("draws every frame while playing, one paint per frame however many events arrive", async () => {
+    const { bridge, stage, controller } = await playing();
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
+    // resyncs and settings changes kick the loop; none of them starts a second one
+    const vsyncs = display.vsyncs;
+    let painted = 0;
+    for (let i = 1; i <= 10; i++) {
+      bridge.emit("now-playing", track("a", { positionMs: i * 100 }));
+      bridge.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), glow: i });
+      painted += paintsIn(stage, 100).length;
+    }
+    expect(painted).toBe(display.vsyncs - vsyncs);
+    controller.destroy();
+  });
+
+  it("stops on pause after painting the paused frame, and starts again on resume", async () => {
+    // the overlay (gated) and the settings preview (never gated, so it stays visible while paused)
+    for (const gate of [true, false]) {
+      const { bridge, stage, controller } = await playing(gate);
+      bridge.emit("now-playing", track("a", { isPlaying: false, positionMs: 2000 }));
+      expect(stage.paused).toBe(true);
+      expect(stage.visible, `gate ${gate}`).toBe(!gate);
+      expect(paintsIn(stage, 16)).toHaveLength(1);
+      expect(paintsIn(stage, 10_000), `gate ${gate}`).toHaveLength(0);
+      expect(display.pending).toBe(0);
+
+      bridge.emit("now-playing", track("a", { positionMs: 2000 }));
+      expect(stage.paused).toBe(false);
+      expect(paintsIn(stage, 1000).length, `gate ${gate}`).toBeGreaterThanOrEqual(60);
+      controller.destroy();
+    }
+  });
+
+  it("doesn't start for a track that arrives paused", async () => {
+    const { bridge, stage, controller } = setup(true);
+    stage.busy = true;
+    await controller.start();
+    bridge.emit("now-playing", track("a", { isPlaying: false }));
+    await settle();
+    expect(paintsIn(stage, 10_000)).toHaveLength(1);
+    expect(display.pending).toBe(0);
+    controller.destroy();
+  });
+
+  it("stops while the page is hidden, and starts again when it is shown", async () => {
+    const { bridge, stage, controller } = await playing();
+    display.setVisibility("hidden");
+    expect(paintsIn(stage, 16).length).toBeLessThanOrEqual(1);
+    // the core resyncs every second while playing: each may paint once, none restarts the loop
+    let painted = 0;
+    for (let s = 1; s <= 10; s++) {
+      bridge.emit("now-playing", track("a", { positionMs: s * 1000 }));
+      painted += paintsIn(stage, 1000).length;
+    }
+    expect(painted).toBeLessThanOrEqual(10);
+    expect(display.pending).toBe(0);
+
+    display.setVisibility("visible");
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
+    controller.destroy();
+  });
+
+  it("hides and stops a gated overlay on pause under While playing; under Always it shows the paused frame and stays still", async () => {
+    const { bridge, stage, controller } = await playing();
+    const settings = (showWhen: Settings["showWhen"]): Settings => ({ ...structuredClone(DEFAULT_SETTINGS), showWhen });
+    bridge.emit("now-playing", track("a", { isPlaying: false, positionMs: 2000 }));
+    expect(stage.visible).toBe(false);
+    paintsIn(stage, 16);
+    expect(paintsIn(stage, 5000)).toHaveLength(0);
+
+    bridge.emit("settings-changed", settings("always"));
+    expect(stage.visible).toBe(true);
+    expect(paintsIn(stage, 5000)).toHaveLength(1);
+
+    bridge.emit("settings-changed", settings("playing"));
+    expect(stage.visible).toBe(false);
+    bridge.emit("now-playing", track("a", { positionMs: 2000 }));
+    expect(stage.visible).toBe(true);
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
+    controller.destroy();
+  });
+
+  it("stops when the track goes away, and starts again with the next one", async () => {
+    // the overlay (gated) and the settings preview (never gated)
+    for (const gate of [true, false]) {
+      const { bridge, stage, controller } = await playing(gate);
+      bridge.emit("now-playing", null);
+      expect(stage.visible, `gate ${gate}`).toBe(!gate);
+      expect(paintsIn(stage, 16).length).toBeLessThanOrEqual(1);
+      expect(paintsIn(stage, 10_000), `gate ${gate}`).toHaveLength(0);
+      expect(display.pending).toBe(0);
+
+      bridge.emit("now-playing", track("b"));
+      await settle();
+      expect(stage.visible).toBe(true);
+      expect(paintsIn(stage, 1000).length, `gate ${gate}`).toBeGreaterThanOrEqual(60);
+      controller.destroy();
+    }
+  });
+
+  it("sleeps between word boundaries, waking for each one rather than every frame", async () => {
+    const { bridge, stage, controller } = await playing();
+    stage.busy = false;
+    stage.next = 100;
+    paintsIn(stage, 300);
+    const times = paintsIn(stage, 2000);
+    expect(times.length).toBeLessThanOrEqual(21);
+    // and it does wake for each boundary, within a frame of it, not at the 250 ms safety wake
+    expect(times.length).toBeGreaterThanOrEqual(17);
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(96);
+    for (const gap of gaps(times)) expect(gap).toBeLessThanOrEqual(100 + 16);
+    // a change while it sleeps is painted at the next frame, not when the sleep ends
+    bridge.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), glow: 90 });
+    expect(paintsIn(stage, 16)).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("with nothing to sing (loading, not found, instrumental, after the last line) only wakes every 250 ms", async () => {
+    const { stage, controller } = await playing();
+    stage.busy = false;
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    const times = paintsIn(stage, 10_000);
+    expect(times.length).toBeGreaterThan(0);
+    expect(times.length).toBeLessThanOrEqual(Math.ceil(10_000 / 246));
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(246);
+    controller.destroy();
+  });
+
+  it("draws nothing once destroyed, and stops listening for visibility changes", async () => {
+    const { bridge, stage, controller } = await playing();
+    expect(display.listening).toBe(1);
+    controller.destroy();
+    expect(display.listening).toBe(0);
+    expect(display.pending).toBe(0);
+    bridge.emit("now-playing", track("b"));
+    display.setVisibility("hidden");
+    display.setVisibility("visible");
+    expect(paintsIn(stage, 5000)).toHaveLength(0);
   });
 });

@@ -12,7 +12,7 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 
 ## Install
 
-Download the latest build from [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases): the `.dmg` for macOS (one universal build for Apple silicon and Intel Macs) or the `-setup.exe` for Windows.
+Released versions will be on [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases): the `.dmg` for macOS (one universal build for Apple silicon and Intel Macs) or the `-setup.exe` for Windows. Nothing is released yet, so for now take a test build from a CI run's artifacts, as [docs/INSTALL.md](docs/INSTALL.md#download) explains.
 
 Builds aren't code-signed yet, so macOS and Windows warn you the first time you open Undertone. In short: on macOS, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**; on Windows, click **More info**, then **Run anyway**. **[docs/INSTALL.md](docs/INSTALL.md)** has the full steps for each macOS version and Windows, the fix for "Undertone is damaged", WebView2, test builds from CI, updating and uninstalling.
 

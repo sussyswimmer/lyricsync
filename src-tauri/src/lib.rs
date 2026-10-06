@@ -11,6 +11,14 @@ pub mod state;
 pub mod tray;
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
+const DESKTOP_TEST_PAGE: &str = "(()=>{document.body.style.cssText='margin:0;background:transparent;\
+color:#f2a65a;font:48px sans-serif;display:grid;place-items:center;height:100vh;text-align:center';\
+const app=document.getElementById('app');app.style.whiteSpace='pre-line';let frames=0,hidden=0;\
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')hidden++;});\
+const draw=()=>{frames++;app.textContent='Undertone desktop layer — drag a folder over this text\\n'\
++'frame '+frames+' · hidden '+hidden+' times';requestAnimationFrame(draw);};requestAnimationFrame(draw);})();";
+
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
     tauri::Builder::default()
         // First, so a second launch hands over before anything else starts: it opens Settings.
@@ -28,32 +36,56 @@ pub fn run() {
         .manage(state::AppState::default())
         .on_page_load(|webview, payload| {
             // Debug `--desktop-layer-test`: a fixed line on every overlay, to check the layer by hand.
+            // The second line counts animation frames and the times the page went hidden: covering
+            // the desktop with windows must not add to "hidden" (docs/DESKTOP_LAYER.md).
             if cfg!(debug_assertions)
                 && std::env::args().any(|arg| arg == "--desktop-layer-test")
                 && desktop_layer::is_overlay(webview.label())
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
-                if let Err(error) = webview.eval("document.body.style.cssText='margin:0;background:transparent;color:#f2a65a;font:48px sans-serif;display:grid;place-items:center;height:100vh';document.getElementById('app').textContent='Undertone desktop layer — drag a folder over this text';") {
+                if let Err(error) = webview.eval(DESKTOP_TEST_PAGE) {
                     eprintln!("desktop test page: {error}");
                 }
             }
         })
         .on_window_event(|window, event| {
-            // Closing Settings hides it, so the tray and a second launch can show it again.
-            if window.label() == "settings" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            use tauri::Manager;
+            if window.label() != "settings" {
+                return;
+            }
+            // Its page hides and shows with it (desktop_layer::set_shown), so the preview stops
+            // drawing and the settings page saves a pending edit as it goes.
+            let result = match event {
+                // Closing Settings hides it, so the tray and a second launch can show it again.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    if let Err(error) = window.hide() {
-                        eprintln!("settings hide: {error}");
-                    }
+                    window
+                        .get_webview_window("settings")
+                        .map(|settings| desktop_layer::set_shown(&settings, false))
                 }
+                // Minimized or restored.
+                tauri::WindowEvent::Resized(_) => window
+                    .get_webview_window("settings")
+                    .map(|settings| desktop_layer::sync_page_visibility(&settings)),
+                _ => None,
+            };
+            if let Some(Err(error)) = result {
+                eprintln!("settings window: {error}");
             }
         })
         .setup(|app| {
+            use tauri::Manager;
             // Menu bar only: no Dock icon.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle();
+            // Settings starts hidden, but a WebView2 page starts visible (occlusion tracking is off,
+            // see desktop_layer::WEBVIEW2_BROWSER_ARGS): hide its page until it is shown.
+            if let Some(settings) = app.get_webview_window("settings") {
+                if let Err(error) = desktop_layer::set_shown(&settings, false) {
+                    eprintln!("settings page: {error}");
+                }
+            }
             // Settings first: every service and window below reads them.
             settings::runtime::install(handle).map_err(std::io::Error::other)?;
             lyrics::runtime::install(handle).map_err(std::io::Error::other)?;

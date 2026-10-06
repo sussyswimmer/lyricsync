@@ -140,3 +140,32 @@ Tests: 435 vitest, 132 Rust; clean on Linux and the Windows/macOS cross-checks. 
 Not verified: the Automation-denied and no-player detection on a real Mac or Windows PC (steps in docs/NOW_PLAYING.md).
 Needs from Codex: nothing.
 Contract: v2 (additive: `MediaProblem`, `MediaStatus`, `media-status`, `get_media_status`).
+
+## 2026-10-06 · Claude Code · Fixes from a requirement-by-requirement audit
+Done: an audit of every C1–C8, X0–X7 and SPEC item against the code (about 400 items, each gap re-checked by a skeptic, then a completeness critic) found no missing feature and the issues below, all fixed:
+- Overlay freezing under other windows (C6 request 1). The renderer pauses while the page reports hidden. WebView2 and WebKit can report a covered window as hidden, so the lyrics could stop while visible.
+  - Windows: every webview passes the same `--disable-features=…,CalculateNativeWinOcclusion` (one constant; tests check tauri.conf.json and every runtime builder). `desktop_layer::set_shown` now drives `SetIsVisible`, so a hidden overlay or a closed or minimized Settings window still stops drawing.
+  - macOS: overlays send WebKit's `_setWindowOcclusionDetectionEnabled:NO`, only if the view supports it, and use `backgroundThrottling: "disabled"`.
+  - The debug `--desktop-layer-test` page counts frames and how often the page went hidden, so this can be checked by eye.
+- Windows overlay styles: tao rewrote them on every show and hide, dropping WS_CHILD and WS_EX_TOOLWINDOW and adding WS_EX_APPWINDOW. WM_STYLECHANGING now enforces them while attached (`desktop_layer/styles.rs`, unit-tested).
+- Windows overlay blinked on every play/pause: each one ran hide, re-attach, show. Now a pass touches only what is wrong, and a correctly attached overlay is never re-attached. A DPI or work-area change re-frames overlays parented under Explorer.
+- Windows trackKey race: SMTC can send a new title before the new duration. A pure, tested `Settle` waits up to 300 ms for the missing half.
+- Settings commands ran on the main thread and wrote settings.json there. They now run off it. `settings::commit` keeps concurrent changes ordered, and `settings-changed` always carries the latest settings. The tray nudge reads and writes the offset in one change.
+- Lyrics: a track with no length, title or artist (streams, ads, podcasts) is not-found instead of an error chip, and an LRCLIB 400 from /api/get falls back to search.
+- Music artwork asks for `raw data` first. `image` now also decodes bmp, gif and tiff.
+- Tests:
+  - Rust: contract JSON shape for every type and enum value, checked against contract.ts.
+  - Frontend: the frame loop's stop and start rules (pause, hidden, showWhen, null track, sleeping with nothing to sing), with mutation checks.
+  - Reduced motion: the loading dots hold still instead of pulsing.
+- Docs:
+  - The dev flags need a second `--`: `pnpm tauri dev -- -- --media-test`. A docs test guards this.
+  - LYRICS.md is current.
+  - README no longer promises a release that doesn't exist yet.
+  - USER_GUIDE explains that words inside a line are exact only for word-timed lyrics.
+Tests: 453 vitest, 159 Rust. Clean on Linux and in the Windows and macOS cross-checks.
+Decisions you can reverse:
+- Settings keeps a taskbar button while it is open (SPEC says the app has none). tao re-adds the button every time a hidden window is shown, so removing it would mean patching it after each show.
+- SPEC's ±150 ms word sync holds at line starts for line-timed lyrics; words inside a line are estimated.
+Not verified: everything native here still needs the acceptance steps in docs/DESKTOP_LAYER.md, NOW_PLAYING.md and LYRICS.md on a real Mac and PC.
+Needs from Codex: nothing.
+Contract: unchanged (v2).

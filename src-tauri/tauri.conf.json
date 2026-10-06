@@ -26,7 +26,9 @@
         "focus": false,
         "focusable": false,
         "resizable": false,
-        "visible": false
+        "visible": false,
+        "backgroundThrottling": "disabled",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       },
       {
         "label": "settings",
@@ -37,7 +39,8 @@
         "minWidth": 360,
         "minHeight": 480,
         "center": true,
-        "visible": false
+        "visible": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       }
     ],
     "security": {

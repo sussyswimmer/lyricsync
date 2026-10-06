@@ -2,13 +2,13 @@
 //! (above the wallpaper, below the Finder's icons and every app window). Nothing to discover.
 use super::{
     geometry::{self, Bounds, Rect},
-    request_refresh, DesktopLayer,
+    request_refresh, Attachment, DesktopLayer,
 };
 use block2::RcBlock;
-use objc2::MainThreadMarker;
+use objc2::{msg_send, runtime::AnyObject, sel, MainThreadMarker};
 use objc2_app_kit::{
     NSApplicationDidChangeScreenParametersNotification, NSColor, NSNormalWindowLevel, NSScreen,
-    NSWindow, NSWindowCollectionBehavior, NSWindowLevel, NSWorkspace,
+    NSWindow, NSWindowCollectionBehavior, NSWindowLevel, NSWindowOcclusionState, NSWorkspace,
     NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidWakeNotification,
     NSWorkspaceScreensDidWakeNotification,
 };
@@ -47,6 +47,47 @@ fn ns_window(window: &WebviewWindow) -> Result<(MainThreadMarker, &NSWindow), St
     // SAFETY: tauri hands out the NSWindow its tao window owns; it outlives this borrow of
     // `window`, and the marker above proves we are on the main thread AppKit requires.
     Ok((mtm, unsafe { pointer.as_ref() }))
+}
+
+/// The frame, in Cocoa points, of the screen that shows `monitor`.
+fn screen_frame(mtm: MainThreadMarker, monitor: &Monitor) -> Result<NSRect, String> {
+    let screens = NSScreen::screens(mtm).to_vec();
+    let frames: Vec<Rect> = screens.iter().map(|screen| rect(screen.frame())).collect();
+    let primary = *frames.first().ok_or("no screens attached")?;
+    let quartz: Vec<Rect> = frames
+        .iter()
+        .map(|frame| geometry::flip_y(*frame, primary))
+        .collect();
+    let wanted = geometry::monitor_points(physical(monitor), monitor.scale_factor());
+    let index = geometry::match_screen(wanted, &quartz)
+        .ok_or_else(|| format!("no screen matches display {wanted:?} yet"))?;
+    Ok(screens[index].frame())
+}
+
+/// Keeps the overlay's page visible while app windows cover it. WebKit hides the page of a window
+/// AppKit reports occluded, and a desktop-level window under other windows is occluded most of the
+/// time: the renderer would stop drawing (it pauses while `document.visibilityState` is "hidden").
+/// Ordering the window out still hides the page, so the lyrics stop exactly when the controller
+/// hides them. `_setWindowOcclusionDetectionEnabled:` is WebKit SPI; where it is missing this
+/// does nothing.
+fn keep_page_visible(window: &WebviewWindow) -> Result<(), String> {
+    window
+        .with_webview(|webview| {
+            let view = webview.inner().cast::<AnyObject>();
+            // SAFETY: on the main thread, tauri hands out its live WKWebView for the duration of
+            // this call. The setter is only sent where the view answers to it, and takes a BOOL.
+            unsafe {
+                let Some(view) = view.as_ref() else {
+                    return;
+                };
+                let setter = sel!(_setWindowOcclusionDetectionEnabled:);
+                let supported: bool = msg_send![view, respondsToSelector: setter];
+                if supported {
+                    let _: () = msg_send![view, _setWindowOcclusionDetectionEnabled: false];
+                }
+            }
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Calls `request_refresh` whenever `center` posts `name`. The block captures nothing and the
@@ -106,16 +147,8 @@ impl DesktopLayer for MacDesktop {
 
     fn attach(window: &WebviewWindow, monitor: &Monitor, _: ()) -> Result<(), String> {
         let (mtm, ns_window) = ns_window(window)?;
-        let screens = NSScreen::screens(mtm).to_vec();
-        let frames: Vec<Rect> = screens.iter().map(|screen| rect(screen.frame())).collect();
-        let primary = *frames.first().ok_or("no screens attached")?;
-        let quartz: Vec<Rect> = frames
-            .iter()
-            .map(|frame| geometry::flip_y(*frame, primary))
-            .collect();
-        let wanted = geometry::monitor_points(physical(monitor), monitor.scale_factor());
-        let index = geometry::match_screen(wanted, &quartz)
-            .ok_or_else(|| format!("no screen matches display {wanted:?} yet"))?;
+        let frame = screen_frame(mtm, monitor)?;
+        keep_page_visible(window)?;
         // Never key: showing the overlay must not take focus from Settings or another app. The
         // controller and tauri.conf.json create overlays non-focusable; this is a safety net that
         // runs at most once per window, because tao's set_focusable leaks a retain on every call.
@@ -133,17 +166,60 @@ impl DesktopLayer for MacDesktop {
                 | NSWindowCollectionBehavior::IgnoresCycle,
         );
         // The full frame in Cocoa coordinates, menu bar and Dock included, like the wallpaper.
-        ns_window.setFrame_display(screens[index].frame(), true);
+        ns_window.setFrame_display(frame, true);
         Ok(())
     }
 
+    fn attachment(window: &WebviewWindow, monitor: &Monitor, _: ()) -> Attachment {
+        let Ok((mtm, ns_window)) = ns_window(window) else {
+            return Attachment::Detached;
+        };
+        if ns_window.level() != desktop_level() {
+            return Attachment::Detached;
+        }
+        // No matching screen yet: attach runs and reports it, and the controller retries.
+        match screen_frame(mtm, monitor) {
+            Ok(frame)
+                if ns_window.ignoresMouseEvents()
+                    && geometry::same_rect(rect(ns_window.frame()), rect(frame)) =>
+            {
+                Attachment::Placed
+            }
+            _ => Attachment::Misplaced,
+        }
+    }
+
     fn detach(window: &WebviewWindow) -> Result<(), String> {
-        window.hide().map_err(|e| e.to_string())?;
         let (_, ns_window) = ns_window(window)?;
         ns_window.setLevel(NSNormalWindowLevel);
         ns_window.setIgnoresMouseEvents(false);
         ns_window.setCollectionBehavior(NSWindowCollectionBehavior::Default);
         Ok(())
+    }
+
+    /// WebKit hides the page whenever the window is ordered out (and, for Settings, covered or
+    /// minimized); overlays only skip the occlusion part (`keep_page_visible`).
+    fn set_page_visible(_: &WebviewWindow, _: bool) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn report(window: &WebviewWindow) -> String {
+        match ns_window(window) {
+            Ok((_, ns_window)) => format!(
+                "level {}, frame {:?}, AppKit occlusion: {}",
+                ns_window.level(),
+                rect(ns_window.frame()),
+                if ns_window
+                    .occlusionState()
+                    .contains(NSWindowOcclusionState::Visible)
+                {
+                    "visible"
+                } else {
+                    "occluded (the page stays visible)"
+                }
+            ),
+            Err(error) => error,
+        }
     }
 
     fn describe(_: ()) -> String {

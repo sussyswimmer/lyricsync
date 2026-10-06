@@ -139,12 +139,23 @@ with timeout of 2 seconds
 end timeout
 "#;
 
-/// Raw image bytes, or `missing value` when the track has no artwork. Run once per track.
+/// Image bytes, or `missing value` when the track has no artwork. Run once per track. `raw data`
+/// is the artwork as stored (JPEG or PNG, which the decoder reads); `data` is a `picture`, which
+/// Music may hand over as PICT or TIFF, so it is only the fallback for artwork whose raw data
+/// Music can't give (some releases fail it for downloaded covers). A timeout is never retried:
+/// each one holds the main thread for 2 s.
 const MUSIC_ARTWORK: &str = r#"if application id "com.apple.Music" is not running then return missing value
 with timeout of 2 seconds
 	tell application id "com.apple.Music"
 		try
-			return data of artwork 1 of current track
+			set a to artwork 1 of current track
+			try
+				set r to raw data of a
+				if r is not missing value then return r
+			on error m number n
+				if n is -1712 then error m number n
+			end try
+			return data of a
 		on error m number n
 			if n is -1728 or n is -1719 then return missing value
 			error m number n
@@ -833,6 +844,10 @@ mod tests {
         assert!(
             artwork.find("is not running").unwrap() < artwork.find("tell application").unwrap()
         );
+        // The stored bytes first; the `picture` (possibly PICT or TIFF) only as the fallback,
+        // and never after a timeout.
+        assert!(artwork.find("raw data of a").unwrap() < artwork.find("return data of a").unwrap());
+        assert!(artwork.contains("if n is -1712 then error m number n"));
         assert!(Player::ALL
             .iter()
             .all(|player| player.notification().starts_with(player.bundle_id())));

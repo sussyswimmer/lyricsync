@@ -127,11 +127,25 @@
   }
 }
 
+@keyframes ut-settle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.22;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ut-stage,
   .drift,
   .drift-row span {
     transition: none;
+  }
+  /* Still nothing for the first 600 ms (states.ts sets the delay), then one gentle fade to a steady
+     faint level instead of the pulse. A rebuild resumes it, so a settled indicator doesn't fade again. */
+  .state-loading {
+    animation: ut-settle 0.6s ease-out forwards;
   }
   .state-instrumental {
     animation: none;

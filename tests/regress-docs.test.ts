@@ -15,10 +15,18 @@ import { MOCK_TRACKS } from "../src/bridge/mock";
 interface Fs {
   readFileSync(path: URL, encoding: "utf8"): string;
   existsSync(path: URL): boolean;
+  readdirSync(path: URL, options: { recursive: true }): string[];
 }
 
 const ROOT = new URL("../", import.meta.url);
-const DOCS = ["README.md", "docs/USER_GUIDE.md", "docs/HANDOFF.md"] as const;
+const DOCS = [
+  "README.md",
+  "docs/USER_GUIDE.md",
+  "docs/HANDOFF.md",
+  "docs/INSTALL.md",
+  "docs/LYRICS.md",
+  "docs/NOW_PLAYING.md",
+] as const;
 
 let fs: Fs;
 const read = (path: string): string => fs.readFileSync(new URL(path, ROOT), "utf8");
@@ -121,6 +129,35 @@ describe("README development notes", () => {
     const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
     expect(readme).toContain(`The mock plays ${words[MOCK_TRACKS.length] ?? MOCK_TRACKS.length} demo tracks`);
     expect(readme).toContain(`Start on demo track N (0–${MOCK_TRACKS.length - 1})`);
+  });
+});
+
+// Regression (dev-flag-double-dash): the docs ran `pnpm tauri dev -- --media-test`. tauri dev hands what
+// follows the first `--` to cargo and what follows a second one to the app (pnpm passes `--` through
+// as is), so cargo got the app's flag and refused to run.
+describe("debug flags in the docs", () => {
+  it("reach the app: `pnpm tauri dev -- -- <flag>`", () => {
+    // every flag the app reads from its command line
+    const rust = fs.readdirSync(new URL("src-tauri/src/", ROOT), { recursive: true }).filter((f) => f.endsWith(".rs"));
+    const flags = new Set(rust.flatMap((f) => [...read(`src-tauri/src/${f}`).matchAll(/arg == "(--[a-z-]+)"/g)].map((m) => m[1] ?? "")));
+    expect([...flags]).toEqual(expect.arrayContaining(["--media-test", "--desktop-layer-test"]));
+
+    const docs = ["README.md", ...fs.readdirSync(new URL("docs/", ROOT), { recursive: true }).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`)];
+    const runs: string[] = [];
+    const wrong: string[] = [];
+    for (const doc of docs) {
+      for (const m of read(doc).matchAll(/pnpm (?:exec )?tauri dev\b([^`\n#]*)/g)) {
+        const args = (m[1] ?? "").trim().split(/\s+/).filter(Boolean);
+        const firstFlag = args.findIndex((a) => flags.has(a));
+        if (firstFlag < 0) continue;
+        const toCargo = args.indexOf("--");
+        const toApp = toCargo < 0 ? -1 : args.indexOf("--", toCargo + 1);
+        runs.push(`${doc}: ${m[0].trim()}`);
+        if (toApp < 0 || firstFlag < toApp) wrong.push(`${doc}: ${m[0].trim()}`);
+      }
+    }
+    expect(runs.length).toBeGreaterThanOrEqual(3);
+    expect(wrong).toEqual([]);
   });
 });
 

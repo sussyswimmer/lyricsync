@@ -1,6 +1,6 @@
 # LRCLIB lyrics service (X3)
 
-The lyrics service (Codex, `codex/lyrics`, now merged) answers the lyrics commands and starts a lookup on every track change from either OS's now-playing adapter. The shared contract remains v1. Native end-to-end acceptance is still pending; M2 is not complete.
+The lyrics service (Codex, `codex/lyrics`, now merged) answers the lyrics commands and starts a lookup on every track change from either OS's now-playing adapter. The shared contract is v2, which only added `media-status` ([NOW_PLAYING.md](NOW_PLAYING.md#media-status-contract-v2)), so the lyrics commands and events are unchanged from v1. Native end-to-end acceptance is still pending; M2 is not complete.
 
 ## Lookup and matching
 
@@ -34,6 +34,22 @@ The optional live probe uses deliberately nonexistent original metadata, without
 cargo test --manifest-path src-tauri/Cargo.toml --locked live_lrclib_not_found_probe -- --ignored
 ```
 
-The cloud proxy currently rejects the connection to `lrclib.net` with CONNECT 403. The domain has been added to the saved environment draft, preserving package-manager presets. Review/save the change in environment settings and publish the environment, then rerun the live probe. No LRCLIB key is required. Saving the draft does not itself change runtime egress.
+From the cloud environment the probe now reaches `lrclib.net`, which answers not-found, as it should for metadata that doesn't exist. No LRCLIB key is required.
 
-For Windows acceptance after allowing LRCLIB access, run `pnpm tauri dev -- --media-test`, play Spotify, and check loading/terminal lyrics events alongside now-playing. The debug log prints only lyrics status/source, not text. Test cached replay offline, explicit refetch, a missing/instrumental/plain-only result, and rapid track switches. Actual lyrics display still depends on the frontend work. macOS's future media adapter must call the same `lyrics::runtime::track_changed` hook.
+## Native acceptance
+
+Both OSes reach the service the same way: the now-playing loop in `media/runtime.rs` calls `lyrics::runtime::track_changed` on every track change, before it emits `now-playing`, whether the track came from the Windows media session or from Spotify or Music on macOS. So the steps are the same on Windows 10/11 (Spotify) and macOS 14+ (Spotify, then Music):
+
+```
+pnpm install --frozen-lockfile
+pnpm tauri dev -- -- --media-test
+```
+
+The first `--` ends the Tauri CLI's options and the second ends cargo's, so `--media-test` reaches the app. Its log prints each lyrics event's status and source (for example `lyrics: status=Found source=Lrclib`), never the text. Verify:
+
+1. Play a song LRCLIB has synced lyrics for: after the `now-playing` line with `"trackChanged":true` come `status=Loading` and then `status=Found source=Lrclib`. The overlay shows the lyrics, and words light up as they're sung.
+2. Quit Undertone, turn the network off, start it again and play the same song: `status=Found source=Cache`, and the same lyrics on the overlay.
+3. **Refetch lyrics** in the tray or menu bar: a new `Loading` and a result from `Lrclib`, never `Cache`.
+4. A song LRCLIB doesn't have shows the "No lyrics for this song" chip, which fades after a few seconds; an instrumental shows a slow breathing ♪; a song with only plain lyrics shows them line by line without word highlight.
+5. With the network off, an uncached song shows "Couldn't load lyrics" within about six seconds.
+6. Skip through several tracks quickly: each new track logs its own `Loading`, and the overlay ends on the current song's lyrics, never an earlier song's.

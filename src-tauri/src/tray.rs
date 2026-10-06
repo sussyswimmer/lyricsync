@@ -473,9 +473,7 @@ mod runtime {
     /// Moves the current song's lyrics `delta_ms` earlier (negative: later). Tray and shortcuts.
     pub fn nudge(app: &AppHandle, delta_ms: f64) -> Result<(), String> {
         let key = current_key(app)?;
-        let current = super::track_offset(&crate::settings::runtime::current(app)?, &key);
-        crate::settings::runtime::set_track_offset(app, &key, super::nudged(current, delta_ms))
-            .map(drop)
+        crate::settings::runtime::nudge_track_offset(app, &key, delta_ms).map(drop)
     }
 
     fn current_key(app: &AppHandle) -> Result<String, String> {

@@ -1,23 +1,37 @@
 //! Every command in contract v2. Settings go through `settings::runtime`; media and lyrics come
 //! from their services.
+//!
+//! A plain `#[tauri::command] fn` runs on the main thread, behind every window operation (and on
+//! macOS behind the player scripts, up to 2 s each). Only the commands that work windows stay
+//! there; reads answer from the async runtime, and changes that write settings.json run on the
+//! blocking pool, so a slow disk never stalls the windows.
 use crate::contract::*;
 pub use crate::state::AppState;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
-#[tauri::command]
+/// Runs `work`, which writes to disk, on the blocking pool and waits for it.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(async)]
 pub fn get_settings(app: AppHandle) -> Result<Settings, String> {
     crate::settings::runtime::current(&app)
 }
 #[tauri::command]
-pub fn update_settings(app: AppHandle, patch: serde_json::Value) -> Result<Settings, String> {
-    crate::settings::runtime::update(&app, &patch)
+pub async fn update_settings(app: AppHandle, patch: serde_json::Value) -> Result<Settings, String> {
+    blocking(move || crate::settings::runtime::update(&app, &patch)).await
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_now_playing(state: State<'_, AppState>) -> Result<Option<NowPlaying>, String> {
     Ok(state.now_playing.lock().map_err(|e| e.to_string())?.clone())
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_media_status(state: State<'_, AppState>) -> Result<MediaStatus, String> {
     Ok(state
         .media_status
@@ -40,8 +54,12 @@ pub async fn refetch_lyrics(
     service.inner().refetch(&track_key)
 }
 #[tauri::command]
-pub fn set_track_offset(app: AppHandle, track_key: String, ms: f64) -> Result<Settings, String> {
-    crate::settings::runtime::set_track_offset(&app, &track_key, ms)
+pub async fn set_track_offset(
+    app: AppHandle,
+    track_key: String,
+    ms: f64,
+) -> Result<Settings, String> {
+    blocking(move || crate::settings::runtime::set_track_offset(&app, &track_key, ms)).await
 }
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
@@ -52,12 +70,13 @@ pub fn quit(app: AppHandle) {
     app.exit(0);
 }
 
-/// Shows and focuses the settings window (command, tray, second launch).
+/// Shows and focuses the settings window (command, tray, second launch). Its page becomes visible
+/// with it: on Windows WebView2 no longer tracks that itself (see `desktop_layer::set_shown`).
 pub fn show_settings(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("settings")
         .ok_or("settings window unavailable")?;
     window.unminimize().map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
+    crate::desktop_layer::set_shown(&window, true)?;
     window.set_focus().map_err(|e| e.to_string())
 }

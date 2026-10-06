@@ -4,12 +4,12 @@ Undertone runs on macOS 14 or later and on Windows 10 and 11. The builds aren't 
 
 ## Download
 
-Go to [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases), open the latest release and look under **Assets**:
+Released versions will be on [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases). Open the latest release and look under **Assets**:
 
 - **macOS:** `Undertone_<version>_universal.dmg`. One build covers Apple silicon and Intel Macs. (The `.app.tar.gz` next to it is the same app without the disk image; you don't need it.)
 - **Windows:** `Undertone_<version>_x64-setup.exe`.
 
-**Test builds:** every push to the repository builds both installers too. Open the **Actions** tab, click a **CI** run, and download the `.dmg` or the `-setup.exe` from **Artifacts** at the bottom of the run's summary. You need to be signed in to GitHub, and test builds are deleted after 14 days. The steps below are the same for them.
+**Test builds:** nothing is released yet, so for now this is how to get Undertone. Every push to the repository builds both installers. Open the **Actions** tab, click a **CI** run, and download the `.dmg` or the `-setup.exe` from **Artifacts** at the bottom of the run's summary. You need to be signed in to GitHub, and test builds are deleted after 14 days. The steps below are the same for them.
 
 ## macOS
 

@@ -12,7 +12,7 @@ pub use runtime::start;
 
 use crate::contract::{MediaProblem, MediaStatus, NowPlaying, Source};
 use async_trait::async_trait;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct RawTrack {
@@ -147,6 +147,130 @@ pub fn select_candidate(candidates: &[Candidate]) -> Option<usize> {
                 .then_with(|| (a.source == Source::Spotify).cmp(&(b.source == Source::Spotify)))
         })
         .map(|(index, _)| index)
+}
+
+/// A read's trackKey in the two halves an SMTC player publishes separately: the metadata
+/// (artist, title, album) and the timeline's duration, in whole seconds as the key rounds it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyHalves {
+    /// The player the read came from (its app id); reads of different players are not compared.
+    pub player: String,
+    pub metadata: String,
+    pub seconds: f64,
+}
+impl KeyHalves {
+    pub fn new(player: &str, artist: &str, title: &str, album: &str, duration_ms: f64) -> Self {
+        Self {
+            player: player.to_owned(),
+            metadata: track_key(artist, title, album, 0.0),
+            seconds: (duration_ms / 1000.0).round(),
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Half {
+    Metadata,
+    Duration,
+}
+enum Change {
+    Same,
+    One(Half),
+    /// Both halves, or another player.
+    New,
+}
+
+/// How many metadata and timeline changes the players have announced so far (SMTC's
+/// MediaPropertiesChanged and TimelinePropertiesChanged, from any session).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Announced {
+    pub metadata: u64,
+    pub timeline: u64,
+}
+impl Announced {
+    fn of(&self, half: Half) -> u64 {
+        match half {
+            Half::Metadata => self.metadata,
+            Half::Duration => self.timeline,
+        }
+    }
+}
+
+/// Holds back a read that may pair two tracks' halves. An SMTC player sets a new track's
+/// metadata and its timeline in separate calls, and the media loop wakes on the first: a read
+/// in between pairs the new title with the previous track's duration (or the old title with the
+/// new one), so its trackKey names no real song and starts a spurious LRCLIB lookup. A read where
+/// only one half changed since the last one published waits up to `WAIT` for the other. One
+/// half really changing alone (a duration that arrives late, two songs of the same length, a
+/// player that reports no timeline) is published when the wait runs out. If the player hasn't
+/// announced the missing half since the previous trackKey was published, it may still be on its
+/// way and is published at once if it arrives within `LATE`. If it has (two songs of the same
+/// length), the half that kept its value is the new track's, so its next change belongs to the
+/// next track and waits like any other. Reads that keep the trackKey (play, pause, seek,
+/// artwork) never wait.
+#[derive(Debug, Default)]
+pub struct Settle {
+    last: Option<KeyHalves>,
+    /// What had been announced before the read that published `last`'s trackKey.
+    announced: Announced,
+    /// The half a read published by `give_up` still lacked, and until when it may arrive.
+    awaiting: Option<(Half, Instant)>,
+}
+impl Settle {
+    pub const WAIT: Duration = Duration::from_millis(300);
+    const LATE: Duration = Duration::from_secs(3);
+
+    fn change(&self, next: &KeyHalves) -> Change {
+        let Some(last) = self.last.as_ref().filter(|last| last.player == next.player) else {
+            return Change::New;
+        };
+        match (last.metadata != next.metadata, last.seconds != next.seconds) {
+            (false, false) => Change::Same,
+            (true, false) => Change::One(Half::Metadata),
+            (false, true) => Change::One(Half::Duration),
+            (true, true) => Change::New,
+        }
+    }
+
+    /// Whether `next` may be published now; it then becomes the read later ones are compared
+    /// with. If not, read again when the player publishes more, and call `give_up` once `WAIT`
+    /// is over. `announced` is counted before the read.
+    pub fn admit(&mut self, next: &KeyHalves, announced: Announced, now: Instant) -> bool {
+        match self.change(next) {
+            Change::Same => {
+                self.last = Some(next.clone());
+                return true;
+            }
+            Change::New => self.awaiting = None,
+            Change::One(half) => {
+                let completes = self
+                    .awaiting
+                    .is_some_and(|(awaited, until)| awaited == half && now <= until);
+                if !completes {
+                    return false;
+                }
+                self.awaiting = None;
+            }
+        }
+        self.announced = announced;
+        self.last = Some(next.clone());
+        true
+    }
+
+    /// The other half did not come within `WAIT`: `next` is published as it is. `announced` is
+    /// counted after the read, so an announcement during it counts as the half having come.
+    pub fn give_up(&mut self, next: KeyHalves, announced: Announced, now: Instant) {
+        let missing = match self.change(&next) {
+            Change::One(Half::Metadata) => Some(Half::Duration),
+            Change::One(Half::Duration) => Some(Half::Metadata),
+            Change::Same | Change::New => None,
+        };
+        let before = self.announced;
+        self.awaiting = missing
+            .filter(|half| announced.of(*half) == before.of(*half))
+            .map(|half| (half, now + Self::LATE));
+        self.announced = announced;
+        self.last = Some(next);
+    }
 }
 
 #[derive(Debug)]
@@ -439,6 +563,152 @@ mod tests {
         }
         assert_eq!(Silent.presence(), Presence::Unknown);
         assert_eq!(Presence::default(), Presence::Unknown);
+    }
+    fn halves(title: &str, duration_ms: f64) -> KeyHalves {
+        KeyHalves::new(
+            "spotify.exe",
+            "Demo Artist",
+            title,
+            "Demo Album",
+            duration_ms,
+        )
+    }
+    /// Nothing announced: tests where only the reads matter.
+    const QUIET: Announced = Announced {
+        metadata: 0,
+        timeline: 0,
+    };
+    #[test]
+    fn a_track_change_read_between_its_two_halves_waits_for_the_other() {
+        let t0 = Instant::now();
+        let mut settle = Settle::default();
+        // The first read of a player has nothing to be compared with.
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), QUIET, t0));
+        // The new title next to the previous track's duration, then the timeline catches up.
+        assert!(!settle.admit(&halves("Glass Harbor", 180_000.0), QUIET, t0));
+        assert!(settle.admit(&halves("Glass Harbor", 214_000.0), QUIET, t0));
+        // The other order: the new duration next to the previous title, then the metadata.
+        assert!(!settle.admit(&halves("Glass Harbor", 95_000.0), QUIET, t0));
+        assert!(settle.admit(&halves("Quiet Engine", 95_000.0), QUIET, t0));
+        // Both halves at once is a new track, at once.
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), QUIET, t0));
+    }
+    #[test]
+    fn reads_that_keep_the_track_key_never_wait() {
+        let t0 = Instant::now();
+        let mut settle = Settle::default();
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), QUIET, t0));
+        // Play, pause, seek and artwork are not part of the halves; sub-second jitter and a
+        // case change don't change the key.
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), QUIET, t0));
+        assert!(settle.admit(&halves("Paper Lantern", 180_400.0), QUIET, t0));
+        assert!(settle.admit(&halves("PAPER LANTERN", 180_000.0), QUIET, t0));
+        // Another player is not a half-updated track of this one.
+        let other = KeyHalves::new("msedge", "Demo Artist", "Glass Harbor", "", 180_000.0);
+        assert!(settle.admit(&other, QUIET, t0));
+        assert!(settle.admit(&halves("Glass Harbor", 180_000.0), QUIET, t0));
+    }
+    #[test]
+    fn a_half_that_really_changed_alone_is_published_when_the_wait_runs_out() {
+        let t0 = Instant::now();
+        let mut settle = Settle::default();
+        let mut seen = QUIET;
+        assert!(settle.admit(&halves("Paper Lantern", 0.0), seen, t0));
+        // A player without a timeline: every track change is metadata alone.
+        seen.metadata += 1;
+        let next = halves("Glass Harbor", 0.0);
+        assert!(!settle.admit(&next, seen, t0));
+        settle.give_up(next.clone(), seen, t0 + Settle::WAIT);
+        // Published once, it is the reference: the next reads of it don't wait again.
+        assert!(settle.admit(&next, seen, t0 + Duration::from_secs(1)));
+        assert!(settle.admit(&next, seen, t0 + Duration::from_secs(2)));
+        // The next track change waits again; metadata is not the half that was missing.
+        seen.metadata += 1;
+        let at = t0 + Duration::from_secs(2);
+        assert!(!settle.admit(&halves("Quiet Engine", 0.0), seen, at));
+    }
+    #[test]
+    fn a_late_half_completes_the_change_it_belongs_to_at_once() {
+        let t0 = Instant::now();
+        let mut settle = Settle::default();
+        let mut seen = QUIET;
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), seen, t0));
+        seen.metadata += 1;
+        let half = halves("Glass Harbor", 180_000.0);
+        assert!(!settle.admit(&half, seen, t0));
+        settle.give_up(half, seen, t0 + Settle::WAIT);
+        // The timeline arrives after the wait: no second wait for the half already published.
+        seen.timeline += 1;
+        assert!(settle.admit(
+            &halves("Glass Harbor", 214_000.0),
+            seen,
+            t0 + Duration::from_millis(900)
+        ));
+        // A duration that arrives late on its own (a browser learning the length).
+        let mut settle = Settle::default();
+        let mut seen = QUIET;
+        assert!(settle.admit(&halves("Paper Lantern", 0.0), seen, t0));
+        seen.timeline += 1;
+        let corrected = halves("Paper Lantern", 180_000.0);
+        assert!(!settle.admit(&corrected, seen, t0));
+        settle.give_up(corrected, seen, t0 + Settle::WAIT);
+        // Long after, a new title next to that duration is a half-updated change again.
+        seen.metadata += 1;
+        let at = t0 + Duration::from_secs(60);
+        assert!(!settle.admit(&halves("Glass Harbor", 180_000.0), seen, at));
+        assert!(settle.admit(&halves("Glass Harbor", 214_000.0), seen, at));
+    }
+    #[test]
+    fn a_half_the_player_already_announced_is_not_awaited_after_the_wait() {
+        // Two songs of the same length: the player announced the new timeline (before or after
+        // the metadata), so the duration that kept its value is the new song's. A quick skip whose
+        // timeline comes first pairs that title with the next song's length, and must wait.
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        for timeline_first in [true, false] {
+            let mut settle = Settle::default();
+            let mut seen = QUIET;
+            let before = halves("Paper Lantern", 180_000.0);
+            assert!(settle.admit(&before, seen, t0));
+            if timeline_first {
+                seen.timeline += 1;
+                assert!(settle.admit(&before, seen, t0));
+            }
+            seen.metadata += 1;
+            let same_length = halves("Glass Harbor", 180_400.0);
+            assert!(!settle.admit(&same_length, seen, t0));
+            if !timeline_first {
+                seen.timeline += 1;
+                assert!(!settle.admit(&same_length, seen, t0 + ms(50)));
+            }
+            settle.give_up(same_length, seen, t0 + Settle::WAIT);
+
+            seen.timeline += 1;
+            let mixed = halves("Glass Harbor", 200_000.0);
+            assert!(
+                !settle.admit(&mixed, seen, t0 + ms(1000)),
+                "{timeline_first}"
+            );
+            seen.metadata += 1;
+            let skipped_to = halves("Quiet Engine", 200_000.0);
+            assert!(
+                settle.admit(&skipped_to, seen, t0 + ms(1050)),
+                "{timeline_first}"
+            );
+        }
+        // Announced during the read that gave up: it counts, though the read missed it.
+        let mut settle = Settle::default();
+        let mut seen = QUIET;
+        assert!(settle.admit(&halves("Paper Lantern", 180_000.0), seen, t0));
+        seen.metadata += 1;
+        let same_length = halves("Glass Harbor", 180_000.0);
+        assert!(!settle.admit(&same_length, seen, t0));
+        let during = Announced {
+            timeline: seen.timeline + 1,
+            ..seen
+        };
+        settle.give_up(same_length, during, t0 + Settle::WAIT);
+        assert!(!settle.admit(&halves("Glass Harbor", 200_000.0), during, t0 + ms(1000)));
     }
     #[test]
     fn malformed_snapshots_are_rejected_and_position_is_bounded() {

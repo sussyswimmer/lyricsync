@@ -63,6 +63,11 @@ fn near(a: f64, b: f64) -> bool {
     (a - b).abs() <= TOLERANCE
 }
 
+/// Whether two frames are the same up to rounding: an overlay still covering its screen.
+pub fn same_rect(a: Rect, b: Rect) -> bool {
+    near(a.x, b.x) && near(a.y, b.y) && near(a.width, b.width) && near(a.height, b.height)
+}
+
 /// The screen (Quartz points) that shows `monitor` (Quartz points). Same bounds first; then the
 /// same origin, in case a display mode reports its size in pixels rather than points. Displays
 /// never share an origin unless they mirror each other, and then either one is right. `None`
@@ -220,6 +225,15 @@ mod tests {
             match_screen(rect(0.0, 0.0, 1512.0, 982.0), &screens),
             Some(1)
         );
+    }
+
+    #[test]
+    fn same_rect_tolerates_rounding_only() {
+        let frame = rect(1512.0, -258.0, 2560.0, 1440.0);
+        assert!(same_rect(frame, frame));
+        assert!(same_rect(frame, rect(1512.5, -258.0, 2559.5, 1440.0)));
+        assert!(!same_rect(frame, rect(1512.0, -258.0, 2560.0, 1080.0)));
+        assert!(!same_rect(frame, rect(0.0, 0.0, 2560.0, 1440.0)));
     }
 
     #[test]
