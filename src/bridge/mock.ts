@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type Lyrics, type LyricsStatus, type NowPlaying, type Settings } from "../../contract/contract";
+import { CONTRACT_VERSION, DEFAULT_SETTINGS, type Lyrics, type LyricsStatus, type NowPlaying, type Settings } from "../../contract/contract";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
 import { demoCover } from "./covers";
@@ -284,40 +284,78 @@ function normalize(s: PlayerState, now: number): PlayerState {
   return { track, positionMs, sampledAt, isPlaying: s.isPlaying };
 }
 
-const clamp = (v: unknown, lo: number, hi: number, fallback: number): number =>
-  typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
-const isHex = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
-const oneOf = <T extends string>(v: unknown, options: readonly T[], fallback: T): T =>
-  options.find((o) => o === v) ?? fallback;
+/** Per-song offsets share the global offset's range. */
+const OFFSET_LIMIT_MS = 2000;
+const FONT_FAMILY_MAX_CHARS = 64;
+const MODES = ["arc", "lens", "drift", "stack"] as const satisfies readonly Settings["mode"][];
+const SHOW_WHEN = ["playing", "always"] as const satisfies readonly Settings["showWhen"][];
+const DISPLAYS = ["primary", "all"] as const satisfies readonly Settings["displays"][];
+const COLOR_KEYS = ["lyric", "highlight", "dim"] as const satisfies readonly (keyof Settings["colors"])[];
 
-/** What the Rust settings store will do (X4): clamp to SPEC ranges and drop invalid values. */
-export function clampSettings(s: Settings): Settings {
-  const d = DEFAULT_SETTINGS;
-  const offsets: Record<string, number> = {};
-  for (const [key, ms] of Object.entries(s.trackOffsetsMs ?? {})) offsets[key] = clamp(ms, -2000, 2000, 0);
-  return {
-    version: 1,
-    mode: oneOf(s.mode, ["arc", "lens", "drift", "stack"], d.mode),
-    autoColor: typeof s.autoColor === "boolean" ? s.autoColor : d.autoColor,
-    colors: {
-      lyric: isHex(s.colors?.lyric) ? s.colors.lyric.toLowerCase() : d.colors.lyric,
-      highlight: isHex(s.colors?.highlight) ? s.colors.highlight.toLowerCase() : d.colors.highlight,
-      dim: isHex(s.colors?.dim) ? s.colors.dim.toLowerCase() : d.colors.dim,
-    },
-    font: {
-      family: typeof s.font?.family === "string" && s.font.family !== "" ? s.font.family : d.font.family,
-      weight: clamp(s.font?.weight, 100, 900, d.font.weight),
-    },
-    size: clamp(s.size, 22, 140, d.size),
-    curve: clamp(s.curve, -100, 100, d.curve),
-    yPos: clamp(s.yPos, 0, 100, d.yPos),
-    glow: clamp(s.glow, 0, 100, d.glow),
-    opacity: clamp(s.opacity, 20, 100, d.opacity),
-    showWhen: oneOf(s.showWhen, ["playing", "always"], d.showWhen),
-    displays: oneOf(s.displays, ["primary", "all"], d.displays),
-    globalOffsetMs: clamp(s.globalOffsetMs, -2000, 2000, d.globalOffsetMs),
-    trackOffsetsMs: offsets,
-  };
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+// Each returns the valid value, or undefined so the caller keeps the current one.
+const clamp = (v: unknown, lo: number, hi: number): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
+const hex = (v: unknown): string | undefined => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : undefined);
+/** Not blank, at most 64 characters, both as Rust counts them: Unicode White_Space, code points. */
+const family = (v: unknown): string | undefined =>
+  typeof v === "string" && !/^\p{White_Space}*$/u.test(v) && [...v].length <= FONT_FAMILY_MAX_CHARS ? v : undefined;
+const oneOf = <T extends string>(v: unknown, options: readonly T[]): T | undefined => options.find((o) => o === v);
+/** Each entry clamped to ±2000 ms; zero and invalid entries dropped. */
+const offsetsOf = (v: unknown): Record<string, number> | undefined => {
+  if (!isObject(v)) return undefined;
+  const entries = Object.entries(v).flatMap(([key, ms]): [string, number][] => {
+    const clamped = clamp(ms, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);
+    return clamped === undefined || clamped === 0 ? [] : [[key, clamped]];
+  });
+  return Object.fromEntries(entries);
+};
+
+/**
+ * What the Rust store does with `update_settings` (X4, `settings::merge_patch`): a shallow merge
+ * validated field by field. Unknown keys are dropped, numbers are clamped to the SPEC ranges, and a
+ * value of the wrong type or outside an enum keeps the current one. A partial `colors` or `font`
+ * object changes only the keys it has; `trackOffsetsMs` replaces the whole map; `version` is ignored.
+ */
+export function mergeSettings(current: Settings, patch: unknown): Settings {
+  const next = structuredClone(current);
+  next.version = CONTRACT_VERSION;
+  if (!isObject(patch)) return next;
+  const p = patch;
+  next.mode = oneOf(p.mode, MODES) ?? next.mode;
+  if (typeof p.autoColor === "boolean") next.autoColor = p.autoColor;
+  const colors = p.colors;
+  if (isObject(colors)) for (const key of COLOR_KEYS) next.colors[key] = hex(colors[key]) ?? next.colors[key];
+  const font = p.font;
+  if (isObject(font)) {
+    next.font.family = family(font.family) ?? next.font.family;
+    next.font.weight = clamp(font.weight, 100, 900) ?? next.font.weight;
+  }
+  next.size = clamp(p.size, 22, 140) ?? next.size;
+  next.curve = clamp(p.curve, -100, 100) ?? next.curve;
+  next.yPos = clamp(p.yPos, 0, 100) ?? next.yPos;
+  next.glow = clamp(p.glow, 0, 100) ?? next.glow;
+  next.opacity = clamp(p.opacity, 20, 100) ?? next.opacity;
+  next.showWhen = oneOf(p.showWhen, SHOW_WHEN) ?? next.showWhen;
+  next.displays = oneOf(p.displays, DISPLAYS) ?? next.displays;
+  next.globalOffsetMs = clamp(p.globalOffsetMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
+  next.trackOffsetsMs = offsetsOf(p.trackOffsetsMs) ?? next.trackOffsetsMs;
+  return next;
+}
+
+/** Stored settings of any shape made valid by the same rules, starting from the defaults (`settings::migrate`). */
+export function migrateSettings(stored: unknown): Settings {
+  return mergeSettings(DEFAULT_SETTINGS, stored);
+}
+
+/** `set_track_offset` (`settings::with_track_offset`): clamped to ±2000 ms; zero removes the song. */
+export function withTrackOffset(current: Settings, trackKey: string, ms: number): Settings {
+  if (!Number.isFinite(ms)) throw new Error("offset must be finite");
+  const next = structuredClone(current);
+  const clamped = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms));
+  if (clamped === 0) delete next.trackOffsetsMs[trackKey];
+  else next.trackOffsetsMs[trackKey] = clamped;
+  return next;
 }
 
 export interface MockOptions {
@@ -385,11 +423,11 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
   const channel = shared && typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL) : null;
   const post = (message: Message): void => channel?.postMessage(message);
 
-  let settings = clampSettings({ ...structuredClone(DEFAULT_SETTINGS), ...read<Settings>(storage, SETTINGS_KEY) });
+  let settings = migrateSettings(read<unknown>(storage, SETTINGS_KEY));
   const override = params.get("settings");
   if (override) {
     try {
-      settings = clampSettings({ ...settings, ...(JSON.parse(override) as Partial<Settings>) });
+      settings = mergeSettings(settings, JSON.parse(override));
     } catch {
       // ignore a malformed ?settings=
     }
@@ -411,10 +449,10 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
   });
   write(storage, PLAYER_KEY, player.snapshot);
 
+  /** Stores already validated settings; saves, shares and broadcasts them only on a real change. */
   const setSettings = (next: Settings, broadcast: boolean): Settings => {
-    const clamped = clampSettings(next);
-    if (JSON.stringify(clamped) !== JSON.stringify(settings)) {
-      settings = clamped;
+    if (JSON.stringify(next) !== JSON.stringify(settings)) {
+      settings = next;
       write(storage, SETTINGS_KEY, settings);
       if (broadcast) post({ type: "settings", settings });
       emit("settings-changed", structuredClone(settings));
@@ -425,20 +463,19 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
   if (channel) {
     channel.onmessage = (e: MessageEvent<Message>) => {
       if (e.data.type === "player") player.apply(e.data.state);
-      else setSettings(e.data.settings, false);
+      else setSettings(mergeSettings(settings, e.data.settings), false);
     };
   }
 
   const commands: { [C in Command]: (args: Commands[C]["args"]) => ResultOf<C> } = {
     get_settings: () => structuredClone(settings),
-    update_settings: ({ patch }) => setSettings({ ...settings, ...patch }, true),
+    update_settings: ({ patch }) => setSettings(mergeSettings(settings, patch), true),
     get_now_playing: () => player.nowPlaying(),
     get_lyrics: ({ trackKey }) => player.lyrics(trackKey),
     refetch_lyrics: ({ trackKey }) => {
       if (trackKey === trackKeyOf(player.current)) player.refetch();
     },
-    set_track_offset: ({ trackKey, ms }) =>
-      setSettings({ ...settings, trackOffsetsMs: { ...settings.trackOffsetsMs, [trackKey]: ms } }, true),
+    set_track_offset: ({ trackKey, ms }) => setSettings(withTrackOffset(settings, trackKey, ms), true),
     open_settings: () => {
       if (typeof window === "undefined") return;
       const url = new URL("settings.html", window.location.href);
@@ -467,7 +504,8 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     player,
     invoke<C extends Command>(command: C, ...args: ArgsOf<C>): Promise<ResultOf<C>> {
       const handler = commands[command];
-      return Promise.resolve(handler((args[0] ?? {}) as Commands[C]["args"]));
+      // A handler that throws rejects, as a failing Tauri command does.
+      return new Promise((resolve) => resolve(handler((args[0] ?? {}) as Commands[C]["args"])));
     },
     listen<E extends Event>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
       handlers[event].add(handler);

@@ -5,10 +5,12 @@ import {
   MOCK_TRACKS,
   MockPlayer,
   SEEK_STEP_MS,
-  clampSettings,
   createMockBridge,
   lyricsOf,
+  mergeSettings,
+  migrateSettings,
   trackKeyOf,
+  withTrackOffset,
   type MockBridge,
   type MockOptions,
   type MockTrack,
@@ -377,18 +379,46 @@ describe("mock bridge: settings", () => {
     expect(low.font.weight).toBe(100);
   });
 
-  it("drops invalid colors and lowercases valid ones", async () => {
+  it("keeps the current color for an invalid one and lowercases valid ones", async () => {
     const { bridge } = await mock();
+    const custom = { lyric: "#ffffff", highlight: "#00ff88", dim: "#202020" };
+    await bridge.invoke("update_settings", { patch: { colors: custom } });
     const s = await bridge.invoke("update_settings", { patch: { colors: { lyric: "red", highlight: "#ABCDEF", dim: "#12345" } } });
-    expect(s.colors).toEqual({ lyric: DEFAULT_SETTINGS.colors.lyric, highlight: "#abcdef", dim: DEFAULT_SETTINGS.colors.dim });
+    expect(s.colors).toEqual({ ...custom, highlight: "#abcdef" });
   });
 
-  it("replaces an invalid mode, show-when or displays value with the default", async () => {
+  it("changes only the colors a partial colors object has", async () => {
     const { bridge } = await mock();
-    await bridge.invoke("update_settings", { patch: { mode: "lens" } });
+    const patch = { colors: { dim: "#010203" } } as unknown as Partial<Settings>;
+    const s = await bridge.invoke("update_settings", { patch });
+    expect(s.colors).toEqual({ ...DEFAULT_SETTINGS.colors, dim: "#010203" });
+  });
+
+  it("keeps the current mode, show-when, displays and auto-color for an invalid value, and ignores version", async () => {
+    const { bridge } = await mock();
+    await bridge.invoke("update_settings", { patch: { mode: "lens", showWhen: "always", displays: "all", autoColor: false } });
     const bad = { mode: "spiral", showWhen: "sometimes", displays: "left", autoColor: "yes", version: 7 } as unknown as Partial<Settings>;
     const s = await bridge.invoke("update_settings", { patch: bad });
-    expect(s).toMatchObject({ mode: "arc", showWhen: "playing", displays: "primary", autoColor: true, version: 1 });
+    expect(s).toMatchObject({ mode: "lens", showWhen: "always", displays: "all", autoColor: false, version: 1 });
+  });
+
+  it("keeps the current number for a wrong type or a non-finite value", async () => {
+    const { bridge } = await mock();
+    await bridge.invoke("update_settings", { patch: { size: 80, curve: -20, glow: 10, globalOffsetMs: 250 } });
+    const bad = { size: "90", curve: null, glow: Number.NaN, globalOffsetMs: Number.POSITIVE_INFINITY } as unknown as Partial<Settings>;
+    const s = await bridge.invoke("update_settings", { patch: bad });
+    expect(s).toMatchObject({ size: 80, curve: -20, glow: 10, globalOffsetMs: 250 });
+  });
+
+  it("drops unknown keys and ignores a patch that isn't an object", async () => {
+    const { bridge, seen } = await mock();
+    const unknown = { theme: "dark", Size: 99 } as unknown as Partial<Settings>;
+    expect(await bridge.invoke("update_settings", { patch: unknown })).toEqual(DEFAULT_SETTINGS);
+    for (const patch of [null, [{ size: 30 }], "size", 30]) {
+      expect(await bridge.invoke("update_settings", { patch: patch as unknown as Partial<Settings> })).toEqual(DEFAULT_SETTINGS);
+    }
+    await tick();
+    expect(seen.settings).toEqual([]);
   });
 
   it("clamps per-track offsets to ±2000 and keeps the others", async () => {
@@ -397,6 +427,37 @@ describe("mock bridge: settings", () => {
     const s = await bridge.invoke("set_track_offset", { trackKey: "b", ms: 5000 });
     expect(s.trackOffsetsMs).toEqual({ a: -150, b: 2000 });
     expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: -9000 })).trackOffsetsMs).toEqual({ a: -2000, b: 2000 });
+  });
+
+  it("removes a song's offset when it is set to zero", async () => {
+    const { bridge, seen } = await mock();
+    await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
+    await bridge.invoke("set_track_offset", { trackKey: "b", ms: -50 });
+    expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: 0 })).trackOffsetsMs).toEqual({ b: -50 });
+    expect((await bridge.invoke("set_track_offset", { trackKey: "b", ms: -0 })).trackOffsetsMs).toEqual({});
+    await tick();
+    seen.clear();
+    // Zero for a song without an offset changes nothing.
+    await bridge.invoke("set_track_offset", { trackKey: "c", ms: 0 });
+    await tick();
+    expect(seen.settings).toEqual([]);
+  });
+
+  it("rejects a non-finite track offset and changes nothing", async () => {
+    const { bridge, seen } = await mock();
+    await expect(bridge.invoke("set_track_offset", { trackKey: "a", ms: Number.NaN })).rejects.toThrow(/finite/);
+    await expect(bridge.invoke("set_track_offset", { trackKey: "a", ms: Number.POSITIVE_INFINITY })).rejects.toThrow(/finite/);
+    expect((await bridge.invoke("get_settings")).trackOffsetsMs).toEqual({});
+    await tick();
+    expect(seen.settings).toEqual([]);
+  });
+
+  it("replaces trackOffsetsMs whole from update_settings, dropping zero and invalid entries", async () => {
+    const { bridge } = await mock();
+    await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
+    const offsets = { b: 50, c: 0, d: 5000, e: "x", f: Number.NaN } as unknown as Record<string, number>;
+    const s = await bridge.invoke("update_settings", { patch: { trackOffsetsMs: offsets } });
+    expect(s.trackOffsetsMs).toEqual({ b: 50, d: 2000 });
   });
 
   it("emits settings-changed only for a real change", async () => {
@@ -427,26 +488,154 @@ describe("mock bridge: settings", () => {
   });
 });
 
-describe("clampSettings", () => {
-  const loose = (patch: Record<string, unknown>): Settings => ({ ...structuredClone(DEFAULT_SETTINGS), ...patch }) as unknown as Settings;
+// The same rules as the Rust store (src-tauri/src/settings.rs): each field on its own, invalid keeps current.
+describe("mergeSettings", () => {
+  /** Non-default values everywhere, so "keeps the current value" can't pass by resetting to the default. */
+  const custom: Settings = {
+    version: 1,
+    mode: "lens",
+    autoColor: false,
+    colors: { lyric: "#ffffff", highlight: "#00ff88", dim: "#202020" },
+    font: { family: "Syne", weight: 500 },
+    size: 80,
+    curve: -20,
+    yPos: 70,
+    glow: 10,
+    opacity: 60,
+    showWhen: "always",
+    displays: "all",
+    globalOffsetMs: 250,
+    trackOffsetsMs: { "a|b|c|1": -150 },
+  };
 
-  it("keeps valid settings as they are", () => {
-    expect(clampSettings(structuredClone(DEFAULT_SETTINGS))).toEqual(DEFAULT_SETTINGS);
+  it("keeps valid settings as they are and never mutates its input", () => {
+    const current = structuredClone(custom);
+    expect(mergeSettings(current, structuredClone(custom))).toEqual(custom);
+    expect(mergeSettings(current, {})).toEqual(custom);
+    mergeSettings(current, { size: 30, colors: { lyric: "#000000" }, trackOffsetsMs: {} });
+    expect(current).toEqual(custom);
   });
 
-  it("replaces non-finite or non-number values with defaults", () => {
-    const s = clampSettings(loose({ size: Number.NaN, curve: Number.POSITIVE_INFINITY, glow: "50", opacity: null }));
-    expect(s).toMatchObject({ size: 58, curve: 38, glow: 40, opacity: 100 });
+  it("keeps the current value of every field for a wrong type", () => {
+    for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
+      const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
+      const next = mergeSettings(custom, patch);
+      // A boolean is a valid autoColor.
+      expect(next).toEqual(junk === true ? { ...custom, autoColor: true } : custom);
+    }
   });
 
-  it("repairs missing nested objects and an empty font family", () => {
-    expect(clampSettings(loose({ colors: undefined, font: undefined, trackOffsetsMs: undefined }))).toEqual(DEFAULT_SETTINGS);
-    expect(clampSettings(loose({ font: { family: "", weight: 400 } })).font).toEqual({ family: "Fraunces", weight: 400 });
+  it("clamps every number to the SPEC range, ends included", () => {
+    const high = mergeSettings(custom, { size: 500, curve: 300, yPos: 150, glow: 101, opacity: 120, globalOffsetMs: 9999, font: { weight: 1000 } });
+    expect(high).toMatchObject({ size: 140, curve: 100, yPos: 100, glow: 100, opacity: 100, globalOffsetMs: 2000, font: { family: "Syne", weight: 900 } });
+    const low = mergeSettings(custom, { size: 10, curve: -300, yPos: -1, glow: -5, opacity: 5, globalOffsetMs: -9999, font: { weight: 50 } });
+    expect(low).toMatchObject({ size: 22, curve: -100, yPos: 0, glow: 0, opacity: 20, globalOffsetMs: -2000, font: { weight: 100 } });
+    expect(mergeSettings(custom, { size: 22, opacity: 100, glow: 12.5 })).toMatchObject({ size: 22, opacity: 100, glow: 12.5 });
   });
 
-  it("clamps each track offset and zeroes junk ones", () => {
-    const s = clampSettings(loose({ trackOffsetsMs: { a: 5000, b: -10, c: Number.NaN, d: "x" } }));
-    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10, c: 0, d: 0 });
+  it("changes only the keys a partial colors or font object has", () => {
+    expect(mergeSettings(custom, { colors: { dim: "#ABCDEF", accent: "#ffffff" } }).colors).toEqual({ ...custom.colors, dim: "#abcdef" });
+    expect(mergeSettings(custom, { colors: { lyric: "#fff", highlight: "orange" } }).colors).toEqual(custom.colors);
+    expect(mergeSettings(custom, { font: { weight: 300 } }).font).toEqual({ family: "Syne", weight: 300 });
+    expect(mergeSettings(custom, { font: { family: "Fraunces", style: "x" } }).font).toEqual({ family: "Fraunces", weight: 500 });
+  });
+
+  it("takes a font family that isn't blank and has at most 64 characters", () => {
+    // Blank as Rust's `str::trim` reads it (Unicode White_Space): NEL is blank there, a BOM isn't.
+    for (const family of ["", "   ", "\u0085 　\t", "x".repeat(65), ["Syne"], 3]) {
+      expect(mergeSettings(custom, { font: { family } }).font).toEqual(custom.font);
+    }
+    expect(mergeSettings(custom, { font: { family: "﻿" } }).font.family).toBe("﻿");
+    // Code points, as Rust counts them: 64 astral letters are 128 UTF-16 units.
+    const astral = "\u{1d4d0}".repeat(64);
+    expect(mergeSettings(custom, { font: { family: astral } }).font.family).toBe(astral);
+    expect(mergeSettings(custom, { font: { family: "\u{e9}".repeat(64) } }).font.family).toHaveLength(64);
+  });
+
+  it("accepts every enum value exactly, in no other case", () => {
+    for (const mode of ["arc", "lens", "drift", "stack"] as const) expect(mergeSettings(custom, { mode }).mode).toBe(mode);
+    expect(mergeSettings(custom, { showWhen: "playing", displays: "primary" })).toMatchObject({ showWhen: "playing", displays: "primary" });
+    expect(mergeSettings(custom, { mode: "Arc", displays: "All", showWhen: "sometimes" })).toEqual(custom);
+  });
+
+  it("ignores version, drops unknown keys and ignores a patch that isn't an object", () => {
+    expect(mergeSettings(custom, { version: 7, size: 60 })).toEqual({ ...custom, size: 60 });
+    expect(Object.keys(mergeSettings(custom, { theme: "dark" }))).toEqual(Object.keys(custom));
+    for (const patch of [null, undefined, [{ size: 30 }], "size", 30]) expect(mergeSettings(custom, patch)).toEqual(custom);
+  });
+
+  it("replaces track offsets whole: each clamped, zero and junk entries dropped", () => {
+    const s = mergeSettings(custom, { trackOffsetsMs: { a: 5000, b: -10, c: Number.NaN, d: "x", e: 0, f: -0, g: null } });
+    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10 });
+    expect(mergeSettings(custom, { trackOffsetsMs: [5] }).trackOffsetsMs).toEqual(custom.trackOffsetsMs);
+  });
+});
+
+describe("migrateSettings", () => {
+  it("turns nothing or an empty object into the defaults", () => {
+    for (const stored of [null, undefined, {}, "settings", [1, 2]]) expect(migrateSettings(stored)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it("repairs a v1 blob field by field, starting from the defaults", () => {
+    const stored = {
+      version: 1,
+      mode: "stack",
+      autoColor: "yes",
+      colors: { lyric: "#FFEEDD", highlight: "orange" },
+      font: { family: "", weight: 950 },
+      size: "big",
+      curve: -500,
+      glow: null,
+      opacity: 55,
+      showWhen: "never",
+      displays: "all",
+      globalOffsetMs: 120.5,
+      trackOffsetsMs: { "x|y|z|200": 90, zero: 0, junk: "x", far: -7000 },
+      legacyTheme: "night",
+    };
+    expect(migrateSettings(stored)).toEqual({
+      ...DEFAULT_SETTINGS,
+      mode: "stack",
+      colors: { ...DEFAULT_SETTINGS.colors, lyric: "#ffeedd" },
+      font: { ...DEFAULT_SETTINGS.font, weight: 900 },
+      curve: -100,
+      opacity: 55,
+      displays: "all",
+      globalOffsetMs: 120.5,
+      trackOffsetsMs: { "x|y|z|200": 90, far: -2000 },
+    });
+  });
+
+  it("keeps what it knows from a newer version", () => {
+    const stored = { version: 3, mode: "helix", size: 70, colors: { lyric: "#000000", shadow: "#111111" }, lockScreen: true };
+    expect(migrateSettings(stored)).toEqual({ ...DEFAULT_SETTINGS, size: 70, colors: { ...DEFAULT_SETTINGS.colors, lyric: "#000000" } });
+  });
+
+  it("never hands out the shared defaults object", () => {
+    const s = migrateSettings({});
+    s.colors.lyric = "#000000";
+    s.trackOffsetsMs["x"] = 5;
+    expect(DEFAULT_SETTINGS.colors.lyric).toBe("#f1ece3");
+    expect(DEFAULT_SETTINGS.trackOffsetsMs).toEqual({});
+  });
+});
+
+describe("withTrackOffset", () => {
+  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), trackOffsetsMs: { a: -150 } };
+
+  it("sets, clamps and removes a song's offset without touching the others", () => {
+    expect(withTrackOffset(base, "k", 50).trackOffsetsMs).toEqual({ a: -150, k: 50 });
+    expect(withTrackOffset(base, "k", 5000).trackOffsetsMs).toEqual({ a: -150, k: 2000 });
+    expect(withTrackOffset(base, "a", -9000).trackOffsetsMs).toEqual({ a: -2000 });
+    expect(withTrackOffset(base, "a", 0).trackOffsetsMs).toEqual({});
+    expect(withTrackOffset(base, "a", -0).trackOffsetsMs).toEqual({});
+    expect(base.trackOffsetsMs).toEqual({ a: -150 });
+  });
+
+  it("throws for a non-finite offset", () => {
+    for (const ms of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => withTrackOffset(base, "k", ms)).toThrow(/finite/);
+    }
   });
 });
 
