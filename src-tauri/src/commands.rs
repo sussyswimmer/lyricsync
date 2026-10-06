@@ -1,10 +1,11 @@
-//! M0 command stubs: in-memory settings, no media source or network lookups yet.
+//! Settings remain an in-memory stub; media and lyrics are supplied by their services.
 use crate::contract::*;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 #[derive(Default)]
 pub struct AppState {
     pub settings: Mutex<Settings>,
+    pub now_playing: Mutex<Option<NowPlaying>>,
 }
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
@@ -34,36 +35,29 @@ pub fn update_settings(
         *settings = next;
         settings.clone()
     };
+    #[cfg(target_os = "windows")]
+    crate::desktop_layer::request_refresh();
     app.emit(SETTINGS_CHANGED_EVENT, &result)
         .map_err(|e| e.to_string())?;
     Ok(result)
 }
 #[tauri::command]
-pub fn get_now_playing() -> Option<NowPlaying> {
-    None
-}
-fn stub_lyrics(track_key: String, status: LyricsStatus) -> Lyrics {
-    Lyrics {
-        track_key,
-        status,
-        synced: None,
-        plain: None,
-        source: LyricsSource::Lrclib,
-    }
+pub fn get_now_playing(state: State<'_, AppState>) -> Result<Option<NowPlaying>, String> {
+    Ok(state.now_playing.lock().map_err(|e| e.to_string())?.clone())
 }
 #[tauri::command]
-pub fn get_lyrics(track_key: String) -> Lyrics {
-    stub_lyrics(track_key, LyricsStatus::Error)
+pub async fn get_lyrics(
+    service: State<'_, Arc<crate::lyrics::Service>>,
+    track_key: String,
+) -> Result<Lyrics, String> {
+    Ok(service.inner().get(&track_key).await)
 }
 #[tauri::command]
-pub fn refetch_lyrics(app: AppHandle, track_key: String) -> Result<(), String> {
-    app.emit(
-        LYRICS_EVENT,
-        stub_lyrics(track_key.clone(), LyricsStatus::Loading),
-    )
-    .map_err(|e| e.to_string())?;
-    app.emit(LYRICS_EVENT, stub_lyrics(track_key, LyricsStatus::Error))
-        .map_err(|e| e.to_string())
+pub async fn refetch_lyrics(
+    service: State<'_, Arc<crate::lyrics::Service>>,
+    track_key: String,
+) -> Result<(), String> {
+    service.inner().refetch(&track_key)
 }
 #[tauri::command]
 pub fn set_track_offset(
@@ -82,6 +76,8 @@ pub fn set_track_offset(
             .insert(track_key, ms.clamp(-2000.0, 2000.0));
         settings.clone()
     };
+    #[cfg(target_os = "windows")]
+    crate::desktop_layer::request_refresh();
     app.emit(SETTINGS_CHANGED_EVENT, &result)
         .map_err(|e| e.to_string())?;
     Ok(result)
