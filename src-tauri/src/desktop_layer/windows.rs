@@ -1,10 +1,10 @@
 //! Explorer's desktop hierarchy is undocumented. See docs/DESKTOP_LAYER.md.
-use super::DesktopLayer;
+use super::{geometry::Bounds, request_refresh, DesktopLayer};
 use std::{
     ptr::null_mut,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicU32, Ordering},
 };
-use tauri::{Monitor, WebviewWindow};
+use tauri::{AppHandle, Manager, Monitor, WebviewWindow};
 use windows_sys::{
     core::w,
     Win32::{
@@ -17,16 +17,8 @@ use windows_sys::{
     },
 };
 
-static DIRTY: AtomicBool = AtomicBool::new(true);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 const SUBCLASS_ID: usize = 0x554e544f;
-
-pub fn request_refresh() {
-    DIRTY.store(true, Ordering::Release);
-}
-pub fn take_refresh() -> bool {
-    DIRTY.swap(false, Ordering::AcqRel)
-}
 
 pub struct WindowsDesktop;
 #[derive(Clone, Copy)]
@@ -59,6 +51,22 @@ unsafe extern "system" fn find_legacy(top: HWND, parameter: LPARAM) -> i32 {
 
 impl DesktopLayer for WindowsDesktop {
     type Target = Target;
+    const HIDE_WHILE_ATTACHING: bool = true;
+    fn install_notifications(app: &AppHandle) -> Result<(), String> {
+        let anchor = app
+            .get_webview_window("settings")
+            .ok_or("settings notification window missing")?;
+        // Keep this hidden top-level window alive (lib.rs hides it on close instead of destroying it):
+        // child overlays do not receive TaskbarCreated broadcasts.
+        subclass(&anchor)
+    }
+    fn is_valid(target: Target) -> bool {
+        target.is_valid()
+    }
+    fn area(monitor: &Monitor) -> Bounds {
+        let (position, size) = (monitor.position(), monitor.size());
+        (position.x, position.y, size.width, size.height)
+    }
     fn discover() -> Result<Target, String> {
         // SAFETY: All class strings are static UTF-16; no borrowed pointers escape these Win32 calls.
         unsafe {
@@ -106,7 +114,7 @@ impl DesktopLayer for WindowsDesktop {
         if !target.is_valid() {
             return Err("Desktop parent disappeared before attachment".into());
         }
-        install_notifications(window)?;
+        subclass(window)?;
         window
             .set_ignore_cursor_events(true)
             .map_err(|e| e.to_string())?;
@@ -185,6 +193,18 @@ impl DesktopLayer for WindowsDesktop {
         }
         Ok(())
     }
+
+    fn describe(target: Target) -> String {
+        let layout = if target.below != 0 {
+            "raised desktop (24H2): under Progman, between icons and wallpaper"
+        } else {
+            "classic: inside the WorkerW behind the icons"
+        };
+        format!(
+            "{layout}; parent {:#x}, below {:#x}, wallpaper {:#x}",
+            target.parent, target.below, target.wallpaper
+        )
+    }
 }
 
 unsafe fn set_style(hwnd: HWND, index: i32, value: isize) -> Result<(), String> {
@@ -201,7 +221,8 @@ fn last_error(operation: &str) -> String {
     format!("{operation}: {}", std::io::Error::last_os_error())
 }
 
-pub fn install_notifications(window: &WebviewWindow) -> Result<(), String> {
+/// Overlays (DPI) and the settings anchor (Explorer, display, wake) request a refresh from their messages.
+fn subclass(window: &WebviewWindow) -> Result<(), String> {
     let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as HWND;
     // SAFETY: Subclass is installed on the owning thread; callback owns no heap state and removes itself on destruction.
     unsafe {
