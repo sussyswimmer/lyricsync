@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 1;
+export const CONTRACT_VERSION = 2;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -20,6 +20,15 @@ export interface NowPlaying {
   artwork: string | null;
 }
 
+/** Why nothing is reported: macOS Automation is off for a running player, or no supported player runs. */
+export type MediaProblem = "automation-denied" | "no-player";
+
+export interface MediaStatus {
+  /** the player being reported, or the player with the problem; null when none */
+  source: Source | null;
+  problem: MediaProblem | null;
+}
+
 export type LyricsStatus =
   | "loading" | "found" | "plain-only" | "instrumental" | "not-found" | "error";
 
@@ -35,6 +44,7 @@ export interface Lyrics {
 export type Mode = "arc" | "lens" | "drift" | "stack";
 
 export interface Settings {
+  /** the settings schema, still 1 in contract v2 */
   version: 1;
   mode: Mode;
   autoColor: boolean;

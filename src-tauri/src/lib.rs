@@ -67,6 +67,7 @@ pub fn run() {
             commands::get_settings,
             commands::update_settings,
             commands::get_now_playing,
+            commands::get_media_status,
             commands::get_lyrics,
             commands::refetch_lyrics,
             commands::set_track_offset,

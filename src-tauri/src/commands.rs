@@ -1,4 +1,4 @@
-//! Every command in contract v1. Settings go through `settings::runtime`; media and lyrics come
+//! Every command in contract v2. Settings go through `settings::runtime`; media and lyrics come
 //! from their services.
 use crate::contract::*;
 pub use crate::state::AppState;
@@ -16,6 +16,14 @@ pub fn update_settings(app: AppHandle, patch: serde_json::Value) -> Result<Setti
 #[tauri::command]
 pub fn get_now_playing(state: State<'_, AppState>) -> Result<Option<NowPlaying>, String> {
     Ok(state.now_playing.lock().map_err(|e| e.to_string())?.clone())
+}
+#[tauri::command]
+pub fn get_media_status(state: State<'_, AppState>) -> Result<MediaStatus, String> {
+    Ok(state
+        .media_status
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone())
 }
 #[tauri::command]
 pub async fn get_lyrics(

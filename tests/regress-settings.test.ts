@@ -1,7 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
+import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings } from "../contract/contract";
+import { createMockBridge, type MockBridge } from "../src/bridge/mock";
+import type { Bridge } from "../src/bridge/types";
+import { PaletteCache } from "../src/core/palette";
 import { GAP_GRACE_MS, TrackHold } from "../src/settings/hold";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
+import { SettingsPreview } from "../src/settings/preview";
 import { applyWrite, clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "../src/settings/store";
 
 /*
@@ -12,7 +16,33 @@ import { applyWrite, clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "../src/sett
  * - settings-song-aria-live: the "This song" value was a live region rewritten on every render.
  * - settings-preview-bar: the preview's stage ran under its 22 px menu bar and a top mask, so at
  *   Height 0–15 the focus line the stage clamps into view was drawn behind the bar.
+ * - media-status-preview: under the mock's `?media=` the preview stayed an empty "Nothing playing"
+ *   stage, where the app plays the demo.
  */
+
+// The preview's stage and controller draw and animate; choosing what it plays needs neither.
+const previewFakes = vi.hoisted(() => {
+  class Stage {
+    setSettings(): void {}
+    destroy(): void {}
+  }
+  class Controller {
+    track: NowPlaying | null = null;
+    private readonly bridge: Bridge;
+    constructor(bridge: Bridge) {
+      this.bridge = bridge;
+    }
+    async start(): Promise<void> {
+      this.track = await this.bridge.invoke("get_now_playing");
+    }
+    setSettings(): void {}
+    kick(): void {}
+    destroy(): void {}
+  }
+  return { Stage, Controller };
+});
+vi.mock("../src/overlay/stage", () => ({ LyricStage: previewFakes.Stage }));
+vi.mock("../src/overlay/controller", () => ({ OverlayController: previewFakes.Controller }));
 
 // ---------- a DOM just big enough for SettingsPanel ----------
 
@@ -36,7 +66,7 @@ class FakeElement {
   /** a label's `for` (a string), or an output's token list */
   htmlFor: unknown = { add: (): void => undefined };
   readonly dataset: Record<string, string> = {};
-  readonly style = { setProperty: (): void => undefined } as Record<string, unknown>;
+  readonly style = { setProperty: (): void => undefined, removeProperty: (): void => undefined } as Record<string, unknown>;
   readonly attrs = new Map<string, string>();
   readonly children: FakeElement[] = [];
   private readonly listeners = new Map<string, (() => void)[]>();
@@ -109,6 +139,10 @@ class FakeElement {
     active = this;
   }
   scrollIntoView(): void {}
+  /** A canvas without a 2D context: the mock's demo covers are left out, as outside a browser. */
+  getContext(): null {
+    return null;
+  }
   /** Every descendant with this class, in document order. */
   all(className: string): FakeElement[] {
     const out: FakeElement[] = [];
@@ -165,7 +199,7 @@ const TRACK = { key: KEY, title: "Placeholder Song", artist: "Nobody" };
 function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
   let settings: Settings = applyWrite(structuredClone(DEFAULT_SETTINGS), { kind: "track", trackKey: KEY, ms: offsetMs });
   const writes: { key: string; ms: number }[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track };
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null };
   const panel = new SettingsPanel({
     edit: (patch) => {
       settings = { ...settings, ...patch };
@@ -199,6 +233,9 @@ function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
     setTrack(next: PanelState["track"]): void {
       panel.render((state = { ...state, track: next }));
     },
+    setMedia(next: MediaStatus | null): void {
+      panel.render((state = { ...state, media: next }));
+    },
     rerender(): void {
       // a fresh settings object with the same values, as a save echo or an unrelated edit brings
       settings = { ...settings };
@@ -210,7 +247,8 @@ function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
 const inert = (el: FakeElement): boolean => el.getAttribute("aria-disabled") === "true";
 const spoken = (root: FakeElement): string => {
   for (const f of frames.splice(0)) f();
-  return root.children.find((c) => c.getAttribute("role") === "status")?.textContent ?? "";
+  // the panel's announcer, not the media notice (also a status region)
+  return root.children.find((c) => c.getAttribute("role") === "status" && c.classList.contains("sr-only"))?.textContent ?? "";
 };
 
 describe("settings-nudge-focus: the sync buttons keep focus and never act backwards", () => {
@@ -284,7 +322,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     const p = mountPanel(50);
     const before = p.value.textWrites;
     for (let i = 0; i < 15; i++) p.rerender();
-    p.panel.render({ settings: { ...DEFAULT_SETTINGS, mode: "lens", trackOffsetsMs: { [KEY]: 50 } }, palette: null, paletteFor: null, artPending: false, track: TRACK });
+    p.panel.render({ settings: { ...DEFAULT_SETTINGS, mode: "lens", trackOffsetsMs: { [KEY]: 50 } }, palette: null, paletteFor: null, artPending: false, track: TRACK, media: null });
     expect(p.value.textWrites).toBe(before);
     expect(p.value.textContent).toBe("+50 ms");
   });
@@ -362,6 +400,150 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
     expect(clampTrackOffset(2100)).toBe(TRACK_OFFSET_LIMIT_MS);
     expect(clampTrackOffset(-2100)).toBe(-TRACK_OFFSET_LIMIT_MS);
     expect(clampTrackOffset(49.6)).toBe(50);
+  });
+});
+
+describe("media-status: Settings says why it can't see the song", () => {
+  const DENIED_SPOTIFY: MediaStatus = { source: "spotify", problem: "automation-denied" };
+  const DENIED_MUSIC: MediaStatus = { source: "apple-music", problem: "automation-denied" };
+  const NO_PLAYER: MediaStatus = { source: null, problem: "no-player" };
+
+  it("keeps an empty status region at the top of the panel while nothing is wrong", () => {
+    const p = mountPanel(0, null);
+    const notice = p.root.one("notice");
+    expect(p.root.children[0]).toBe(notice);
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.one("notice-card").hidden).toBe(true);
+    for (const media of [null, { source: "spotify", problem: null } satisfies MediaStatus, NO_PLAYER]) {
+      p.setMedia(media);
+      expect(notice.one("notice-card").hidden).toBe(true);
+    }
+  });
+
+  it("names the denied player and the Automation switch to turn on", () => {
+    const p = mountPanel(0, null);
+    const card = p.root.one("notice-card");
+    p.setMedia(DENIED_SPOTIFY);
+    expect(card.hidden).toBe(false);
+    expect(card.one("notice-title").textContent).toBe("Undertone can't see what Spotify is playing.");
+    expect(card.one("notice-fix").textContent).toBe(
+      "Open System Settings › Privacy & Security › Automation › Undertone, then turn on Spotify.",
+    );
+    p.setMedia(DENIED_MUSIC);
+    expect(card.one("notice-title").textContent).toBe("Undertone can't see what Music is playing.");
+    expect(card.one("notice-fix").textContent).toBe(
+      "Open System Settings › Privacy & Security › Automation › Undertone, then turn on Music.",
+    );
+    // The icon is decoration; the words carry it.
+    expect(card.children[0]?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("hides once the player is readable again, and says nothing new on a repeat", () => {
+    const p = mountPanel(0, null);
+    const card = p.root.one("notice-card");
+    const title = card.one("notice-title");
+    p.setMedia(DENIED_SPOTIFY);
+    const writes = title.children.map((c) => c.textWrites);
+    p.setMedia({ ...DENIED_SPOTIFY });
+    expect(title.children.map((c) => c.textWrites)).toEqual(writes);
+    p.setMedia({ source: "spotify", problem: null });
+    expect(card.hidden).toBe(true);
+    p.setMedia(DENIED_SPOTIFY);
+    expect(card.hidden).toBe(false);
+    p.setMedia(null);
+    expect(card.hidden).toBe(true);
+  });
+
+  it("with no music app open, the song row says so instead of Nothing playing", () => {
+    const p = mountPanel(0, null);
+    const title = p.root.one("song-title");
+    expect(title.textContent).toBe("Nothing playing");
+    p.setMedia(NO_PLAYER);
+    expect(title.textContent).toBe("No music app open");
+    // Denied Automation has its own notice; the row keeps the plain wording.
+    p.setMedia(DENIED_SPOTIFY);
+    expect(title.textContent).toBe("Nothing playing");
+    p.setMedia(null);
+    expect(title.textContent).toBe("Nothing playing");
+    // A song always wins.
+    p.setMedia(NO_PLAYER);
+    p.setTrack(TRACK);
+    expect(title.textContent).toBe("Placeholder Song · Nobody");
+  });
+
+  it("rides out a brief gap between songs as main.ts wires it: no flash of No music app open", () => {
+    vi.useFakeTimers();
+    const p = mountPanel(0);
+    const title = p.root.one("song-title");
+    const held = new TrackHold<PanelState["track"]>(TRACK, (song) => p.setTrack(song));
+    // The player went away for a moment: nothing playing, no player, then the next song.
+    held.set(null);
+    p.setMedia(NO_PLAYER);
+    vi.advanceTimersByTime(GAP_GRACE_MS - 100);
+    expect(title.textContent).toBe("Placeholder Song · Nobody");
+    p.setMedia({ source: "spotify", problem: null });
+    held.set({ key: "next|song|x|1", title: "Next Song", artist: "Nobody" });
+    expect(title.textContent).toBe("Next Song · Nobody");
+    // It really closed: once the grace runs out, the row says so.
+    held.set(null);
+    p.setMedia(NO_PLAYER);
+    vi.advanceTimersByTime(GAP_GRACE_MS);
+    expect(title.textContent).toBe("No music app open");
+    held.dispose();
+  });
+});
+
+// ---------- media-status-preview ----------
+
+describe("media-status-preview: with nothing reported, the mock's preview plays the demo as the app's does", () => {
+  const live: { bridge: MockBridge; preview: SettingsPreview }[] = [];
+  afterEach(() => {
+    for (const { bridge, preview } of live.splice(0)) {
+      preview.dispose();
+      bridge.dispose();
+    }
+  });
+
+  /** The settings window's preview on a mock bridge, wired the way main.ts wires it. */
+  async function mountPreview(query: string) {
+    vi.useFakeTimers({ now: 1_760_000_000_000 });
+    const bridge = createMockBridge({ shared: false, keys: false, storage: null, params: new URLSearchParams(query) });
+    const preview = new SettingsPreview({ bridge, palettes: new PaletteCache(async () => null), settings: structuredClone(DEFAULT_SETTINGS) });
+    live.push({ bridge, preview });
+    await bridge.listen("now-playing", (np) => preview.setMainTrack(np));
+    await preview.start(await bridge.invoke("get_now_playing"));
+    const el = preview.el as unknown as FakeElement;
+    return { bridge, preview, title: el.one("pv-title"), badge: el.one("pv-badge") };
+  }
+
+  it("starts on the demo under ?media=, and moves to the player once it is seen", async () => {
+    const { bridge, preview, title, badge } = await mountPreview("?track=1&media=no-player");
+    expect(preview.current.demo).toBe(true);
+    expect(title.textContent).toBe("Neon Monsoon");
+    expect(badge.textContent).toBe("Demo");
+
+    bridge.setMedia(null);
+    await vi.waitFor(() => expect(preview.current.demo).toBe(false));
+    expect(title.textContent).toBe("Paper Lanterns");
+    expect(badge.textContent).toBe("Spotify");
+  });
+
+  it("moves to the demo after the between-songs grace when setMedia takes the player away", async () => {
+    const { bridge, preview, title } = await mountPreview("?track=1");
+    expect(preview.current.demo).toBe(false);
+    bridge.setMedia("automation-denied");
+    await vi.advanceTimersByTimeAsync(GAP_GRACE_MS - 100);
+    expect(preview.current.demo).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.waitFor(() => expect(preview.current.demo).toBe(true));
+    expect(title.textContent).toBe("Neon Monsoon");
+  });
+
+  it("plain ?mock never shows the demo, through a track change", async () => {
+    const { preview, title } = await mountPreview("?track=1");
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(preview.current.demo).toBe(false);
+    expect(title.textContent).toBe("Letters Never Sent");
   });
 });
 

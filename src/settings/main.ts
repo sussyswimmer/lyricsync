@@ -2,7 +2,7 @@ import "@fontsource/figtree/400.css";
 import "@fontsource/figtree/500.css";
 import "@fontsource/figtree/600.css";
 import "../styles/settings.css";
-import { DEFAULT_SETTINGS, type NowPlaying, type Settings } from "../../contract/contract";
+import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings } from "../../contract/contract";
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
@@ -24,10 +24,11 @@ async function boot(host: HTMLElement): Promise<void> {
 
   // Subscribe first, then read the initial state, so nothing that happens in between is lost.
   // An event that beats its query's reply is newer than the reply.
-  const early: { settings: Settings | null; track: NowPlaying | null; heardTrack: boolean } = {
+  const early: { settings: Settings | null; track: NowPlaying | null; heardTrack: boolean; media: MediaStatus | null } = {
     settings: null,
     track: null,
     heardTrack: false,
+    media: null,
   };
   let onSettings = (s: Settings): void => {
     early.settings = s;
@@ -36,15 +37,22 @@ async function boot(host: HTMLElement): Promise<void> {
     early.track = np;
     early.heardTrack = true;
   };
+  let onMedia = (m: MediaStatus): void => {
+    early.media = m;
+  };
   await bridge.listen("settings-changed", (s) => onSettings(s));
   await bridge.listen("now-playing", (np) => onTrack(np));
-  const [fetched, fetchedTrack] = await Promise.all([
+  await bridge.listen("media-status", (m) => onMedia(m));
+  const [fetched, fetchedTrack, fetchedMedia] = await Promise.all([
     bridge.invoke("get_settings").catch(() => structuredClone(DEFAULT_SETTINGS)),
     bridge.invoke("get_now_playing").catch(() => null),
+    // Contract v2. A core without it rejects, and the window stays as it was before media-status.
+    bridge.invoke("get_media_status").catch(() => null),
   ]);
 
   const track: NowPlaying | null = early.heardTrack ? early.track : fetchedTrack;
   let view: Settings = early.settings ?? fetched;
+  let media: MediaStatus | null = early.media ?? fetchedMedia;
   let info: PreviewInfo = { track: null, demo: false, palette: null, paletteFrom: null, artPending: false };
 
   const palettes = new PaletteCache();
@@ -66,6 +74,7 @@ async function boot(host: HTMLElement): Promise<void> {
       paletteFor: info.demo ? null : info.paletteFrom,
       artPending: info.artPending,
       track: song ? { key: song.trackKey, title: song.title, artist: song.artist } : null,
+      media,
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -117,6 +126,10 @@ async function boot(host: HTMLElement): Promise<void> {
     preview?.setMainTrack(np);
     held.set(np);
   };
+  onMedia = (m) => {
+    media = m;
+    render();
+  };
   render();
 
   // Don't drop an edit made just before the window hides or closes.
@@ -155,7 +168,9 @@ function samePanelState(a: PanelState, b: PanelState): boolean {
     a.artPending === b.artPending &&
     a.track?.key === b.track?.key &&
     a.track?.title === b.track?.title &&
-    a.track?.artist === b.track?.artist
+    a.track?.artist === b.track?.artist &&
+    a.media?.source === b.media?.source &&
+    a.media?.problem === b.media?.problem
   );
 }
 

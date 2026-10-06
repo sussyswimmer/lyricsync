@@ -1,7 +1,12 @@
 //! One now-playing loop for every OS. A `Backend` connects, takes snapshots and wakes the loop on
-//! OS notifications; the loop owns the 1 s resync, the Watcher and publishing.
-use super::{MediaSource, Watcher};
-use crate::{contract::NOW_PLAYING_EVENT, desktop_layer, state::AppState};
+//! OS notifications; the loop owns the 1 s resync, the Watcher and publishing, `media-status`
+//! included.
+use super::{media_status, MediaSource, Presence, Watcher};
+use crate::{
+    contract::{MEDIA_STATUS_EVENT, NOW_PLAYING_EVENT},
+    desktop_layer,
+    state::AppState,
+};
 use async_trait::async_trait;
 use std::{
     sync::Arc,
@@ -85,6 +90,7 @@ fn run<S: Backend>(app: AppHandle) {
                             &app,
                             &mut watcher,
                             None,
+                            &Presence::NoPlayer,
                             started.elapsed().as_millis() as u64,
                         );
                         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -114,6 +120,7 @@ fn run<S: Backend>(app: AppHandle) {
                 &app,
                 &mut watcher,
                 snapshot.unwrap_or(None),
+                &connected.presence(),
                 started.elapsed().as_millis() as u64,
             );
             if reconnect {
@@ -122,12 +129,37 @@ fn run<S: Backend>(app: AppHandle) {
         }
     });
 }
-fn publish(app: &AppHandle, watcher: &mut Watcher, raw: Option<super::RawTrack>, elapsed_ms: u64) {
+/// `now-playing` first, then `media-status` when it changed, so a status never names a track
+/// the webviews haven't heard about yet.
+fn publish(
+    app: &AppHandle,
+    watcher: &mut Watcher,
+    raw: Option<super::RawTrack>,
+    presence: &Presence,
+    elapsed_ms: u64,
+) {
     let update = watcher.update(raw, elapsed_ms);
     let state = app.state::<AppState>();
     *state.now_playing.lock().unwrap_or_else(|e| e.into_inner()) = watcher.current().clone();
     if let Some(update) = update {
         emit(app, update);
+    }
+    let status = media_status(watcher.current().as_ref(), presence);
+    let previous = std::mem::replace(
+        &mut *state.media_status.lock().unwrap_or_else(|e| e.into_inner()),
+        status.clone(),
+    );
+    if previous == status {
+        return;
+    }
+    if cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--media-test") {
+        eprintln!(
+            "media-status: {}",
+            serde_json::to_string(&status).unwrap_or_default()
+        );
+    }
+    if let Err(error) = app.emit(MEDIA_STATUS_EVENT, &status) {
+        eprintln!("media-status event: {error}");
     }
 }
 fn emit(app: &AppHandle, update: super::Update) {

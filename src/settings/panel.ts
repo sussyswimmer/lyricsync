@@ -1,4 +1,4 @@
-import type { Mode, Settings } from "../../contract/contract";
+import type { MediaStatus, Mode, Settings, Source } from "../../contract/contract";
 import type { Palette } from "../core/palette";
 import { h } from "../overlay/dom";
 import { FONTS, fontFor } from "../overlay/fonts";
@@ -17,6 +17,8 @@ export interface PanelState {
   artPending: boolean;
   /** the song playing now, for the per-song sync nudge; null when nothing (real) is playing */
   track: { key: string; title: string; artist: string } | null;
+  /** why nothing plays, as the core reports it (contract v2); null from an older core */
+  media: MediaStatus | null;
 }
 
 /** What the panel asks for. */
@@ -79,6 +81,13 @@ const COLORS: readonly { key: ColorKey; label: string; spoken: string }[] = [
 
 const NUDGES = [-100, -50, 50, 100] as const;
 
+/** The player as its own switch is labeled under Automation in System Settings. */
+function playerName(source: Source | null): string {
+  if (source === "spotify") return "Spotify";
+  if (source === "apple-music") return "Music";
+  return "your music app";
+}
+
 /** "+120 ms", "−40 ms", "0 ms" (a real minus sign, so the numbers line up). */
 export function formatMs(ms: number): string {
   if (ms === 0) return "0 ms";
@@ -109,6 +118,7 @@ export class SettingsPanel {
     this.status = h("p", "sr-only");
     this.status.setAttribute("role", "status");
     this.el.append(
+      this.mediaNotice(),
       this.styleGroup(),
       this.colorGroup(),
       this.fontGroup(),
@@ -136,6 +146,51 @@ export class SettingsPanel {
   /** The colors the overlay uses right now. */
   private shownColors(state: PanelState): Palette {
     return state.settings.autoColor && state.palette ? state.palette : state.settings.colors;
+  }
+
+  // ---------- media notice ----------
+
+  /**
+   * Why the window can't see the song, when the core knows: macOS Automation is off for the player.
+   * The live region stays in place and only its card shows and hides, so it is announced as it appears.
+   */
+  private mediaNotice(): HTMLElement {
+    const el = h("div", "notice");
+    el.setAttribute("role", "status");
+    const card = h("div", "notice-card");
+    card.hidden = true;
+    const lock = icon(
+      [
+        ["M4.5 7.25 H11.5 A1.25 1.25 0 0 1 12.75 8.5 V12.75 A1.25 1.25 0 0 1 11.5 14 H4.5 A1.25 1.25 0 0 1 3.25 12.75 V8.5 A1.25 1.25 0 0 1 4.5 7.25 Z", 1.4, 1],
+        ["M5.5 7.25 V5.25 A2.5 2.5 0 0 1 10.5 5.25 V7.25", 1.4, 1],
+      ],
+      "0 0 16 16",
+    );
+    const titleName = h("span");
+    const title = h("p", "notice-title");
+    title.append(h("span", "", "Undertone can't see what "), titleName, h("span", "", " is playing."));
+    const fixName = h("span", "notice-path");
+    const fix = h("p", "notice-fix");
+    fix.append(
+      h("span", "", "Open "),
+      h("span", "notice-path", "System Settings › Privacy & Security › Automation › Undertone"),
+      h("span", "", ", then turn on "),
+      fixName,
+      h("span", "", "."),
+    );
+    const text = h("div", "notice-text");
+    text.append(title, fix);
+    card.append(lock, text);
+    el.append(card);
+    this.renderers.push(({ media }) => {
+      const denied = media?.problem === "automation-denied";
+      if (card.hidden === denied) card.hidden = !denied;
+      if (!denied) return;
+      const name = playerName(media.source);
+      setText(titleName, name);
+      setText(fixName, name);
+    });
+    return el;
   }
 
   // ---------- style ----------
@@ -421,7 +476,9 @@ export class SettingsPanel {
       const ms = track ? (s.settings.trackOffsetsMs[track.key] ?? 0) : 0;
       song.classList.toggle("is-disabled", !track);
       setText(songValue, track ? formatMs(ms) : "");
-      setText(songTitle, track ? `${track.title} · ${track.artist}` : "Nothing playing");
+      // The held song rides out a brief gap, so this only changes once the gap outlasts it.
+      const idle = s.media?.problem === "no-player" ? "No music app open" : "Nothing playing";
+      setText(songTitle, track ? `${track.title} · ${track.artist}` : idle);
       songTitle.title = track ? `${track.title} by ${track.artist}` : "";
       setText(songHint, track ? "Added on top of All songs." : "Play a song to fine-tune its sync.");
       for (const [i, b] of buttons.entries()) {

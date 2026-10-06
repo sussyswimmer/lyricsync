@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 1;
+pub const CONTRACT_VERSION: u8 = 2;
+/// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`.
+pub const SETTINGS_VERSION: u8 = 1;
 pub static DEFAULT_SETTINGS: std::sync::LazyLock<Settings> =
     std::sync::LazyLock::new(Settings::default);
 pub const NOW_PLAYING_EVENT: &str = "now-playing";
 pub const LYRICS_EVENT: &str = "lyrics";
 pub const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
+pub const MEDIA_STATUS_EVENT: &str = "media-status";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -28,6 +31,20 @@ pub struct NowPlaying {
     pub sampled_at: f64,
     pub is_playing: bool,
     pub artwork: Option<String>,
+}
+/// Why nothing is reported: macOS Automation is off for a running player, or no supported player runs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MediaProblem {
+    AutomationDenied,
+    NoPlayer,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaStatus {
+    /// The player being reported, or the player with the problem; null when none.
+    pub source: Option<Source>,
+    pub problem: Option<MediaProblem>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -107,7 +124,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: CONTRACT_VERSION,
+            version: SETTINGS_VERSION,
             mode: Mode::Arc,
             auto_color: true,
             colors: Colors {
@@ -169,5 +186,44 @@ mod tests {
             serde_json::to_value(Source::AppleMusic).unwrap(),
             "apple-music"
         );
+    }
+    #[test]
+    fn media_status_json_shape_matches() {
+        assert_eq!(MEDIA_STATUS_EVENT, "media-status");
+        assert_eq!(
+            serde_json::to_value(MediaStatus::default()).unwrap(),
+            json!({ "source": null, "problem": null })
+        );
+        let denied = MediaStatus {
+            source: Some(Source::AppleMusic),
+            problem: Some(MediaProblem::AutomationDenied),
+        };
+        assert_eq!(
+            serde_json::to_value(&denied).unwrap(),
+            json!({ "source": "apple-music", "problem": "automation-denied" })
+        );
+        let none = MediaStatus {
+            source: None,
+            problem: Some(MediaProblem::NoPlayer),
+        };
+        assert_eq!(
+            serde_json::to_value(&none).unwrap(),
+            json!({ "source": null, "problem": "no-player" })
+        );
+        let parsed: MediaStatus =
+            serde_json::from_value(json!({ "source": "spotify", "problem": null })).unwrap();
+        assert_eq!(
+            parsed,
+            MediaStatus {
+                source: Some(Source::Spotify),
+                problem: None,
+            }
+        );
+    }
+    #[test]
+    fn contract_v2_keeps_the_v1_settings_schema() {
+        assert_eq!(CONTRACT_VERSION, 2);
+        assert_eq!(SETTINGS_VERSION, 1);
+        assert_eq!(DEFAULT_SETTINGS.version, 1);
     }
 }

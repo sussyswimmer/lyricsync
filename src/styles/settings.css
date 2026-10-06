@@ -307,6 +307,50 @@ html.is-scrolled .top {
   line-height: 1.4;
 }
 
+/* ---------- media notice ---------- */
+/* Calm, not an alarm: a card warmed by the accent, the fix spelled out with the path to follow. The
+   live region (.notice) stays in place, empty and without height, while nothing is wrong. */
+.notice-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  margin-top: 14px;
+  padding: 11px 12px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--card));
+  box-shadow:
+    var(--card-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: ut-confirm 0.18s ease-out;
+}
+
+.notice-card .icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--accent-strong);
+}
+
+.notice-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.notice-fix {
+  margin: 3px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notice-path {
+  color: var(--text);
+  font-weight: 600;
+}
+
 /* ---------- rows ---------- */
 .row {
   display: grid;
@@ -963,7 +1007,8 @@ html.is-scrolled .top {
   .btn {
     transition: none;
   }
-  .confirm {
+  .confirm,
+  .notice-card {
     animation: none;
   }
 }

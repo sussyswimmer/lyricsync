@@ -4,7 +4,7 @@
 //! Every field is validated on its own: unknown keys are dropped, numbers are clamped to the SPEC
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
-use crate::contract::{Colors, Font, Settings, CONTRACT_VERSION};
+use crate::contract::{Colors, Font, Settings, SETTINGS_VERSION};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{collections::BTreeMap, ops::RangeInclusive};
@@ -100,7 +100,7 @@ fn merge_font(font: &mut Font, patch: &Value) {
 /// sends it; per-song changes go through `with_track_offset`).
 pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
     let mut next = current.clone();
-    next.version = CONTRACT_VERSION;
+    next.version = SETTINGS_VERSION;
     let Some(patch) = patch.as_object() else {
         return next;
     };
@@ -121,7 +121,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
                 keep_or_set(&mut next.global_offset_ms, clamp_number(value, &OFFSET_MS))
             }
             "trackOffsetsMs" => keep_or_set(&mut next.track_offsets_ms, track_offsets(value)),
-            // `version` is always CONTRACT_VERSION; anything else is unknown and dropped.
+            // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
     }
@@ -130,7 +130,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
 
 /// Turns stored settings of any shape (an older, newer or missing `version`, missing or invalid
 /// fields, not even an object) into valid ones by the update rules, starting from the defaults.
-/// Contract v1 has no renamed fields to carry over; a future version adds its steps here.
+/// Settings v1 has no renamed fields to carry over; a future version adds its steps here.
 pub fn migrate(stored: &Value) -> Settings {
     merge_patch(&Settings::default(), stored)
 }
@@ -347,7 +347,7 @@ mod tests {
             s.track_offsets_ms,
             BTreeMap::from([("a|b|c|1".to_owned(), -150.0)])
         );
-        assert_eq!(s.version, CONTRACT_VERSION);
+        assert_eq!(s.version, SETTINGS_VERSION);
     }
 
     #[test]
@@ -584,7 +584,7 @@ mod tests {
     fn version_in_a_patch_is_ignored() {
         for version in [json!(7), json!(0), json!("1"), json!(null)] {
             let next = patched(json!({ "version": version, "size": 60 }));
-            assert_eq!(next.version, CONTRACT_VERSION);
+            assert_eq!(next.version, SETTINGS_VERSION);
             assert_eq!(next.size, 60.0);
         }
     }
@@ -733,7 +733,7 @@ mod tests {
         let old = migrate(&json!({ "mode": "drift", "size": 40 }));
         assert_eq!(
             (old.mode, old.size, old.version),
-            (Mode::Drift, 40.0, CONTRACT_VERSION)
+            (Mode::Drift, 40.0, SETTINGS_VERSION)
         );
         // Written by a newer Undertone: new fields and values are dropped, the rest is kept.
         let future = migrate(&json!({

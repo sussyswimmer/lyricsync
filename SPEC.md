@@ -160,6 +160,24 @@ export const DEFAULT_SETTINGS: Settings = {
 | `set_track_offset(trackKey: string, ms: number)` | `Settings` |
 | `open_settings()` / `quit()` | `()` |
 
+**Contract v2 (additive, 2026-10-06).** `CONTRACT_VERSION = 2`. Nothing above changed; `Settings.version` stays 1.
+
+```ts
+/** Why nothing is reported: macOS Automation is off for a running player, or no supported player runs. */
+export type MediaProblem = "automation-denied" | "no-player";
+
+export interface MediaStatus {
+  /** the player being reported, or the player with the problem; null when none */
+  source: Source | null;
+  problem: MediaProblem | null;
+}
+```
+
+| Event / command | Payload / returns | When |
+|---|---|---|
+| `media-status` event | `MediaStatus` | Right after the `now-playing` it goes with, only when it changed. A reported track (playing or paused) gives `{ source, problem: null }`; otherwise a running player with Automation denied gives `"automation-denied"` (Spotify first), no supported player or media session gives `"no-player"`, and anything else gives `{ source: null, problem: null }`. |
+| `get_media_status()` | `MediaStatus` | The last status sent. |
+
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 
 **Auto colors** are computed in TypeScript from `artwork` and never written to settings. `colors` holds the user's manual choice, used when `autoColor` is false.

@@ -59,8 +59,8 @@ type SourceKind = "main" | "demo";
  * A miniature desktop at the top of the settings window: the real overlay stage and controller on
  * a wallpaper, with a slim menu bar naming the song. The stage starts below the bar (settings.css),
  * so its Height clamp never tucks the focus line under it. It plays the current track, or a private
- * demo player when nothing is playing (Tauri only; the mock always has a track). Settings come from
- * the window, not the bridge, so unsaved edits show at once.
+ * demo player when nothing is playing (the mock too, under `?media=` or `setMedia`). Settings come
+ * from the window, not the bridge, so unsaved edits show at once.
  */
 export class SettingsPreview {
   readonly el: HTMLElement;
@@ -119,7 +119,7 @@ export class SettingsPreview {
    * Afterwards `setMainTrack` moves between them.
    */
   start(np: NowPlaying | null): Promise<void> {
-    return this.switchTo(np === null && this.options.bridge.kind !== "mock" ? "demo" : "main");
+    return this.switchTo(np === null ? "demo" : "main");
   }
 
   /** Every settings change, saved or not. */
@@ -129,11 +129,10 @@ export class SettingsPreview {
   }
 
   /**
-   * The window bridge's now-playing. Tauri: show the demo while nothing plays, the real track as soon
-   * as one starts. The mock never reports nothing, so it never switches.
+   * The window bridge's now-playing: show the demo while nothing plays, the real track as soon as one
+   * starts. The mock reports nothing only under a media problem (`?media=`, `setMedia`).
    */
   setMainTrack(np: NowPlaying | null): void {
-    if (this.options.bridge.kind === "mock") return;
     if (np) {
       if (this.graceTimer) clearTimeout(this.graceTimer);
       this.graceTimer = null;

@@ -2271,7 +2271,7 @@ mod tests {
         for expected in [
             "generated:   2023-11-14 22:13:20 UTC",
             "os:          Windows 11 24H2 (10.0.26100), x86_64",
-            "build:       release, contract v1",
+            "build:       release, contract v2",
             "executable:  /Apps/undertone",
             "report file: not saved: read-only temp dir",
         ] {

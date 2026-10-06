@@ -12,6 +12,19 @@ Selection prefers playing Spotify, then playing Apple Music, then other playing 
 
 `get_now_playing` reads the watcher's cached state. Playback transitions drive the X1 overlay visibility hook, and a track change starts the lyrics lookup before `now-playing` is emitted.
 
+## Media status (contract v2)
+
+`now-playing` is `null` both when nothing plays and when Undertone can't see the player, so contract v2 adds `media-status` (`{ source, problem }`) to tell them apart. `media::media_status` decides it from the published track and what the backend saw of the players in the same snapshot (`MediaSource::presence`, a `Presence`):
+
+| Situation | `source` | `problem` |
+|---|---|---|
+| A track is reported, playing or paused | the track's source | `null` |
+| No track, and a running player has Automation denied (macOS; Spotify when both do) | `"spotify"` or `"apple-music"` | `"automation-denied"` |
+| No track, and no supported player runs: macOS finds neither Spotify nor Music running, Windows has no media session, or the backend can't connect | `null` | `"no-player"` |
+| No track otherwise: a player open with nothing loaded, the Automation prompt still open, or a backend that can't tell | `null` | `null` |
+
+The loop recomputes it after every publish and after a failed connection, keeps it in `AppState` for `get_media_status` (`{ null, null }` until the first snapshot), and emits `media-status` only when it changed, always after the `now-playing` it goes with. On macOS the presence comes from the running set and the Automation consent map; a denied player that isn't running is no problem. On Windows any media session, current or not, counts as a player. Settings uses it to show the Automation notice and "No music app open"; the overlay ignores it. A core older than v2 rejects `get_media_status`, and Settings then behaves as it did before.
+
 ## Artwork
 
 Artwork is read asynchronously from SMTC's thumbnail stream and converted on a blocking worker into a PNG data URL. Stream input is capped at 8 MiB, decode dimensions at 4096 per side, and decoder allocation at 64 MiB. Output is at most 300 pixels per side, preserving aspect ratio without enlarging small images. PNG, JPEG and WebP are supported; invalid artwork leaves the track intact with a null image.
@@ -27,11 +40,11 @@ pnpm install --frozen-lockfile
 pnpm tauri dev -- --media-test
 ```
 
-The debug-only flag prints emitted track keys, positions, sample times, playback state, artwork data-URL byte counts and seek flags. It does not print artwork content or lyrics. In normal mode the overlay hides while idle; use `--desktop-layer-test` only when separately testing the desktop placement, since that flag forces visibility.
+The debug-only flag prints emitted track keys, positions, sample times, playback state, artwork data-URL byte counts and seek flags, and each `media-status` change. It does not print artwork content or lyrics. In normal mode the overlay hides while idle; use `--desktop-layer-test` only when separately testing the desktop placement, since that flag forces visibility.
 
 Verify:
 
-1. No player open: one null event and hidden overlays. Open Spotify and play: correct metadata, artwork and one-second events.
+1. No player open: one null event, `media-status` `no-player` (Settings → This song says "No music app open") and hidden overlays. Open Spotify and play: correct metadata, artwork and one-second events, and `media-status` `{ "source": "spotify", "problem": null }`.
 2. Pause/resume: immediate state changes; no repeating pause events; overlay hides/shows according to settings.
 3. Seek forward and back more than one second: immediate seek event and correct timestamp/position pair. Check coarse Spotify timeline updates do not make lyrics jump backward.
 4. Switch tracks rapidly: the previous cover never appears on a new track. Missing artwork must not suppress metadata.
@@ -45,7 +58,7 @@ Linux validation covers the portable timing, selection, key and image tests plus
 `media/macos.rs` reads both players with in-process NSAppleScript, never `osascript`. Before each poll it lists the running apps through NSWorkspace, so a closed player is never sent an Apple event (that would launch it). Each script also checks `application id "…" is running` before its `tell`, and bounds its Apple events to 2 s. The script sources and their parsing live in `media/applescript.rs` and are unit-tested on every OS.
 
 - **Main thread:** NSAppleScript is main-thread only, so each read is one short hop there, and only one can be queued at a time. A player that times out gets no scripts for 4 s, and a script that fails to compile is not retried for 60 s.
-- **Automation consent:** asked with `AEDeterminePermissionToAutomateTarget` on a blocking thread before any script runs, so the macOS prompt never freezes the app. While the prompt is open the player is skipped. Denial publishes `null` and logs one hint naming System Settings → Privacy & Security → Automation; a denied player is checked again every 5 s, so turning it back on needs no restart. `Info.plist` carries `NSAppleEventsUsageDescription`.
+- **Automation consent:** asked with `AEDeterminePermissionToAutomateTarget` on a blocking thread before any script runs, so the macOS prompt never freezes the app. While the prompt is open the player is skipped. Denial publishes `null` with `media-status` `automation-denied` for that player, and logs one hint naming System Settings → Privacy & Security → Automation; a denied player is checked again every 5 s, so turning it back on needs no restart. `Info.plist` carries `NSAppleEventsUsageDescription`.
 - **Selection:** a playing Spotify beats a playing Music, which beats whichever played last. With Spotify playing, Music isn't asked at all.
 - **Hiccups:** one slow or failed read keeps the player's last reading for up to 5 s, so it doesn't publish `null` and reload the lyrics mid-song. A denial, a quit or a player with no track drops it at once.
 - **Artwork:** Spotify's artwork URL is fetched over HTTPS only (5 s timeout, 8 MiB cap); Music's comes from `data of artwork 1 of current track`. Both become PNG data URLs of at most 300 px, cached per track. An image the decoder refuses means no artwork and isn't retried.
@@ -63,7 +76,7 @@ pnpm tauri dev -- --media-test
 Verify:
 
 1. Paste `SPOTIFY_READ`, `MUSIC_READ` and `MUSIC_ARTWORK` from `media/applescript.rs` into Script Editor and run each with the player playing, paused and closed. A closed player must not launch.
-2. First run: macOS asks whether Undertone may control Spotify. The tray menu and Settings keep working while the prompt is open. Deny it: `now-playing` goes `null` and the Automation hint is logged once. Turn it back on in System Settings: lyrics come back within about 5 s without a restart.
+2. First run: macOS asks whether Undertone may control Spotify. The tray menu and Settings keep working while the prompt is open, and `media-status` stays `{ null, null }`. Deny it: `now-playing` goes `null`, the Automation hint is logged once, `media-status` reports `automation-denied` for `spotify`, and Settings shows "Undertone can't see what Spotify is playing." Turn it back on in System Settings: lyrics come back and the notice goes away within about 5 s, without a restart. Repeat with Music. Quit both players: `media-status` reports `no-player`.
 3. Play, pause and skip in Spotify and in Music with Undertone in the background: `now-playing` follows within a fraction of a second, not after the 3 s idle poll.
 4. With both players open: a playing Spotify beats a playing Music; pause Spotify while Music plays and Music is picked; with both paused, the one that played last stays selected.
 5. Artwork shows for both players. If Music's never does, `data of artwork 1` may be returning TIFF or PICT: switch the script to `raw data`, or enable the `image` crate's `tiff` feature.

@@ -10,7 +10,7 @@ mod windows;
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub use runtime::start;
 
-use crate::contract::{NowPlaying, Source};
+use crate::contract::{MediaProblem, MediaStatus, NowPlaying, Source};
 use async_trait::async_trait;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -29,6 +29,38 @@ pub struct RawTrack {
 #[async_trait]
 pub trait MediaSource: Send + Sync {
     async fn snapshot(&self) -> Option<RawTrack>;
+    /// What the last snapshot saw of the players, for `media-status`. A backend that can't tell
+    /// keeps the default.
+    fn presence(&self) -> Presence {
+        Presence::Unknown
+    }
+}
+
+/// The players as a backend last saw them, beyond the track it picked.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Presence {
+    #[default]
+    Unknown,
+    /// No supported player runs (macOS), no media session exists (Windows), or the OS connection failed.
+    NoPlayer,
+    /// A supported player runs and may be read; it may simply have nothing loaded.
+    Running,
+    /// A running player macOS denies Automation for; Spotify when both are.
+    Denied(Source),
+}
+
+/// `media-status`: the reported track's player, else why nothing is reported. A consent prompt
+/// still open, or a player with nothing loaded, is no problem.
+pub fn media_status(track: Option<&NowPlaying>, presence: &Presence) -> MediaStatus {
+    let (source, problem) = match (track, presence) {
+        (Some(track), _) => (Some(track.source.clone()), None),
+        (None, Presence::Denied(source)) => {
+            (Some(source.clone()), Some(MediaProblem::AutomationDenied))
+        }
+        (None, Presence::NoPlayer) => (None, Some(MediaProblem::NoPlayer)),
+        (None, Presence::Running | Presence::Unknown) => (None, None),
+    };
+    MediaStatus { source, problem }
 }
 
 pub fn track_key(artist: &str, title: &str, album: &str, duration_ms: f64) -> String {
@@ -343,6 +375,70 @@ mod tests {
         assert!(watcher.update(Some(paused.clone()), 5000).is_none());
         paused.artwork = Some("data:image/png;base64,demo".into());
         assert!(watcher.update(Some(paused), 5001).is_some());
+    }
+    #[test]
+    fn media_status_reports_the_track_first_then_the_problem() {
+        let track = raw().into_now_playing().unwrap();
+        // A reported track wins over anything the backend saw, playing or paused.
+        for presence in [
+            Presence::Unknown,
+            Presence::NoPlayer,
+            Presence::Running,
+            Presence::Denied(Source::AppleMusic),
+        ] {
+            assert_eq!(
+                media_status(Some(&track), &presence),
+                MediaStatus {
+                    source: Some(Source::Spotify),
+                    problem: None,
+                },
+                "{presence:?}"
+            );
+        }
+        let mut paused = raw();
+        paused.is_playing = false;
+        paused.source = Source::AppleMusic;
+        let paused = paused.into_now_playing().unwrap();
+        assert_eq!(
+            media_status(Some(&paused), &Presence::NoPlayer).source,
+            Some(Source::AppleMusic)
+        );
+        for source in [Source::Spotify, Source::AppleMusic] {
+            assert_eq!(
+                media_status(None, &Presence::Denied(source.clone())),
+                MediaStatus {
+                    source: Some(source),
+                    problem: Some(MediaProblem::AutomationDenied),
+                }
+            );
+        }
+        assert_eq!(
+            media_status(None, &Presence::NoPlayer),
+            MediaStatus {
+                source: None,
+                problem: Some(MediaProblem::NoPlayer),
+            }
+        );
+        // A player with nothing loaded, a consent prompt still open, or a backend that can't tell.
+        for presence in [Presence::Running, Presence::Unknown] {
+            assert_eq!(
+                media_status(None, &presence),
+                MediaStatus::default(),
+                "{presence:?}"
+            );
+        }
+    }
+    #[test]
+    fn a_backend_that_cannot_tell_reports_unknown() {
+        struct Silent;
+        #[async_trait]
+        impl MediaSource for Silent {
+            async fn snapshot(&self) -> Option<RawTrack> {
+                None
+            }
+        }
+        assert_eq!(Silent.presence(), Presence::Unknown);
+        assert_eq!(Presence::default(), Presence::Unknown);
     }
     #[test]
     fn malformed_snapshots_are_rejected_and_position_is_bounded() {

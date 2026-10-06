@@ -1,6 +1,6 @@
 //! Portable half of the macOS adapter: the AppleScript sources, the parser for their one-line
 //! answers, error classification and source selection. `macos.rs` only runs them.
-use super::{select_candidate, track_key, Candidate, RawTrack};
+use super::{select_candidate, track_key, Candidate, Presence, RawTrack};
 use crate::contract::Source;
 use std::{
     collections::HashMap,
@@ -415,6 +415,21 @@ impl Consent {
     }
 }
 
+/// What `media-status` hears from macOS: the first running player (Spotify, then Music) that
+/// Automation is denied for, otherwise whether either player runs at all.
+pub fn presence(running: &[Player], denied: impl Fn(Player) -> bool) -> Presence {
+    if running.is_empty() {
+        return Presence::NoPlayer;
+    }
+    Player::ALL
+        .into_iter()
+        .filter(|player| running.contains(player))
+        .find(|player| denied(*player))
+        .map_or(Presence::Running, |player| {
+            Presence::Denied(player.source())
+        })
+}
+
 /// Picks the reading to publish with `select_candidate`: a playing Spotify, then a playing
 /// Music, then whichever was seen playing most recently. `activity` keeps those times.
 pub fn choose(
@@ -728,6 +743,45 @@ mod tests {
         assert!(!ask);
         assert_eq!(gate.unwrap_err().kind, FailureKind::NotPermitted);
         assert!(consent.gate(now + Consent::RECHECK).1);
+    }
+    #[test]
+    fn presence_names_a_denied_running_player_spotify_first() {
+        let denied_both = |_: Player| true;
+        let denied_none = |_: Player| false;
+        let only_music = |player: Player| player == Player::Music;
+        assert_eq!(presence(&[], denied_both), Presence::NoPlayer);
+        assert_eq!(
+            presence(&[Player::Music, Player::Spotify], denied_both),
+            Presence::Denied(Source::Spotify)
+        );
+        assert_eq!(
+            presence(&[Player::Spotify, Player::Music], only_music),
+            Presence::Denied(Source::AppleMusic)
+        );
+        // A denied player that isn't running is no problem: it has nothing to show.
+        assert_eq!(presence(&[Player::Spotify], only_music), Presence::Running);
+        assert_eq!(
+            presence(&[Player::Spotify, Player::Music], denied_none),
+            Presence::Running
+        );
+        // As macOS reads it: no problem while the prompt is open, a denial once it is answered.
+        let now = Instant::now();
+        let mut verdicts = HashMap::from([(Player::Spotify, Consent::default())]);
+        let read = |verdicts: &HashMap<Player, Consent>| {
+            presence(&[Player::Spotify], |player| {
+                verdicts
+                    .get(&player)
+                    .is_some_and(|consent| consent.verdict() == Verdict::Denied)
+            })
+        };
+        let consent = verdicts.get_mut(&Player::Spotify).unwrap();
+        assert!(consent.gate(now).1);
+        assert_eq!(read(&verdicts), Presence::Running);
+        verdicts
+            .get_mut(&Player::Spotify)
+            .unwrap()
+            .answered(-1743, now);
+        assert_eq!(read(&verdicts), Presence::Denied(Source::Spotify));
     }
     #[test]
     fn playing_spotify_then_playing_music_then_most_recent() {

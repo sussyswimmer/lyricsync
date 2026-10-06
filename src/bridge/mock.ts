@@ -1,4 +1,12 @@
-import { CONTRACT_VERSION, DEFAULT_SETTINGS, type Lyrics, type LyricsStatus, type NowPlaying, type Settings } from "../../contract/contract";
+import {
+  DEFAULT_SETTINGS,
+  type Lyrics,
+  type LyricsStatus,
+  type MediaProblem,
+  type MediaStatus,
+  type NowPlaying,
+  type Settings,
+} from "../../contract/contract";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
 import { demoCover } from "./covers";
@@ -290,6 +298,7 @@ const FONT_FAMILY_MAX_CHARS = 64;
 const MODES = ["arc", "lens", "drift", "stack"] as const satisfies readonly Settings["mode"][];
 const SHOW_WHEN = ["playing", "always"] as const satisfies readonly Settings["showWhen"][];
 const DISPLAYS = ["primary", "all"] as const satisfies readonly Settings["displays"][];
+const MEDIA_PROBLEMS = ["automation-denied", "no-player"] as const satisfies readonly MediaProblem[];
 const COLOR_KEYS = ["lyric", "highlight", "dim"] as const satisfies readonly (keyof Settings["colors"])[];
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -319,7 +328,8 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
  */
 export function mergeSettings(current: Settings, patch: unknown): Settings {
   const next = structuredClone(current);
-  next.version = CONTRACT_VERSION;
+  // The settings schema, not the contract: contract v2 left it at 1.
+  next.version = DEFAULT_SETTINGS.version;
   if (!isObject(patch)) return next;
   const p = patch;
   next.mode = oneOf(p.mode, MODES) ?? next.mode;
@@ -365,12 +375,20 @@ export interface MockOptions {
   keys?: boolean;
   /** Persist across reloads. Default: localStorage when available. */
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
-  /** `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state. Default: the page URL. */
+  /**
+   * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state, and
+   * `?media=automation-denied|no-player` starts with that media problem. Default: the page URL.
+   */
   params?: URLSearchParams;
 }
 
 export interface MockBridge extends Bridge {
   readonly player: MockPlayer;
+  /**
+   * Stands in for a core that can't see the player: with a problem it reports nothing playing and why
+   * (`automation-denied` names Spotify), with null the player again. Shared with the other pages.
+   */
+  setMedia(problem: MediaProblem | null): void;
   dispose(): void;
 }
 
@@ -378,7 +396,10 @@ const PLAYER_KEY = "undertone.mock.player";
 const SETTINGS_KEY = "undertone.mock.settings";
 const CHANNEL = "undertone-mock";
 
-type Message = { type: "player"; state: PlayerState } | { type: "settings"; settings: Settings };
+type Message =
+  | { type: "player"; state: PlayerState }
+  | { type: "settings"; settings: Settings }
+  | { type: "media"; problem: MediaProblem | null };
 
 function defaultStorage(): Pick<Storage, "getItem" | "setItem"> | null {
   try {
@@ -414,6 +435,7 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     "now-playing": new Set(),
     lyrics: new Set(),
     "settings-changed": new Set(),
+    "media-status": new Set(),
   };
   const emit: Emit = (event, payload) => {
     queueMicrotask(() => {
@@ -443,11 +465,34 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     initial.isPlaying = !params.has("paused");
   }
 
-  const player = new MockPlayer(emit, initial, (state) => {
+  // Like `?settings`, `?media` applies to this page only and isn't saved; a later `setMedia` is shared.
+  let problem: MediaProblem | null = oneOf(params.get("media"), MEDIA_PROBLEMS) ?? null;
+  // The player keeps time through a media problem, but nothing it plays is reported, as in the real core.
+  const fromPlayer: Emit = (event, payload) => {
+    if (problem === null) emit(event, payload);
+  };
+
+  const player = new MockPlayer(fromPlayer, initial, (state) => {
     write(storage, PLAYER_KEY, state);
     post({ type: "player", state });
   });
   write(storage, PLAYER_KEY, player.snapshot);
+
+  const mediaStatus = (): MediaStatus => {
+    if (problem === null) return { source: player.nowPlaying().source, problem: null };
+    return { source: problem === "automation-denied" ? "spotify" : null, problem };
+  };
+  /** `now-playing` first, then `media-status`, in the order the core sends them. */
+  const setProblem = (next: MediaProblem | null, broadcast: boolean): void => {
+    // Shared even when this page already has it: another page's `?media` may differ. Receivers don't echo.
+    if (broadcast) post({ type: "media", problem: next });
+    if (next === problem) return;
+    const wasReported = problem === null;
+    problem = next;
+    // One null when the track goes away (the core never repeats it), the track when it comes back.
+    if (wasReported !== (problem === null)) emit("now-playing", problem === null ? player.nowPlaying() : null);
+    emit("media-status", mediaStatus());
+  };
 
   /** Stores already validated settings; saves, shares and broadcasts them only on a real change. */
   const setSettings = (next: Settings, broadcast: boolean): Settings => {
@@ -463,14 +508,16 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
   if (channel) {
     channel.onmessage = (e: MessageEvent<Message>) => {
       if (e.data.type === "player") player.apply(e.data.state);
-      else setSettings(mergeSettings(settings, e.data.settings), false);
+      else if (e.data.type === "settings") setSettings(mergeSettings(settings, e.data.settings), false);
+      else setProblem(oneOf(e.data.problem, MEDIA_PROBLEMS) ?? null, false);
     };
   }
 
   const commands: { [C in Command]: (args: Commands[C]["args"]) => ResultOf<C> } = {
     get_settings: () => structuredClone(settings),
     update_settings: ({ patch }) => setSettings(mergeSettings(settings, patch), true),
-    get_now_playing: () => player.nowPlaying(),
+    get_now_playing: () => (problem === null ? player.nowPlaying() : null),
+    get_media_status: () => mediaStatus(),
     get_lyrics: ({ trackKey }) => player.lyrics(trackKey),
     refetch_lyrics: ({ trackKey }) => {
       if (trackKey === trackKeyOf(player.current)) player.refetch();
@@ -480,6 +527,8 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
       if (typeof window === "undefined") return;
       const url = new URL("settings.html", window.location.href);
       url.searchParams.set("mock", "");
+      // The settings page opened from here starts with this page's media problem.
+      if (problem !== null) url.searchParams.set("media", problem);
       window.open(url, "undertone-settings", "width=380,height=640");
     },
     quit: () => {},
@@ -502,6 +551,9 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
   return {
     kind: "mock",
     player,
+    setMedia(next: MediaProblem | null): void {
+      setProblem(next, true);
+    },
     invoke<C extends Command>(command: C, ...args: ArgsOf<C>): Promise<ResultOf<C>> {
       const handler = commands[command];
       // A handler that throws rejects, as a failing Tauri command does.

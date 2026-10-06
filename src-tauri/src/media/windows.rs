@@ -1,7 +1,7 @@
 //! SMTC reads and subscriptions run on Tauri's Tokio runtime, never on the window thread.
 use super::{
     artwork, epoch_ms, runtime::Backend, select_candidate, track_key, windows_sample_time,
-    Candidate, MediaSource, RawTrack,
+    Candidate, MediaSource, Presence, RawTrack,
 };
 use crate::contract::Source;
 use async_trait::async_trait;
@@ -38,6 +38,8 @@ pub struct WindowsSource {
     art_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     disconnected: AtomicBool,
     last_error: Mutex<Option<String>>,
+    /// Whether the last snapshot found any media session.
+    presence: Mutex<Presence>,
 }
 #[derive(Default)]
 struct ArtCache {
@@ -108,6 +110,7 @@ impl WindowsSource {
             art_task: Mutex::new(None),
             disconnected: AtomicBool::new(false),
             last_error: Mutex::new(None),
+            presence: Mutex::new(Presence::Unknown),
         };
         let wake = source.notify.clone();
         source.manager_current_token = Some(source.manager.CurrentSessionChanged(
@@ -181,8 +184,17 @@ impl WindowsSource {
                 return Err(error);
             }
         };
-        self.subscribe(&sessions)?;
         let current = self.manager.GetCurrentSession().ok();
+        // Every media session is a supported player; with no current session and none listed,
+        // nothing that could play is open. Set before `subscribe` can fail, so an error never
+        // republishes the previous snapshot's presence.
+        *self.presence.lock().unwrap_or_else(|e| e.into_inner()) =
+            if current.is_some() || !sessions.is_empty() {
+                Presence::Running
+            } else {
+                Presence::NoPlayer
+            };
+        self.subscribe(&sessions)?;
         let now = epoch_ms();
         let mut candidates = Vec::new();
         let mut active_sessions = Vec::new();
@@ -335,6 +347,12 @@ impl MediaSource for WindowsSource {
                 None
             }
         }
+    }
+    fn presence(&self) -> Presence {
+        self.presence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 async fn read_thumbnail(

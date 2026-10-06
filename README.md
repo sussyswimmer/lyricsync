@@ -25,8 +25,8 @@ After launch, Undertone shows up as an icon in the menu bar (macOS) or the syste
 The first time Undertone reads Spotify or Music, macOS asks whether **Undertone** may control **Spotify** (or **Music**). Click **OK**.
 
 - **Why it's needed:** macOS has no public way for an app to see what another app is playing. Undertone asks Spotify and Music directly, through Apple Events, for the title, artist, album, length, position, play state and cover art. It only reads. It never starts, pauses or skips anything, and it checks that the player is already running before asking, so it never launches Spotify or Music by itself.
-- **If you click Don't Allow:** Undertone can't see what that app is playing, so you get no lyrics for it. Nothing else breaks.
-- **To turn it back on:** open **System Settings → Privacy & Security → Automation**, find **Undertone**, and switch on **Spotify** and/or **Music**. If Undertone or the player is missing from that list, or switching it on doesn't help, reset Undertone's Automation permission in Terminal with `tccutil reset AppleEvents com.undertone.desktop`, quit and reopen Undertone, and play a song to get the prompt again.
+- **If you click Don't Allow:** Undertone can't see what that app is playing, so you get no lyrics for it. While that app is open, the settings window says so at the top ("Undertone can't see what Spotify is playing.") and names the switch to turn on. Nothing else breaks.
+- **To turn it back on:** open **System Settings → Privacy & Security → Automation**, find **Undertone**, and switch on **Spotify** and/or **Music**. Undertone notices within about 5 seconds, without a restart, and the notice in Settings goes away. If Undertone or the player is missing from that list, or switching it on doesn't help, reset Undertone's Automation permission in Terminal with `tccutil reset AppleEvents com.undertone.desktop`, quit and reopen Undertone, and play a song to get the prompt again.
 
 macOS asks once per player, so you may see the prompt a second time when you first use the other app.
 
@@ -94,8 +94,8 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 1. **Is a song playing?** With **Show lyrics: While playing** (the default), lyrics hide when you pause and when nothing is playing. Choose **Always** to keep them up while paused.
 2. **Are the lyrics hidden?** Use **Show/Hide lyrics** in the menu, or ⌘⌥⇧L / Ctrl+Alt+Shift+L.
 3. **Is a window covering them?** The lyrics sit under every window, so a maximized or full-screen window hides them. Move windows aside or show the desktop.
-4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls.
-5. **On macOS, was Automation denied?** See [Permissions](#macos-automation).
+4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls. When Undertone finds no such player open, **This song** in Settings → Sync says **No music app open**.
+5. **On macOS, was Automation denied?** Then the settings window shows a notice at the top, such as "Undertone can't see what Spotify is playing.", with the switch to turn on. See [Permissions](#macos-automation).
 6. **Are they faint?** Check **Opacity** and your colors in Settings, or turn on **Match album colors**.
 
 ### Lyrics on the wrong monitor
@@ -164,11 +164,14 @@ URL parameters (combine them with `&`):
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |
+| `?media=automation-denied\|no-player` | Act like a core that can't see the player: nothing playing, and `media-status` says why (`automation-denied` names Spotify). The settings window then shows its Automation notice, or **No music app open** under This song, and its preview plays the demo song as the app does. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 
 For example, <http://localhost:1420/?mock&track=1&t=4900&settings=%7B%22mode%22%3A%22arc%22%7D> opens Paper Lanterns mid-line in Arc.
 
 `?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is shallow: a nested object such as `colors` is replaced whole, and any field you leave out of it falls back to its default.
+
+`?media` works the same way: it applies only to its page and isn't saved, so without it the mock reports the demo player as usual. The settings window that the overlay page opens inherits it. To change it while both pages are open, run `undertone.bridge.setMedia("no-player")` (or `"automation-denied"`, or `null` to see the player again) in either page's console; the other page follows.
 
 The mock remembers the player and settings in `localStorage`. `track`, `t` and `paused` override the saved player; run `localStorage.clear()` in the devtools console to start fresh. On the overlay page, `window.undertone` exposes `{ bridge, stage, controller }` for poking at it from the console, for example `undertone.bridge.player.select(1, 5000)`.
 

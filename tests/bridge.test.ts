@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
+import { DEFAULT_SETTINGS, type Lyrics, type MediaStatus, type NowPlaying, type Settings } from "../contract/contract";
 import { demoCover } from "../src/bridge/covers";
 import {
   MOCK_TRACKS,
@@ -49,6 +49,7 @@ interface Seen {
   nowPlaying: (NowPlaying | null)[];
   lyrics: Lyrics[];
   settings: Settings[];
+  media: MediaStatus[];
   clear(): void;
 }
 
@@ -62,17 +63,20 @@ async function mock(query = "", options: MockOptions = {}): Promise<{ bridge: Mo
     nowPlaying: [],
     lyrics: [],
     settings: [],
+    media: [],
     clear() {
       this.nowPlaying.length = 0;
       this.lyrics.length = 0;
       this.settings.length = 0;
+      this.media.length = 0;
     },
   };
-  // All three subscribe synchronously, before the construction-time `loading` event is delivered.
+  // All four subscribe synchronously, before the construction-time `loading` event is delivered.
   await Promise.all([
     bridge.listen("now-playing", (p) => seen.nowPlaying.push(p)),
     bridge.listen("lyrics", (p) => seen.lyrics.push(p)),
     bridge.listen("settings-changed", (p) => seen.settings.push(p)),
+    bridge.listen("media-status", (p) => seen.media.push(p)),
   ]);
   return { bridge, seen };
 }
@@ -820,6 +824,126 @@ describe("mock bridge: storage", () => {
   });
 });
 
+describe("mock bridge: media status (contract v2)", () => {
+  it("reports the track's player and no problem, and sends nothing while that holds", async () => {
+    const { bridge, seen } = await mock("?track=1");
+    expect(await bridge.invoke("get_media_status")).toEqual({ source: "spotify", problem: null });
+    bridge.player.next();
+    await advance(5000);
+    expect(seen.nowPlaying.length).toBeGreaterThan(0);
+    expect(seen.media).toEqual([]);
+  });
+
+  it("?media=automation-denied reports nothing playing because Spotify is denied", async () => {
+    const { bridge, seen } = await mock("?media=automation-denied&track=1");
+    expect(await bridge.invoke("get_now_playing")).toBeNull();
+    expect(await bridge.invoke("get_media_status")).toEqual({ source: "spotify", problem: "automation-denied" });
+    // The player keeps time, but none of it is reported: no resyncs, artwork or lyrics.
+    await advance(3000);
+    expect(seen.nowPlaying).toEqual([]);
+    expect(seen.lyrics).toEqual([]);
+    expect(seen.media).toEqual([]);
+    expect(bridge.player.position()).toBe(3000);
+    // Settings still work.
+    expect((await bridge.invoke("update_settings", { patch: { size: 70 } })).size).toBe(70);
+  });
+
+  it("?media=no-player reports nothing playing and no player", async () => {
+    const { bridge } = await mock("?media=no-player");
+    expect(await bridge.invoke("get_now_playing")).toBeNull();
+    expect(await bridge.invoke("get_media_status")).toEqual({ source: null, problem: "no-player" });
+  });
+
+  it("ignores an unknown ?media= value", async () => {
+    for (const query of ["?media=denied", "?media=", "?media=NO-PLAYER"]) {
+      const { bridge } = await mock(query);
+      expect(await bridge.invoke("get_media_status")).toEqual({ source: "spotify", problem: null });
+      expect(await bridge.invoke("get_now_playing")).not.toBeNull();
+    }
+  });
+
+  it("setMedia sends now-playing first, then media-status, and only on a change", async () => {
+    const { bridge, seen } = await mock("?track=1&t=2000");
+    await advance(300); // past the artwork event
+    const order: string[] = [];
+    await bridge.listen("now-playing", (np) => order.push(np ? "now-playing" : "now-playing null"));
+    await bridge.listen("media-status", (m) => order.push(`media-status ${m.problem ?? "ok"}`));
+    seen.clear();
+
+    bridge.setMedia("automation-denied");
+    await tick();
+    expect(order).toEqual(["now-playing null", "media-status automation-denied"]);
+    expect(seen.media).toEqual([{ source: "spotify", problem: "automation-denied" }]);
+
+    // Still nothing playing: a new reason, but no second null.
+    bridge.setMedia("no-player");
+    bridge.setMedia("no-player");
+    await advance(2500);
+    expect(seen.nowPlaying).toEqual([null]);
+    expect(seen.media).toEqual([
+      { source: "spotify", problem: "automation-denied" },
+      { source: null, problem: "no-player" },
+    ]);
+    expect(await bridge.invoke("get_now_playing")).toBeNull();
+
+    order.length = 0;
+    bridge.setMedia(null);
+    await tick();
+    expect(order).toEqual(["now-playing", "media-status ok"]);
+    expect(last(seen.nowPlaying)).toMatchObject({ trackKey: key(1), positionMs: 4800, isPlaying: true });
+    expect(last(seen.media)).toEqual({ source: "spotify", problem: null });
+    expect(await bridge.invoke("get_media_status")).toEqual({ source: "spotify", problem: null });
+    // Resyncs are reported again.
+    seen.clear();
+    await advance(1000);
+    expect(seen.nowPlaying).toHaveLength(1);
+  });
+
+  it("shares setMedia with the other pages without echo, but not ?media=", async () => {
+    vi.useRealTimers();
+    const post = vi.spyOn(BroadcastChannel.prototype, "postMessage");
+    const a = createMockBridge({ shared: true, keys: false, storage: null, params: new URLSearchParams("?track=1&paused&media=automation-denied") });
+    const b = createMockBridge({ shared: true, keys: false, storage: null, params: new URLSearchParams("?track=1&paused") });
+    open.push(a, b);
+    const bMedia: MediaStatus[] = [];
+    const bTrack: (NowPlaying | null)[] = [];
+    await b.listen("media-status", (m) => bMedia.push(m));
+    await b.listen("now-playing", (np) => bTrack.push(np));
+    // `?media` is this page's alone, like `?settings`.
+    expect(await b.invoke("get_media_status")).toEqual({ source: "spotify", problem: null });
+
+    a.setMedia("no-player");
+    await vi.waitFor(() => expect(bMedia).toEqual([{ source: null, problem: "no-player" }]));
+    expect(bTrack).toEqual([null]);
+    expect(await b.invoke("get_now_playing")).toBeNull();
+
+    b.setMedia(null);
+    await vi.waitFor(async () => expect(await a.invoke("get_media_status")).toEqual({ source: "spotify", problem: null }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(bMedia.map((m) => m.problem)).toEqual(["no-player", null]);
+  });
+
+  it("setMedia reaches a page whose ?media= differs, even when this page already has that state", async () => {
+    vi.useRealTimers();
+    const post = vi.spyOn(BroadcastChannel.prototype, "postMessage");
+    const settingsPage = createMockBridge({ shared: true, keys: false, storage: null, params: new URLSearchParams("?track=1&paused&media=no-player") });
+    const overlay = createMockBridge({ shared: true, keys: false, storage: null, params: new URLSearchParams("?track=1&paused") });
+    open.push(settingsPage, overlay);
+    const overlayMedia: MediaStatus[] = [];
+    await overlay.listen("media-status", (m) => overlayMedia.push(m));
+
+    // The overlay already sees the player; the settings page must follow anyway.
+    overlay.setMedia(null);
+    await vi.waitFor(async () => expect(await settingsPage.invoke("get_media_status")).toEqual({ source: "spotify", problem: null }));
+    expect(await settingsPage.invoke("get_now_playing")).toMatchObject({ trackKey: key(1) });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // One post, no echo, and nothing new on the page that didn't change.
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(overlayMedia).toEqual([]);
+  });
+});
+
 describe("mock bridge: other commands and lifetime", () => {
   it("does nothing for open_settings and quit outside a browser", async () => {
     const { bridge } = await mock();
@@ -947,6 +1071,19 @@ describe("mock bridge: keyboard and window", () => {
     expect(String(url)).toBe("http://localhost:1420/settings.html?mock=");
     expect(name).toBe("undertone-settings");
     expect(features).toBe("width=380,height=640");
+  });
+
+  it("opens the settings page with this page's media problem", async () => {
+    const win = stubWindow("?mock&media=no-player");
+    const { bridge } = await mock("?mock&media=no-player");
+    await bridge.invoke("open_settings");
+    expect(String(win.opened[0]?.[0])).toBe("http://localhost:1420/settings.html?mock=&media=no-player");
+    bridge.setMedia("automation-denied");
+    await bridge.invoke("open_settings");
+    expect(String(win.opened[1]?.[0])).toBe("http://localhost:1420/settings.html?mock=&media=automation-denied");
+    bridge.setMedia(null);
+    await bridge.invoke("open_settings");
+    expect(String(win.opened[2]?.[0])).toBe("http://localhost:1420/settings.html?mock=");
   });
 });
 

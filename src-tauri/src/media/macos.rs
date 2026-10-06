@@ -4,11 +4,12 @@
 //! parsing, picking the source and artwork all stay off the main thread.
 use super::{
     applescript::{
-        self, Consent, Failure, FailureKind, Player, Reading, Script, HOLD, TIMEOUT_COOLDOWN,
+        self, Consent, Failure, FailureKind, Player, Reading, Script, Verdict, HOLD,
+        TIMEOUT_COOLDOWN,
     },
     artwork, epoch_ms,
     runtime::Backend,
-    MediaSource, RawTrack,
+    MediaSource, Presence, RawTrack,
 };
 use crate::lyrics::lrclib::USER_AGENT;
 use async_trait::async_trait;
@@ -29,7 +30,7 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex, Once,
+        Arc, Mutex, Once, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -39,6 +40,12 @@ use tokio::sync::{oneshot, Notify};
 /// Each script bounds its Apple events to 2 s; this adds room for a busy main thread.
 const MAIN_THREAD_WAIT: Duration = Duration::from_secs(3);
 
+/// macOS's Automation answers belong to the process, not to one connection.
+fn shared_consent() -> Arc<Mutex<HashMap<Player, Consent>>> {
+    static CONSENT: OnceLock<Arc<Mutex<HashMap<Player, Consent>>>> = OnceLock::new();
+    CONSENT.get_or_init(Default::default).clone()
+}
+
 pub struct MacSource {
     app: AppHandle,
     notify: Arc<Notify>,
@@ -47,8 +54,11 @@ pub struct MacSource {
     activity: Mutex<HashMap<Player, f64>>,
     /// The last line logged per player, so a lasting problem (Automation off) is logged once.
     reported: Mutex<HashMap<Player, String>>,
-    /// Automation consent per player, asked on a blocking thread before any script runs.
+    /// Automation consent per player, asked on a blocking thread before any script runs. Shared
+    /// by every connection, so a reconnect neither asks again nor clears a denial for a moment.
     consent: Arc<Mutex<HashMap<Player, Consent>>>,
+    /// Which players ran in the last snapshot, and whether Automation is denied for one.
+    presence: Mutex<Presence>,
     /// Each player's last good reading, standing in for it across a transient failure.
     last: Mutex<HashMap<Player, Held>>,
     /// A player that timed out is not sent another script before this time.
@@ -112,7 +122,8 @@ impl Backend for MacSource {
             http,
             activity: Mutex::new(HashMap::new()),
             reported: Mutex::new(HashMap::new()),
-            consent: Arc::new(Mutex::new(HashMap::new())),
+            consent: shared_consent(),
+            presence: Mutex::new(Presence::Unknown),
             last: Mutex::new(HashMap::new()),
             cooldown: Mutex::new(HashMap::new()),
             reading: Arc::new(AtomicBool::new(false)),
@@ -146,6 +157,15 @@ impl MediaSource for MacSource {
                 break;
             }
         }
+        let presence = {
+            let consent = lock(&self.consent);
+            applescript::presence(&running, |player| {
+                consent
+                    .get(&player)
+                    .is_some_and(|consent| consent.verdict() == Verdict::Denied)
+            })
+        };
+        *lock(&self.presence) = presence;
         let states: Vec<_> = readings
             .iter()
             .map(|(player, reading, _)| (*player, reading.state))
@@ -157,6 +177,9 @@ impl MediaSource for MacSource {
         let (player, reading, sampled_at) = readings.swap_remove(selected);
         let artwork = self.artwork(player, &reading);
         Some(reading.into_raw(player, sampled_at, artwork))
+    }
+    fn presence(&self) -> Presence {
+        lock(&self.presence).clone()
     }
 }
 

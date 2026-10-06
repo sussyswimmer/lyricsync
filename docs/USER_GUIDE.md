@@ -6,6 +6,8 @@ To change how they look, open **Settings…** from the Undertone icon in the men
 
 The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height and curve match what you'll see.
 
+On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automation permission). If that's turned off for an app that's open, a notice under the preview says so, for example "Undertone can't see what Spotify is playing.", and tells you where to turn it on: **System Settings › Privacy & Security › Automation › Undertone**, then switch on **Spotify** (or **Music**). Within about 5 seconds the notice goes away and the lyrics come back, with no restart. The README's [macOS: Automation](../README.md#macos-automation) section has more, including what to do if Undertone is missing from that list.
+
 ## Contents
 
 - [Style](#style)
@@ -146,7 +148,7 @@ A nudge for the song playing now, on top of **All songs**. The buttons move it �
 
 **Reset this song** sets the nudge back to 0.
 
-The buttons are grayed out when nothing is playing.
+The buttons are grayed out when nothing is playing. If Undertone finds no music app open at all (Spotify or Music on a Mac; on Windows, any app in the Windows media controls), the song's name is replaced by **No music app open**. Between two songs the last song stays for a moment, so it doesn't flicker.
 
 You can nudge without opening Settings:
 
