@@ -10,7 +10,7 @@ pub fn visible(show_when: &ShowWhen, is_playing: bool) -> bool {
 }
 
 /// Whether attached overlays are shown: the `showWhen` rule, unless the tray or the
-/// Cmd/Ctrl+Alt+L shortcut has hidden the lyrics.
+/// Cmd/Ctrl+Alt+Shift+L shortcut has hidden the lyrics.
 pub fn shown(show_when: &ShowWhen, is_playing: bool, lyrics_hidden: bool) -> bool {
     visible(show_when, is_playing) && !lyrics_hidden
 }

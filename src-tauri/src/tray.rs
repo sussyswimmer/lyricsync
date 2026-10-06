@@ -461,7 +461,7 @@ mod runtime {
         refresh(app, true);
     }
 
-    /// Tray "Hide lyrics" / "Show lyrics" and Cmd/Ctrl+Alt+L.
+    /// Tray "Hide lyrics" / "Show lyrics" and Cmd/Ctrl+Alt+Shift+L.
     pub fn toggle_lyrics(app: &AppHandle) {
         app.state::<AppState>()
             .lyrics_hidden

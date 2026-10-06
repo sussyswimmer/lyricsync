@@ -12,10 +12,23 @@ pub enum ShortcutAction {
 }
 
 /// Accelerator, action. `]` sits right of `[`, so it moves the lyrics forward (earlier).
+///
+/// Shift is part of every binding, a deliberate change from AGENTS.md's Cmd/Ctrl+Alt. Windows
+/// reports AltGr as Ctrl+Alt, so a Ctrl+Alt hotkey swallows AltGr characters on many layouts
+/// (German `\`, Polish `ł`, French `]`); Microsoft's guidance is to avoid Ctrl+Alt for that
+/// reason. On macOS, ⌘⌥L is Downloads in Finder and Safari and Reformat Code in JetBrains IDEs, and
+/// ⌘⌥[ / ] move or fold lines in Xcode and VS Code. A global shortcut takes the keys from every app,
+/// so it has to stay clear of those.
 pub const BINDINGS: [(&str, ShortcutAction); 3] = [
-    ("CmdOrCtrl+Alt+L", ShortcutAction::ToggleLyrics),
-    ("CmdOrCtrl+Alt+]", ShortcutAction::Nudge(SHORTCUT_NUDGE_MS)),
-    ("CmdOrCtrl+Alt+[", ShortcutAction::Nudge(-SHORTCUT_NUDGE_MS)),
+    ("CmdOrCtrl+Alt+Shift+L", ShortcutAction::ToggleLyrics),
+    (
+        "CmdOrCtrl+Alt+Shift+]",
+        ShortcutAction::Nudge(SHORTCUT_NUDGE_MS),
+    ),
+    (
+        "CmdOrCtrl+Alt+Shift+[",
+        ShortcutAction::Nudge(-SHORTCUT_NUDGE_MS),
+    ),
 ];
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
@@ -72,16 +85,16 @@ mod tests {
     fn bindings_match_the_spec() {
         assert_eq!(
             BINDINGS[0],
-            ("CmdOrCtrl+Alt+L", ShortcutAction::ToggleLyrics)
+            ("CmdOrCtrl+Alt+Shift+L", ShortcutAction::ToggleLyrics)
         );
         // Positive is earlier.
         assert_eq!(
             BINDINGS[1],
-            ("CmdOrCtrl+Alt+]", ShortcutAction::Nudge(50.0))
+            ("CmdOrCtrl+Alt+Shift+]", ShortcutAction::Nudge(50.0))
         );
         assert_eq!(
             BINDINGS[2],
-            ("CmdOrCtrl+Alt+[", ShortcutAction::Nudge(-50.0))
+            ("CmdOrCtrl+Alt+Shift+[", ShortcutAction::Nudge(-50.0))
         );
     }
     #[test]
@@ -107,7 +120,7 @@ mod tests {
             let parsed: Shortcut = accelerator.parse().expect(accelerator);
             assert_eq!(
                 parsed,
-                Shortcut::new(Some(cmd_or_ctrl | Modifiers::ALT), key)
+                Shortcut::new(Some(cmd_or_ctrl | Modifiers::ALT | Modifiers::SHIFT), key)
             );
         }
     }

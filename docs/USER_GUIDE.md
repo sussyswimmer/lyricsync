@@ -121,7 +121,7 @@ How see-through the lyrics are, from 20% to 100% (default 100%). It applies to e
 
 When no song is loaded in your player at all, nothing shows either way.
 
-You can also hide the lyrics completely with **Show/Hide lyrics** in the menu, or ⌘⌥L (Ctrl+Alt+L on Windows).
+You can also hide the lyrics completely with **Show/Hide lyrics** in the menu, or ⌘⌥⇧L (Ctrl+Alt+Shift+L on Windows).
 
 ### Show on
 
@@ -151,7 +151,7 @@ The buttons are grayed out when nothing is playing.
 You can nudge without opening Settings:
 
 - Menu: **Sync ▸ Earlier 100 ms**, **Sync ▸ Later 100 ms**, **Sync ▸ Reset for this song**.
-- Shortcuts: ⌘⌥] for 50 ms earlier and ⌘⌥[ for 50 ms later (Ctrl+Alt+] and Ctrl+Alt+[ on Windows).
+- Shortcuts: ⌘⌥⇧] for 50 ms earlier and ⌘⌥⇧[ for 50 ms later (Ctrl+Alt+Shift+] and Ctrl+Alt+Shift+[ on Windows).
 
 ## Reset to defaults
 
@@ -177,9 +177,9 @@ Shortcuts that work from any app:
 
 | macOS | Windows | What it does |
 |---|---|---|
-| ⌘⌥L | Ctrl+Alt+L | Show or hide the lyrics |
-| ⌘⌥[ | Ctrl+Alt+[ | Nudge this song 50 ms later |
-| ⌘⌥] | Ctrl+Alt+] | Nudge this song 50 ms earlier |
+| ⌘⌥⇧L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
+| ⌘⌥⇧[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
+| ⌘⌥⇧] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
 
 ## Loading, missing and unsynced lyrics
 

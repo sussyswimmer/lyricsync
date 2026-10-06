@@ -63,9 +63,9 @@ These work from any app.
 
 | macOS | Windows | What it does |
 |---|---|---|
-| ⌘⌥L | Ctrl+Alt+L | Show or hide the lyrics |
-| ⌘⌥[ | Ctrl+Alt+[ | Nudge this song 50 ms later |
-| ⌘⌥] | Ctrl+Alt+] | Nudge this song 50 ms earlier |
+| ⌘⌥⇧L | Ctrl+Alt+Shift+L | Show or hide the lyrics |
+| ⌘⌥⇧[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
+| ⌘⌥⇧] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
 
 ### Settings
 
@@ -85,14 +85,14 @@ The settings window has a live preview at the top that plays the current song, o
 Positive offsets make lyrics appear **earlier**; negative offsets make them appear **later**.
 
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
-- **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌘⌥[ / ⌘⌥] (Ctrl+Alt+[ / ] on Windows) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
+- **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌘⌥⇧[ / ⌘⌥⇧] (Ctrl+Alt+Shift+[ / ] on Windows) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
 The song's nudge is added on top of the All songs offset. When a song's lyrics are timed by line only, Undertone estimates where each word falls, so judge the sync by when each line starts.
 
 ### Nothing shows up
 
 1. **Is a song playing?** With **Show lyrics: While playing** (the default), lyrics hide when you pause and when nothing is playing. Choose **Always** to keep them up while paused.
-2. **Are the lyrics hidden?** Use **Show/Hide lyrics** in the menu, or ⌘⌥L / Ctrl+Alt+L.
+2. **Are the lyrics hidden?** Use **Show/Hide lyrics** in the menu, or ⌘⌥⇧L / Ctrl+Alt+Shift+L.
 3. **Is a window covering them?** The lyrics sit under every window, so a maximized or full-screen window hides them. Move windows aside or show the desktop.
 4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls.
 5. **On macOS, was Automation denied?** See [Permissions](#macos-automation).
