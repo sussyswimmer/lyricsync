@@ -1,5 +1,8 @@
-use super::{windows::WindowsSource, MediaSource, Watcher};
+//! One now-playing loop for every OS. A `Backend` connects, takes snapshots and wakes the loop on
+//! OS notifications; the loop owns the 1 s resync, the Watcher and publishing.
+use super::{MediaSource, Watcher};
 use crate::{contract::NOW_PLAYING_EVENT, desktop_layer, state::AppState};
+use async_trait::async_trait;
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -7,31 +10,63 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
 
+#[cfg(target_os = "macos")]
+type Native = super::macos::MacSource;
+#[cfg(target_os = "windows")]
+type Native = super::windows::WindowsSource;
+
+/// One OS's now-playing adapter.
+#[async_trait]
+pub(super) trait Backend: MediaSource + Sized + 'static {
+    /// Names the adapter in logs.
+    const NAME: &'static str;
+    /// A snapshot that takes longer drops the connection; the next loop reconnects.
+    const SNAPSHOT_TIMEOUT: Duration;
+    /// While nothing plays, snapshot on every Nth 1 s tick and rely on wake notifications.
+    const IDLE_TICKS: u32;
+    /// Connects and registers the OS notifications that call `wake.notify_one()`.
+    async fn connect(app: &AppHandle, wake: Arc<Notify>) -> Result<Self, String>;
+    /// True once the OS connection is gone and `connect` must run again.
+    fn is_disconnected(&self) -> bool;
+}
+
 pub fn start(app: &AppHandle) {
-    let app = app.clone();
+    run::<Native>(app.clone());
+}
+fn run<S: Backend>(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let wake = Arc::new(Notify::new());
         let mut watcher = Watcher::default();
-        let mut source: Option<WindowsSource> = None;
+        let mut source: Option<S> = None;
         let started = Instant::now();
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut connection_error = None;
+        let mut idle_ticks = 0;
         loop {
-            tokio::select! {
+            let woken = tokio::select! {
                 _ = interval.tick() => {
                     if let Some(update) = watcher.resync(started.elapsed().as_millis() as u64) {
                         emit(&app, update);
                     }
+                    false
                 },
-                _ = wake.notified() => {}
+                _ = wake.notified() => true,
+            };
+            let playing = watcher
+                .current()
+                .as_ref()
+                .is_some_and(|track| track.is_playing);
+            if !woken && !playing && source.is_some() {
+                idle_ticks += 1;
+                if idle_ticks < S::IDLE_TICKS {
+                    continue;
+                }
             }
+            idle_ticks = 0;
             if source.is_none() {
-                match tokio::time::timeout(
-                    Duration::from_secs(3),
-                    WindowsSource::connect(wake.clone()),
-                )
-                .await
+                match tokio::time::timeout(Duration::from_secs(3), S::connect(&app, wake.clone()))
+                    .await
                 {
                     Ok(Ok(connected)) => {
                         source = Some(connected);
@@ -39,11 +74,11 @@ pub fn start(app: &AppHandle) {
                     }
                     result => {
                         let message = match result {
-                            Ok(Err(error)) => error.to_string(),
-                            _ => "SMTC connection timed out".into(),
+                            Ok(Err(error)) => error,
+                            _ => format!("{} connection timed out", S::NAME),
                         };
                         if connection_error.as_ref() != Some(&message) {
-                            eprintln!("SMTC connection unavailable: {message}");
+                            eprintln!("{} connection unavailable: {message}", S::NAME);
                         }
                         connection_error = Some(message);
                         publish(
@@ -61,7 +96,7 @@ pub fn start(app: &AppHandle) {
                 continue;
             };
             let snapshot = {
-                let pending = tokio::time::timeout(Duration::from_secs(2), connected.snapshot());
+                let pending = tokio::time::timeout(S::SNAPSHOT_TIMEOUT, connected.snapshot());
                 tokio::pin!(pending);
                 loop {
                     tokio::select! {

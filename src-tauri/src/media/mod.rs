@@ -1,26 +1,18 @@
 //! Platform-independent playback policy; platform adapters supply timestamped snapshots.
+pub mod applescript;
 pub mod artwork;
-#[cfg(all(feature = "desktop", target_os = "windows"))]
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+mod macos;
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 mod runtime;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 mod windows;
-#[cfg(all(feature = "desktop", target_os = "windows"))]
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub use runtime::start;
-
-/// macOS now playing (X2, second OS). Until it lands nothing is playing.
-#[cfg(all(feature = "desktop", target_os = "macos"))]
-pub fn start(app: &tauri::AppHandle) {
-    use tauri::Emitter;
-    if let Err(error) = app.emit(
-        crate::contract::NOW_PLAYING_EVENT,
-        Option::<crate::contract::NowPlaying>::None,
-    ) {
-        eprintln!("now-playing event: {error}");
-    }
-}
 
 use crate::contract::{NowPlaying, Source};
 use async_trait::async_trait;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct RawTrack {
@@ -75,6 +67,15 @@ impl RawTrack {
             artwork: self.artwork,
         })
     }
+}
+
+/// Wall-clock read time for `sampledAt`, in epoch milliseconds.
+pub fn epoch_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 /// WinRT DateTime uses 100 ns ticks since 1601, not Unix time. Zero/unset timestamps use read time.

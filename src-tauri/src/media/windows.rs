@@ -1,6 +1,7 @@
 //! SMTC reads and subscriptions run on Tauri's Tokio runtime, never on the window thread.
 use super::{
-    artwork, select_candidate, track_key, windows_sample_time, Candidate, MediaSource, RawTrack,
+    artwork, epoch_ms, runtime::Backend, select_candidate, track_key, windows_sample_time,
+    Candidate, MediaSource, RawTrack,
 };
 use crate::contract::Source;
 use async_trait::async_trait;
@@ -10,8 +11,9 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
+use tauri::AppHandle;
 use tokio::sync::Notify;
 use windows::{
     core::{AgileReference, Interface},
@@ -77,8 +79,21 @@ impl Drop for WindowsSource {
         }
     }
 }
+#[async_trait]
+impl Backend for WindowsSource {
+    const NAME: &'static str = "SMTC";
+    const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+    // SMTC reads are local and cheap, so every tick snapshots, playing or not.
+    const IDLE_TICKS: u32 = 1;
+    async fn connect(_app: &AppHandle, wake: Arc<Notify>) -> Result<Self, String> {
+        Self::open(wake).await.map_err(|error| error.to_string())
+    }
+    fn is_disconnected(&self) -> bool {
+        self.disconnected.load(Ordering::Acquire)
+    }
+}
 impl WindowsSource {
-    pub async fn connect(notify: Arc<Notify>) -> windows::core::Result<Self> {
+    async fn open(notify: Arc<Notify>) -> windows::core::Result<Self> {
         // windows-rs initializes its WinRT factory in the MTA when called from a Tokio worker.
         let manager = SessionManager::RequestAsync()?.await?;
         let mut source = Self {
@@ -109,9 +124,6 @@ impl WindowsSource {
             }),
         )?);
         Ok(source)
-    }
-    pub fn is_disconnected(&self) -> bool {
-        self.disconnected.load(Ordering::Acquire)
     }
     fn subscribe(&self, sessions: &[Session]) -> windows::core::Result<()> {
         let mut subscriptions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
@@ -354,11 +366,4 @@ async fn read_thumbnail(
     let mut bytes = vec![0; count as usize];
     reader.ReadBytes(&mut bytes)?;
     Ok(bytes)
-}
-fn epoch_ms() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1000.0
 }
