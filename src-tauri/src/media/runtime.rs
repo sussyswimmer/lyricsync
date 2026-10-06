@@ -139,6 +139,13 @@ fn publish(
     elapsed_ms: u64,
 ) {
     let update = watcher.update(raw, elapsed_ms);
+    // Register metadata before exposing the track through either the initial-state
+    // command or the event. A webview may query lyrics immediately after either.
+    if let Some(update) = update.as_ref().filter(|update| update.track_changed) {
+        if let Some(track) = update.now_playing.as_ref() {
+            crate::lyrics::runtime::track_changed(app, track);
+        }
+    }
     let state = app.state::<AppState>();
     *state.now_playing.lock().unwrap_or_else(|e| e.into_inner()) = watcher.current().clone();
     if let Some(update) = update {
@@ -184,11 +191,6 @@ fn emit(app: &AppHandle, update: super::Update) {
             .as_ref()
             .is_some_and(|track| track.is_playing),
     );
-    if update.track_changed {
-        if let Some(track) = update.now_playing.as_ref() {
-            crate::lyrics::runtime::track_changed(app, track);
-        }
-    }
     if let Err(error) = app.emit(NOW_PLAYING_EVENT, &update.now_playing) {
         eprintln!("now-playing event: {error}");
     }

@@ -102,12 +102,12 @@ with timeout of 2 seconds
 		set s to player state
 		if s is stopped then return "stopped"
 		if s is playing then
-			set st to "playing"
+			set stateText to "playing"
 		else
-			set st to "paused"
+			set stateText to "paused"
 		end if
 		set t to current track
-		return st & d & my txt(name of t) & d & my txt(artist of t) & d & my txt(album of t) & d & my txt(duration of t) & d & my txt(player position) & d & my txt(artwork url of t)
+		return stateText & d & my txt(name of t) & d & my txt(artist of t) & d & my txt(album of t) & d & my txt(duration of t) & d & my txt(player position) & d & my txt(artwork url of t)
 	end tell
 end timeout
 "#;
@@ -127,14 +127,14 @@ with timeout of 2 seconds
 		set s to player state
 		if s is stopped then return "stopped"
 		if s is playing then
-			set st to "playing"
+			set stateText to "playing"
 		else if s is paused then
-			set st to "paused"
+			set stateText to "paused"
 		else
-			set st to "other"
+			set stateText to "other"
 		end if
 		set t to current track
-		return st & d & my txt(name of t) & d & my txt(artist of t) & d & my txt(album of t) & d & my txt(duration of t) & d & my txt(player position)
+		return stateText & d & my txt(name of t) & d & my txt(artist of t) & d & my txt(album of t) & d & my txt(duration of t) & d & my txt(player position)
 	end tell
 end timeout
 "#;
@@ -641,6 +641,52 @@ mod tests {
         assert_eq!(midpoint(1000.0, 1000.0), 1000.0);
         // The wall clock stepped back during the call.
         assert_eq!(midpoint(1000.0, 900.0), 900.0);
+    }
+    /// AppleScript reserves its ordinal suffixes (`1st`, `2nd`, `3rd`, `4th`) along with its
+    /// keywords. One as a variable name is a syntax error (-2741) that no Rust check sees.
+    #[test]
+    fn scripts_use_no_reserved_word_as_a_variable() {
+        const RESERVED: [&str; 40] = [
+            "st", "nd", "rd", "th", "it", "me", "my", "its", "the", "to", "of", "in", "on", "at",
+            "by", "as", "is", "if", "or", "and", "not", "end", "get", "set", "ref", "mod", "div",
+            "for", "from", "into", "with", "tell", "then", "else", "some", "every", "first",
+            "last", "front", "back",
+        ];
+        for script in [SPOTIFY_READ, MUSIC_READ, MUSIC_ARTWORK] {
+            for line in script.lines() {
+                let mut words = line.split_whitespace();
+                if words.next() == Some("set") {
+                    let name = words.next().unwrap_or_default();
+                    assert!(!RESERVED.contains(&name), "reserved word in: {line}");
+                }
+            }
+        }
+    }
+    /// The real compiler, on a Mac. Music ships with macOS; Spotify's script needs Spotify's own
+    /// dictionary, so it is checked only where Spotify is installed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scripts_compile_with_osacompile() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut scripts = vec![("music-read", MUSIC_READ), ("music-artwork", MUSIC_ARTWORK)];
+        if std::path::Path::new("/Applications/Spotify.app").exists() {
+            scripts.push(("spotify-read", SPOTIFY_READ));
+        }
+        for (name, source) in scripts {
+            let input = directory.path().join(format!("{name}.applescript"));
+            std::fs::write(&input, source).unwrap();
+            let output = std::process::Command::new("/usr/bin/osacompile")
+                .arg("-o")
+                .arg(directory.path().join(format!("{name}.scpt")))
+                .arg(&input)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
     #[test]
     fn apple_event_errors_are_classified() {

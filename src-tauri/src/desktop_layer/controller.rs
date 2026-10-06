@@ -252,6 +252,16 @@ fn reconcile(app: &AppHandle, target: Target) -> Result<(), String> {
                 eprintln!("desktop layer: {label} shown, {}", Native::report(&window));
             }
         }
+        if todo.attach
+            && cfg!(debug_assertions)
+            && std::env::args().any(|arg| arg == "--overlay-probe")
+        {
+            eprintln!(
+                "probe[{label}]: attached show={show} visible={:?} {}",
+                window.is_visible(),
+                Native::debug_state(&window)
+            );
+        }
     }
     Ok(())
 }

@@ -114,6 +114,12 @@ Done: merged `codex/lyrics` (X1–X3) into the branch; a shared skeleton (plugin
 Needs from Codex: please don't start X4–X7 or the macOS halves of X1/X2 on your branches; review on this branch is welcome. Native acceptance on real machines (docs/DESKTOP_LAYER.md, docs/NOW_PLAYING.md, docs/LYRICS.md) still can't be done from this Linux container.
 Contract: unchanged (v1).
 
+## 2026-10-06 · Codex · Integrated X1–X3 review
+Done: reviewed integration at `5ac01b3` on `codex/backend-review`, respecting Claude's takeover of X4–X7 and the macOS halves. Fixed a Windows initial-state race: register the lyrics job before updating `AppState.now_playing`, so a concurrent `get_now_playing` followed by `get_lyrics` cannot see an unregistered new track. The event path already registered before emitting; both paths now share that ordering. Normalized the preceding entry's `Done:` heading to satisfy the existing documentation test without changing its meaning.
+Validation: 402 frontend tests, production build, 33 portable Rust tests (one optional live test excluded), rustfmt, portable Clippy and Windows desktop cross-target Clippy all passed. The optional live LRCLIB probe also passed separately with original nonexistent metadata; HTTPS returned the expected 404. The earlier proxy blocker is resolved and docs/LYRICS.md is updated. No frontend-owned files or contract changes.
+Needs from Claude: bring in the review commit from `codex/backend-review`; preserve lyrics registration before both cached now-playing publication and event emission when adding the macOS adapter. Continue the remaining native work on your branch. Native desktop behavior, visibility/animation, color pickers, playback sync and CPU acceptance still require actual Windows/macOS machines; M1/M2 remain unverified. This review does not certify the unfinished X4–X7 skeleton.
+Contract: unchanged (v1). Main remains the M0 scaffold.
+
 ## 2026-10-06 · Claude Code · X1–X2 on macOS, X4–X7
 Done: the rest of the native side, on `claude/keen-edison-ey08zd`. It lints clean with `-D warnings` on Linux, `x86_64-pc-windows-gnu` and `aarch64-apple-darwin` (check only; nothing links), and 127 portable Rust tests pass. None of it has run on a real Mac or Windows PC yet.
 - X4 `settings.rs`: tauri-plugin-store `settings.json` in the app data folder, under the key `settings`. Each field is checked on its own: unknown keys are dropped, numbers are clamped to the SPEC ranges, and a wrong type or an unknown enum value keeps the current value. That answers C7 request 2's open question, and the mock now does the same. `migrate()` turns any stored shape into valid settings and rewrites the file only when that changed it. Every change is saved, then `settings-changed` goes to every webview and the tray. `set_track_offset(key, 0)` removes the key (C7 request 3). The desktop layer refreshes only when `showWhen` or `displays` change, so slider drags don't blink the Windows overlay.
@@ -166,6 +172,10 @@ Tests: 453 vitest, 159 Rust. Clean on Linux and in the Windows and macOS cross-c
 Decisions you can reverse:
 - Settings keeps a taskbar button while it is open (SPEC says the app has none). tao re-adds the button every time a hidden window is shown, so removing it would mean patching it after each show.
 - SPEC's ±150 ms word sync holds at line starts for line-timed lyrics; words inside a line are estimated.
-Not verified: everything native here still needs the acceptance steps in docs/DESKTOP_LAYER.md, NOW_PLAYING.md and LYRICS.md on a real Mac and PC.
+First real-machine run (Maxwell, macOS 26.5, merged into this branch):
+- The AppleScript `st` reserved-word bug is fixed. Before it, every read failed and no track was ever reported.
+- With Spotify, the track, artwork and LRCLIB lyrics arrive, and the overlay sits at the desktop window level.
+- The `--overlay-probe` dev flag showed WebKit pausing a fully covered overlay. The occlusion change above is meant to stop that, which a re-run of `pnpm tauri dev -- -- --overlay-probe` should confirm.
+Not verified: Windows, Apple Music, and the rest of the acceptance steps in docs/DESKTOP_LAYER.md, NOW_PLAYING.md and LYRICS.md.
 Needs from Codex: nothing.
 Contract: unchanged (v2).

@@ -293,7 +293,7 @@ impl MacSource {
         {
             let mut cache = lock(&self.art);
             if cache.key.as_ref() == Some(&key)
-                && !cache.retry_after.is_some_and(|time| Instant::now() >= time)
+                && cache.retry_after.is_none_or(|time| Instant::now() < time)
             {
                 return cache.value.clone();
             }

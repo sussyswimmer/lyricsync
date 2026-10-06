@@ -80,3 +80,10 @@ pub fn show_settings(app: &AppHandle) -> Result<(), String> {
     crate::desktop_layer::set_shown(&window, true)?;
     window.set_focus().map_err(|e| e.to_string())
 }
+/// Debug `--overlay-probe`: each webview reports its visibility and frame rate (see `lib.rs`).
+#[tauri::command]
+pub fn debug_probe(webview: tauri::Webview, message: String) {
+    if cfg!(debug_assertions) {
+        eprintln!("probe[{}]: {message}", webview.label());
+    }
+}
