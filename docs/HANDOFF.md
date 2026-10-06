@@ -125,13 +125,13 @@ Done: the rest of the native side, on `claude/keen-edison-ey08zd`. It lints clea
 
 CI: the first run on this branch ([run 37407943135](https://github.com/sussyswimmer/lyricsync/actions/runs/37407943135)) is green on GitHub's `macos-latest` and `windows-latest`: fmt, clippy `-D warnings` and `cargo test --features desktop` (the MSVC-embedded Common Controls manifest in `build.rs` lets the desktop test executables load on Windows), plus an unsigned universal `.dmg` and an NSIS `.exe` as run artifacts.
 Not verified: the native code now builds, links and passes its unit tests on both OSes, but no one has run the app on a real Mac or Windows PC yet. The acceptance steps are in docs/DESKTOP_LAYER.md, docs/NOW_PLAYING.md and docs/INSTALL.md.
-Open: (shortcuts and `media-status` are resolved in the next entry.) The app icon is an original design (`src-tauri/icons/app-icon.svg`, regenerate with `pnpm tauri icon`). Contract v2 `media-status` (C7 request 7) isn't started; Automation denial is only logged.
+Open: (shortcuts and `media-status` are resolved in the next entry.) The app icon is an original design (`src-tauri/icons/app-icon.svg`, regenerate with `pnpm tauri icon`).
 Needs from Codex: nothing. Review and a native acceptance pass on real machines are welcome.
 Contract: unchanged (v1).
 
 ## 2026-10-06 · Claude Code · Shortcuts with Shift, contract v2 `media-status`
 Done: the two items left open above.
-- Every global shortcut now includes Shift: ⌘⌥⇧L / Ctrl+Alt+Shift+L, and `[` / `]` for the ±50 ms nudge. This deliberately departs from AGENTS.md's Cmd/Ctrl+Alt. Windows reports AltGr as Ctrl+Alt, so Ctrl+Alt hotkeys swallowed AltGr characters (German \, Polish ł, French ]). On macOS, ⌘⌥L is Downloads in Finder and Safari and Reformat Code in JetBrains IDEs, and ⌘⌥[ / ] move or fold lines in Xcode and VS Code. README and USER_GUIDE updated.
+- Every global shortcut now includes Shift: ⌘⌥⇧L / Ctrl+Alt+Shift+L, and `[` / `]` for the ±50 ms nudge. This deliberately departs from AGENTS.md's Cmd/Ctrl+Alt. Windows reports AltGr as Ctrl+Alt, so Ctrl+Alt hotkeys swallowed AltGr characters (German \, Polish ł, French ]). On macOS, ⌘⌥L is Downloads in Finder and Safari and Reformat Code in JetBrains IDEs, and ⌘⌥[ / ] move or fold lines in Xcode and VS Code. Adding Shift reduces the clashes but doesn't remove them: AltGr+Shift still types on some layouts (Polish Ł), and JetBrains uses Ctrl/⌘+Alt+Shift+L for Reformat File. The full fix would be configurable shortcuts. README and USER_GUIDE updated.
 - Contract v2 (C7 request 7): the `media-status` event and the `get_media_status()` command carry `MediaStatus { source, problem: "automation-denied" | "no-player" | null }`. SPEC.md lists the rules. `Settings.version` stays 1 (Rust now has its own `SETTINGS_VERSION`), so stored settings load unchanged.
   - macOS fills it from the running players and their Automation answer. That answer is now kept for the whole process, so a reconnect neither asks again nor hides a denial for a moment.
   - Windows counts any media session as a player.

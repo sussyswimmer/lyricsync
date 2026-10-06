@@ -17,8 +17,9 @@ pub enum ShortcutAction {
 /// reports AltGr as Ctrl+Alt, so a Ctrl+Alt hotkey swallows AltGr characters on many layouts
 /// (German `\`, Polish `ł`, French `]`); Microsoft's guidance is to avoid Ctrl+Alt for that
 /// reason. On macOS, ⌘⌥L is Downloads in Finder and Safari and Reformat Code in JetBrains IDEs, and
-/// ⌘⌥[ / ] move or fold lines in Xcode and VS Code. A global shortcut takes the keys from every app,
-/// so it has to stay clear of those.
+/// ⌘⌥[ / ] move or fold lines in Xcode and VS Code. A global shortcut takes the keys from every app.
+/// Shift narrows the clash, it can't remove it: AltGr+Shift still types on some layouts (Polish
+/// `Ł`), and JetBrains IDEs use Ctrl/⌘+Alt+Shift+L for their Reformat File dialog.
 pub const BINDINGS: [(&str, ShortcutAction); 3] = [
     ("CmdOrCtrl+Alt+Shift+L", ShortcutAction::ToggleLyrics),
     (

@@ -141,3 +141,43 @@ async fn http_service_emits_results_and_restarts_offline_from_disk() {
     assert_eq!(cached.source, LyricsSource::Cache);
     assert_eq!(cached.synced, ready.synced);
 }
+#[tokio::test]
+async fn untimed_or_unnamed_tracks_are_not_found_without_a_request() {
+    let (client, requests, server) = server(Vec::new()).await;
+    let mut cases = Vec::new();
+    for change in [
+        |t: &mut Track| t.duration_ms = 0.0,
+        |t: &mut Track| t.duration_ms = 999.0,
+        |t: &mut Track| t.artist = "  ".into(),
+        |t: &mut Track| t.title = String::new(),
+    ] {
+        let mut case = track();
+        change(&mut case);
+        cases.push(case);
+    }
+    for case in &cases {
+        assert_eq!(
+            client.lookup(case).await.unwrap().status,
+            LyricsStatus::NotFound
+        );
+    }
+    let mut broken = track();
+    broken.duration_ms = f64::NAN;
+    assert!(client.lookup(&broken).await.is_err());
+    server.await.unwrap();
+    assert!(requests.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn a_rejected_exact_lookup_still_searches() {
+    let (client, requests, server) = server(vec![
+        (400, "{}".into()),
+        (200, serde_json::to_string(&vec![record()]).unwrap()),
+    ])
+    .await;
+    assert_eq!(
+        client.lookup(&track()).await.unwrap().status,
+        LyricsStatus::Found
+    );
+    server.await.unwrap();
+    assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
+}

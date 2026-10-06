@@ -6,6 +6,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+/// LRCLIB answers HTTP 400 for a duration under one second.
+const MIN_DURATION_MS: f64 = 1000.0;
 pub const USER_AGENT: &str = "Undertone/0.1 (+https://github.com/sussyswimmer/lyricsync)";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,7 +84,14 @@ impl LrcLib {
             .send()
             .await
             .map_err(|e| e.to_string())?;
-        if allow_404 && response.status() == StatusCode::NOT_FOUND {
+        // /api/get answers 404 for no match, and 400 for metadata it won't match (a duration it
+        // rejects): either way there is no exact record, and search still gets its turn.
+        if allow_404
+            && matches!(
+                response.status(),
+                StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+            )
+        {
             return Ok(None);
         }
         if !response.status().is_success() {
@@ -124,12 +133,16 @@ impl LrcLib {
 #[async_trait]
 impl Provider for LrcLib {
     async fn lookup(&self, track: &Track) -> Result<Lyrics, String> {
-        if !track.duration_ms.is_finite()
-            || track.duration_ms < 0.0
+        if !track.duration_ms.is_finite() || track.duration_ms < 0.0 {
+            return Err("track metadata is incomplete".into());
+        }
+        // A stream, an ad or a podcast often has no length, title or artist. LRCLIB can't match it
+        // (and rejects a duration under a second), so it has no lyrics rather than an error chip.
+        if track.duration_ms < MIN_DURATION_MS
             || track.title.trim().is_empty()
             || track.artist.trim().is_empty()
         {
-            return Err("track metadata is incomplete".into());
+            return Ok(empty(&track.key, LyricsStatus::NotFound));
         }
         let exact: Option<Record> = self
             .json(
