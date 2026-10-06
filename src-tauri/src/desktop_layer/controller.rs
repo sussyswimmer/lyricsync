@@ -176,6 +176,13 @@ fn reattach_all(app: &AppHandle, target: Target) -> Result<(), String> {
         } else if !Native::HIDE_WHILE_ATTACHING {
             window.hide().map_err(|e| e.to_string())?;
         }
+        if cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--overlay-probe") {
+            eprintln!(
+                "probe[{label}]: attached show={show} visible={:?} {}",
+                window.is_visible(),
+                Native::debug_state(&window)
+            );
+        }
     }
     Ok(())
 }

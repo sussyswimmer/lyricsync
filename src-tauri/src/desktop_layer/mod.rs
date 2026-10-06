@@ -88,6 +88,10 @@ pub trait DesktopLayer {
     fn detach(window: &tauri::WebviewWindow) -> Result<(), String>;
     /// One line for `undertone --diagnose`.
     fn describe(target: Self::Target) -> String;
+    /// Debug `--overlay-probe`: the native window state after an attach.
+    fn debug_state(_window: &tauri::WebviewWindow) -> String {
+        String::new()
+    }
 }
 
 #[cfg(test)]

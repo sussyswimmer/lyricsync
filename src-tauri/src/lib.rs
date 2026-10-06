@@ -27,6 +27,17 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(state::AppState::default())
         .on_page_load(|webview, payload| {
+            // Debug `--overlay-probe`: every 2 s each webview prints whether the engine calls it
+            // visible and how many frames it was given, whatever the renderer's own loop does.
+            // It answers on a real machine whether a covered desktop-layer overlay keeps animating.
+            if cfg!(debug_assertions)
+                && std::env::args().any(|arg| arg == "--overlay-probe")
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                if let Err(error) = webview.eval("(()=>{let f=0;const t=()=>{f++;requestAnimationFrame(t)};requestAnimationFrame(t);setInterval(()=>{window.__TAURI_INTERNALS__.invoke('debug_probe',{message:`visibility=${document.visibilityState} frames/2s=${f} nodes=${document.querySelectorAll('#app *').length} text=${(document.getElementById('app')?.textContent||'').trim().slice(0,60)}`});f=0},2000)})();") {
+                    eprintln!("overlay probe: {error}");
+                }
+            }
             // Debug `--desktop-layer-test`: a fixed line on every overlay, to check the layer by hand.
             if cfg!(debug_assertions)
                 && std::env::args().any(|arg| arg == "--desktop-layer-test")
@@ -73,6 +84,7 @@ pub fn run() {
             commands::set_track_offset,
             commands::open_settings,
             commands::quit,
+            commands::debug_probe,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Undertone")

@@ -146,6 +146,20 @@ impl DesktopLayer for MacDesktop {
         Ok(())
     }
 
+    fn debug_state(window: &WebviewWindow) -> String {
+        match ns_window(window) {
+            Ok((_, ns_window)) => format!(
+                "level={} nsVisible={} occlusion={:#x} alpha={} frame={:?}",
+                ns_window.level(),
+                ns_window.isVisible(),
+                ns_window.occlusionState().0,
+                ns_window.alphaValue(),
+                rect(ns_window.frame()),
+            ),
+            Err(error) => error,
+        }
+    }
+
     fn describe(_: ()) -> String {
         format!(
             "desktop window level {} on every Space; no handles to find",

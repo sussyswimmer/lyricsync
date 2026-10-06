@@ -61,3 +61,10 @@ pub fn show_settings(app: &AppHandle) -> Result<(), String> {
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())
 }
+/// Debug `--overlay-probe`: each webview reports its visibility and frame rate (see `lib.rs`).
+#[tauri::command]
+pub fn debug_probe(webview: tauri::Webview, message: String) {
+    if cfg!(debug_assertions) {
+        eprintln!("probe[{}]: {message}", webview.label());
+    }
+}
