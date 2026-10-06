@@ -1,3 +1,4 @@
+// Release builds open no console window on Windows; `--diagnose` attaches to its terminal's own.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 fn main() {
     // Before the app (and its single-instance handoff) starts, so it works while Undertone is open.
