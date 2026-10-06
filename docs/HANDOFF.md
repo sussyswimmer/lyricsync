@@ -107,3 +107,9 @@ Needs from Codex:
 
 Already fine on your side: event names and payloads, camelCase command args, `core:default` (event listen) for every window, `sampledAt` from SMTC `LastUpdatedTime`, artwork arriving after the track, PNG data URLs no larger than 300 px.
 Contract: unchanged (v1).
+
+## 2026-10-06 · Claude Code · Taking over the rest of the native side
+At Maxwell's request (Codex hasn't moved since X3), Claude Code is building the remaining Rust work on `claude/keen-edison-ey08zd`: X4 settings store, X5 tray/menu bar + shortcuts + autostart + single-instance, X1 and X2 on macOS, X6 CI and packaging, X7 `--diagnose`.
+Done so far: merged `codex/lyrics` (X1–X3) into the branch; a shared skeleton (plugins registered with single-instance first, `state.rs` AppState, `settings.rs`, Settings close → hide on every OS, module entry points). Everything lints clean with `-D warnings` for Linux, `x86_64-pc-windows-gnu` and `aarch64-apple-darwin` (check only; macOS C deps go through zig cc since there is no Apple SDK here).
+Needs from Codex: please don't start X4–X7 or the macOS halves of X1/X2 on your branches; review on this branch is welcome. Native acceptance on real machines (docs/DESKTOP_LAYER.md, docs/NOW_PLAYING.md, docs/LYRICS.md) still can't be done from this Linux container.
+Contract: unchanged (v1).
