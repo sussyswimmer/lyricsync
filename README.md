@@ -8,23 +8,13 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
 
-> **Status: pre-release.** The lyric renderer and settings run in a browser against a mock player. The native side (desktop layer, now playing, LRCLIB, tray, installers) is still being built. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
+> **Status: pre-release.** Every part of v1 is built, but the desktop app hasn't been tested on a real Mac or Windows PC yet, so expect rough edges. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## Install
 
-Download the latest build from [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases):
+Download the latest build from [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases): the `.dmg` for macOS (one universal build for Apple silicon and Intel Macs) or the `-setup.exe` for Windows.
 
-- **macOS:** the `.dmg`. One universal build covers Apple silicon and Intel Macs. Open it and drag Undertone to Applications.
-- **Windows:** the `-setup.exe` (NSIS installer).
-
-Builds aren't code-signed yet, so macOS and Windows warn you the first time you open Undertone. To get past the warning:
-
-- **macOS 14 (Sonoma):** in Applications, Control-click (or right-click) Undertone, choose **Open**, then click **Open** in the warning.
-- **macOS 15 (Sequoia) and later:** open Undertone once and close the warning. Then go to **System Settings → Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next to the message about Undertone. Click **Open Anyway** again and enter your password. This also works on macOS 14.
-- **If macOS says Undertone "is damaged and can't be opened":** run `xattr -dr com.apple.quarantine /Applications/Undertone.app` in Terminal, then open it again.
-- **Windows:** when SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**.
-
-You only need to do this once for each version you download.
+Builds aren't code-signed yet, so macOS and Windows warn you the first time you open Undertone. In short: on macOS, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**; on Windows, click **More info**, then **Run anyway**. **[docs/INSTALL.md](docs/INSTALL.md)** has the full steps for each macOS version and Windows, the fix for "Undertone is damaged", WebView2, test builds from CI, updating and uninstalling.
 
 After launch, Undertone shows up as an icon in the menu bar (macOS) or the system tray (Windows). Start a song and the lyrics appear on your desktop.
 
@@ -61,7 +51,9 @@ Undertone sends the title, artist, album and length of the current song to `lrcl
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping the cache. |
 | **Settings…** | Opens the settings window. |
 | **Launch at login** | Starts Undertone when you log in. |
-| **Quit** | Quits Undertone. |
+| **Quit Undertone** | Quits Undertone. |
+
+**Sync** and **Refetch lyrics** are greyed out while no song is loaded. **Reset for this song** shows the current nudge, for example "Reset for this song (150 ms earlier)".
 
 Opening Undertone again while it's already running (from Applications or the Start menu) opens the settings window.
 
@@ -116,10 +108,10 @@ Undertone reattaches the lyrics to the desktop by itself when Windows Explorer r
 
 ### Reporting a bug
 
-Run Undertone from a terminal with `--diagnose`. It prints the media sources it detected, the current track, the LRCLIB match with its length difference, and the desktop-layer window handles. Paste that output into your bug report.
+Run Undertone with `--diagnose`. It reports what Undertone sees right now: the media sources it found and which one it picked, the current track, the LRCLIB match with its length difference, your settings, the lyrics cache, your displays and the desktop-layer window handles. It never includes lyric text, and it works while Undertone is running. The report is also saved to your temp folder as `undertone-diagnose-<date>-<time>.txt`, with the path on its last line. Attach that file to your bug report.
 
-- **macOS** (Terminal): `/Applications/Undertone.app/Contents/MacOS/undertone --diagnose`
-- **Windows** (PowerShell): find the folder with `undertone.exe` (right-click Undertone in the Start menu and choose **Open file location**; if that opens a folder of shortcuts, do it again on the Undertone shortcut), open PowerShell there and run `.\undertone.exe --diagnose`.
+- **macOS** (Terminal): `open -n -a Undertone --args --diagnose`. The report opens in TextEdit. Running `/Applications/Undertone.app/Contents/MacOS/undertone --diagnose` prints it in Terminal instead, but then macOS checks Terminal's Automation permission rather than Undertone's, so the Automation lines may not match what the app sees.
+- **Windows** (PowerShell): find the folder with `undertone.exe` (right-click Undertone in the Start menu and choose **Open file location**; if that opens a folder of shortcuts, do it again on the Undertone shortcut), open PowerShell there and run `.\undertone.exe --diagnose | Out-Host`, so PowerShell waits for the report. In Command Prompt, use `undertone.exe --diagnose | more`. Started from a shortcut, the report opens in your default text editor.
 
 ## Development
 
@@ -138,7 +130,7 @@ pnpm tauri dev            # the desktop app
 
 `pnpm tauri dev` enables the `desktop` Cargo feature. Native checks must use it too: run `cargo check --features desktop` and `cargo clippy --features desktop -- -D warnings` from `src-tauri`. Linux can run the frontend and the portable Rust tests, but it isn't a supported desktop target. In cloud tasks, reuse the existing checkout; don't create a worktree unless asked.
 
-On `main` the Rust commands are still the M0 stubs: settings live in memory, now playing is `null` and lyrics lookup reports `error`. The Windows media watcher (X2) and the LRCLIB service (X3) are on Codex's branches until they pass native checks, and settings persistence (X4) comes after. The frontend listens to events first, then reads the initial settings and playback through commands.
+The Rust core in `src-tauri/src` has `media/` (now playing: the Windows media session, and AppleScript for Spotify and Music on macOS), `lyrics/` (LRCLIB and the cache), `settings.rs` (the settings store), `desktop_layer/`, `tray.rs`, `shortcuts.rs` and `diagnose.rs` (`--diagnose`). Native code builds only for Windows and macOS with the `desktop` feature; the decisions behind it are plain functions tested on every OS. The frontend listens to events first, then reads the initial settings and playback through commands.
 
 ### Frontend in a browser
 

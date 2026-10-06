@@ -1,6 +1,6 @@
 # LRCLIB lyrics service (X3)
 
-`codex/lyrics` builds on the X1/X2 backend branches. The service replaces the lyrics command stubs and starts lookup on Windows playback track changes. The shared contract remains v1. Native end-to-end acceptance and macOS media integration are still pending; M2 is not complete.
+The lyrics service (Codex, `codex/lyrics`, now merged) answers the lyrics commands and starts a lookup on every track change from either OS's now-playing adapter. The shared contract remains v1. Native end-to-end acceptance is still pending; M2 is not complete.
 
 ## Lookup and matching
 

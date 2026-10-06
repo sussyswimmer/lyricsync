@@ -6,11 +6,9 @@ pub mod diagnose;
 pub mod lyrics;
 pub mod media;
 pub mod settings;
-#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
-mod shortcuts;
+pub mod shortcuts;
 pub mod state;
-#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
-mod tray;
+pub mod tray;
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
@@ -28,14 +26,14 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(state::AppState::default())
-        .on_page_load(|_webview, _payload| {
-            #[cfg(target_os = "windows")]
+        .on_page_load(|webview, payload| {
+            // Debug `--desktop-layer-test`: a fixed line on every overlay, to check the layer by hand.
             if cfg!(debug_assertions)
                 && std::env::args().any(|arg| arg == "--desktop-layer-test")
-                && (_webview.label() == "overlay" || _webview.label().starts_with("overlay-"))
-                && matches!(_payload.event(), tauri::webview::PageLoadEvent::Finished)
+                && desktop_layer::is_overlay(webview.label())
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
-                if let Err(error) = _webview.eval("document.body.style.cssText='margin:0;background:transparent;color:#f2a65a;font:48px sans-serif;display:grid;place-items:center;height:100vh';document.getElementById('app').textContent='Undertone desktop layer — drag a folder over this text';") {
+                if let Err(error) = webview.eval("document.body.style.cssText='margin:0;background:transparent;color:#f2a65a;font:48px sans-serif;display:grid;place-items:center;height:100vh';document.getElementById('app').textContent='Undertone desktop layer — drag a folder over this text';") {
                     eprintln!("desktop test page: {error}");
                 }
             }
@@ -75,6 +73,21 @@ pub fn run() {
             commands::open_settings,
             commands::quit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Undertone");
+        .build(tauri::generate_context!())
+        .expect("error while building Undertone")
+        .run(|_app, event| match event {
+            // A tray app keeps running with no window open; only Quit (an explicit exit code) ends it.
+            tauri::RunEvent::ExitRequested {
+                code: None, api, ..
+            } => api.prevent_exit(),
+            // macOS: opening Undertone again while it runs reaches this instance as a reopen, not a
+            // second launch, so single-instance never sees it. Same answer: show Settings.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                if let Err(error) = commands::show_settings(_app) {
+                    eprintln!("reopen: {error}");
+                }
+            }
+            _ => {}
+        });
 }

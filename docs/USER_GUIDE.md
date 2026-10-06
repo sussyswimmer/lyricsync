@@ -171,7 +171,7 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
 | **Launch at login** | Starts Undertone when you log in |
-| **Quit** | Quits Undertone |
+| **Quit Undertone** | Quits Undertone |
 
 Shortcuts that work from any app:
 
