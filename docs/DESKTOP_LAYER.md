@@ -43,4 +43,4 @@ On macOS 14 and 15, with the same command, verify:
 - Opening Settings and toggling play/pause never takes focus from Settings or another app, and there is no Dock icon.
 - The overlay background is fully clear, and the lyrics keep animating while the desktop is visible.
 
-No native runtime behavior has been claimed from Linux cross-compilation; both adapters are compile-checked only.
+Both adapters build, link and pass their unit tests on GitHub's macOS and Windows runners. Their on-screen behavior still needs the acceptance steps below on a real machine.
