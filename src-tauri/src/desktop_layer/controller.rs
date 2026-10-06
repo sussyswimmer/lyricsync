@@ -4,8 +4,8 @@ use super::{
     DesktopLayer,
 };
 use crate::{
-    commands::AppState,
     contract::{Displays, Settings, ShowWhen},
+    state::AppState,
 };
 use std::{
     sync::atomic::{AtomicBool, Ordering},
@@ -28,17 +28,9 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     let anchor = app
         .get_webview_window("settings")
         .ok_or("settings notification window missing")?;
-    // Keep this hidden top-level window alive: child overlays do not receive TaskbarCreated broadcasts.
+    // Keep this hidden top-level window alive (lib.rs hides it on close instead of destroying it):
+    // child overlays do not receive TaskbarCreated broadcasts.
     windows::install_notifications(&anchor)?;
-    let hidden = anchor.clone();
-    anchor.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            if let Err(error) = hidden.hide() {
-                eprintln!("settings hide: {error}");
-            }
-        }
-    });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));

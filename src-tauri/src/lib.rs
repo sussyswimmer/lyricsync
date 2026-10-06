@@ -2,15 +2,32 @@
 mod commands;
 pub mod contract;
 pub mod desktop_layer;
+pub mod diagnose;
 pub mod lyrics;
 pub mod media;
+pub mod settings;
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
+mod shortcuts;
+pub mod state;
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
+mod tray;
 
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
-    #[cfg(target_os = "macos")]
-    use tauri::Emitter;
     tauri::Builder::default()
-        .manage(commands::AppState::default())
+        // First, so a second launch hands over before anything else starts: it opens Settings.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Err(error) = commands::show_settings(app) {
+                eprintln!("second launch: {error}");
+            }
+        }))
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(state::AppState::default())
         .on_page_load(|_webview, _payload| {
             #[cfg(target_os = "windows")]
             if cfg!(debug_assertions)
@@ -23,19 +40,29 @@ pub fn run() {
                 }
             }
         })
-        .setup(|_app| {
-            lyrics::runtime::install(_app.handle()).map_err(std::io::Error::other)?;
+        .on_window_event(|window, event| {
+            // Closing Settings hides it, so the tray and a second launch can show it again.
+            if window.label() == "settings" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("settings hide: {error}");
+                    }
+                }
+            }
+        })
+        .setup(|app| {
+            // Menu bar only: no Dock icon.
             #[cfg(target_os = "macos")]
-            _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            #[cfg(target_os = "windows")]
-            desktop_layer::start(_app.handle()).map_err(std::io::Error::other)?;
-            #[cfg(target_os = "windows")]
-            media::start(_app.handle());
-            #[cfg(target_os = "macos")]
-            _app.emit(
-                contract::NOW_PLAYING_EVENT,
-                Option::<contract::NowPlaying>::None,
-            )?;
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let handle = app.handle();
+            // Settings first: every service and window below reads them.
+            settings::runtime::install(handle).map_err(std::io::Error::other)?;
+            lyrics::runtime::install(handle).map_err(std::io::Error::other)?;
+            desktop_layer::start(handle).map_err(std::io::Error::other)?;
+            media::start(handle);
+            tray::install(handle).map_err(std::io::Error::other)?;
+            shortcuts::install(handle).map_err(std::io::Error::other)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

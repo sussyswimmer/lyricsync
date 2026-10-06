@@ -7,6 +7,18 @@ mod windows;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 pub use runtime::start;
 
+/// macOS now playing (X2, second OS). Until it lands nothing is playing.
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub fn start(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    if let Err(error) = app.emit(
+        crate::contract::NOW_PLAYING_EVENT,
+        Option::<crate::contract::NowPlaying>::None,
+    ) {
+        eprintln!("now-playing event: {error}");
+    }
+}
+
 use crate::contract::{NowPlaying, Source};
 use async_trait::async_trait;
 

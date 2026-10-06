@@ -1,5 +1,5 @@
 use super::{windows::WindowsSource, MediaSource, Watcher};
-use crate::{commands::AppState, contract::NOW_PLAYING_EVENT, desktop_layer};
+use crate::{contract::NOW_PLAYING_EVENT, desktop_layer, state::AppState};
 use std::{
     sync::Arc,
     time::{Duration, Instant},

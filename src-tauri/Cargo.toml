@@ -14,7 +14,20 @@ required-features = ["desktop"]
 
 [features]
 default = []
-desktop = ["dep:tauri", "dep:windows-sys", "dep:windows"]
+desktop = [
+    "dep:tauri",
+    "dep:tauri-plugin-store",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-plugin-single-instance",
+    "dep:tauri-plugin-global-shortcut",
+    "dep:windows-sys",
+    "dep:windows",
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:objc2-app-kit",
+    "dep:objc2-core-graphics",
+    "dep:block2",
+]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -34,6 +47,45 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tauri = { version = "2", optional = true, features = ["macos-private-api", "tray-icon"] }
+tauri-plugin-store = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-global-shortcut = { version = "2", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+block2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, features = [
+    "block2",
+    "NSAppleEventDescriptor",
+    "NSAppleScript",
+    "NSArray",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSDistributedNotificationCenter",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSObjCRuntime",
+    "NSOperation",
+    "NSString",
+    "NSThread",
+    "NSValue",
+] }
+objc2-app-kit = { version = "0.3", optional = true, features = [
+    "block2",
+    "NSApplication",
+    "NSColor",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSView",
+    "NSWindow",
+    "NSWorkspace",
+] }
+objc2-core-graphics = { version = "0.3", optional = true, features = ["CGWindowLevel"] }
 
 [profile.release]
 codegen-units = 1

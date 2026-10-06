@@ -23,6 +23,16 @@ mod windows;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 pub use controller::{request_refresh, set_playing, start};
 
+/// macOS desktop layer (X1, second OS). Until it lands the overlay window stays hidden.
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub fn start(_app: &tauri::AppHandle) -> Result<(), String> {
+    Ok(())
+}
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub fn request_refresh() {}
+#[cfg(all(feature = "desktop", target_os = "macos"))]
+pub fn set_playing(_playing: bool) {}
+
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 pub trait DesktopLayer {
     type Target: Send + Copy;
