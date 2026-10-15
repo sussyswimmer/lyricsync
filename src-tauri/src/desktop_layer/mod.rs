@@ -407,6 +407,41 @@ mod tests {
     }
 
     #[test]
+    fn every_webview_may_listen_to_events_and_nothing_more() {
+        // The pages call the app's own commands (open to them while build.rs declares no app
+        // manifest) and listen to events; tests/capabilities.test.ts matches the permissions to
+        // their imports. Tray, menu, window and app APIs, and emitting events, stay in Rust.
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
+        for permission in capability["permissions"].as_array().unwrap() {
+            let permission = permission.as_str().unwrap();
+            assert!(
+                permission.starts_with("core:event:allow-") && !permission.contains("emit"),
+                "{permission}"
+            );
+        }
+        let granted: Vec<&str> = capability["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|window| window.as_str().unwrap())
+            .collect();
+        let covered = |label: &str| {
+            granted
+                .iter()
+                .any(|pattern| match pattern.strip_suffix('*') {
+                    Some(prefix) => label.starts_with(prefix),
+                    None => *pattern == label,
+                })
+        };
+        for window in configured_windows() {
+            assert!(covered(window["label"].as_str().unwrap()), "{window}");
+        }
+        // The `overlay-<n>` windows of `displays: all`.
+        assert!(covered("overlay-0") && covered("overlay-12"));
+    }
+
+    #[test]
     fn settings_is_a_panel_that_never_fills_the_screen() {
         let windows = configured_windows();
         let settings = windows.iter().find(|w| w["label"] == "settings").unwrap();
