@@ -19,7 +19,7 @@ use crate::{
     lyrics::{
         cache::Cache,
         empty,
-        lrclib::{Record, USER_AGENT},
+        lrclib::{self, Record, USER_AGENT},
         matching, Track,
     },
     media::{
@@ -1280,20 +1280,23 @@ async fn search(
     log: &mut Vec<String>,
 ) -> Result<Option<Record>, String> {
     let label = format!("search {}", title_by(title, &track.artist));
-    let records: Vec<Record> = fetch(
-        client,
-        base,
-        "search",
-        &[
-            ("track_name", title.to_owned()),
-            ("artist_name", track.artist.clone()),
-        ],
-        false,
-        deadline,
-    )
-    .await
-    .inspect_err(|error| log.push(format!("{label} -> {error}")))?
-    .unwrap_or_default();
+    // One record at a time, like the app: a malformed one is skipped, not the whole answer.
+    let records = lrclib::records(
+        fetch::<Vec<serde_json::Value>>(
+            client,
+            base,
+            "search",
+            &[
+                ("track_name", title.to_owned()),
+                ("artist_name", track.artist.clone()),
+            ],
+            false,
+            deadline,
+        )
+        .await
+        .inspect_err(|error| log.push(format!("{label} -> {error}")))?
+        .unwrap_or_default(),
+    );
     let seconds = track.duration_ms / 1000.0;
     if let Some(record) = matching::best(track, &records) {
         log.push(format!(
@@ -2626,6 +2629,28 @@ mod tests {
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert!(requests[2].starts_with("GET /api/search?track_name=Paper+Lantern&"));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_search_record_is_skipped_like_the_app_skips_it() {
+        let (base, _, server) = serve(vec![
+            (404, "{}".into()),
+            (
+                200,
+                format!(r#"[{{"id": "not a number"}}, {}]"#, json(&record())),
+            ),
+        ])
+        .await;
+        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        server.await.unwrap();
+        assert_eq!(lookup.result.unwrap().0.unwrap().id, 7);
+        assert!(
+            lookup.requests[1].ends_with(
+                "-> 1 result, picked #7 \"Paper Lantern\" by Demo Artist on \"Demo Album\""
+            ),
+            "{:?}",
+            lookup.requests
+        );
     }
 
     #[tokio::test]
