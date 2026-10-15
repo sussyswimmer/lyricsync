@@ -20,12 +20,12 @@ pub fn install(app: &AppHandle) -> Result<(), String> {
                         );
                     }
                     if let Err(error) = app.emit(LYRICS_EVENT, &lyrics) {
-                        eprintln!("lyrics event failed: {error}");
+                        applog!("lyrics event failed: {error}");
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => eprintln!(
-                    "lyrics event consumer lagged by {count}; clients can query get_lyrics"
-                ),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                    applog!("lyrics event consumer lagged by {count}; clients can query get_lyrics")
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }

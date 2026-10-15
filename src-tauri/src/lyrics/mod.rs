@@ -182,12 +182,12 @@ impl Service {
                 let (result, from_cache, saved_at, transient) = match outcome {
                     Ok(Ok((result, from_cache, saved_at))) => (result, from_cache, saved_at, false),
                     Ok(Err(error)) => {
-                        eprintln!("lyrics lookup failed: {error}");
+                        applog!("lyrics lookup failed: {error}");
                         let error_result = empty(&track.key, LyricsStatus::Error);
                         (error_result, false, now_seconds(), error.transient)
                     }
                     Err(_) => {
-                        eprintln!("lyrics lookup timed out after six seconds");
+                        applog!("lyrics lookup timed out after six seconds");
                         let error_result = empty(&track.key, LyricsStatus::Error);
                         (error_result, false, now_seconds(), true)
                     }
@@ -258,7 +258,7 @@ impl Service {
                 Ok(Err(failure)) => failure,
                 Err(_) => Failure::transient("timed out after six seconds"),
             };
-            eprintln!("lyrics retry failed: {failure}");
+            applog!("lyrics retry failed: {failure}");
             if !failure.transient {
                 return;
             }
@@ -271,11 +271,11 @@ impl Service {
         let result = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
             Ok(Ok(result)) => result,
             Ok(Err(failure)) => {
-                eprintln!("lyrics recheck failed: {failure}");
+                applog!("lyrics recheck failed: {failure}");
                 return;
             }
             Err(_) => {
-                eprintln!("lyrics recheck timed out after six seconds");
+                applog!("lyrics recheck timed out after six seconds");
                 return;
             }
         };
@@ -293,7 +293,7 @@ impl Service {
             ..plain
         };
         if let Err(error) = self.cache.put(&plain, saved_at).await {
-            eprintln!("lyrics cache write failed: {error}");
+            applog!("lyrics cache write failed: {error}");
         }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.quiet == token {
@@ -312,7 +312,7 @@ impl Service {
     async fn settle(&self, track: &Track, token: u64, result: Lyrics) {
         let saved_at = now_seconds();
         if let Err(error) = self.cache.put(&result, saved_at).await {
-            eprintln!("lyrics cache write failed: {error}");
+            applog!("lyrics cache write failed: {error}");
         }
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.quiet != token {
@@ -348,13 +348,13 @@ impl Service {
             match self.cache.read(&track.key, now_seconds()).await {
                 Ok(Some(entry)) => return Ok((entry.lyrics, true, entry.saved_at)),
                 Ok(None) => {}
-                Err(error) => eprintln!("lyrics cache read failed; using network: {error}"),
+                Err(error) => applog!("lyrics cache read failed; using network: {error}"),
             }
         }
         let result = self.fetch(track).await?;
         let saved_at = now_seconds();
         if let Err(error) = self.cache.put(&result, saved_at).await {
-            eprintln!("lyrics cache write failed: {error}");
+            applog!("lyrics cache write failed: {error}");
         }
         Ok((result, false, saved_at))
     }
