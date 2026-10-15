@@ -157,11 +157,8 @@ impl DesktopLayer for WindowsDesktop {
             if SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) == 0 {
                 return Err(last_error("SetLayeredWindowAttributes"));
             }
-            let position = monitor.position();
-            let mut origin = POINT {
-                x: position.x,
-                y: position.y,
-            };
+            let (x, y, width, height) = frame(monitor);
+            let mut origin = POINT { x, y };
             // Monitor positions are physical desktop coordinates; children use their parent's client origin.
             SetLastError(0);
             if MapWindowPoints(null_mut(), target.parent as HWND, &mut origin, 1) == 0
@@ -182,10 +179,9 @@ impl DesktopLayer for WindowsDesktop {
             {
                 return Err(last_error("wallpaper z-order"));
             }
-            let size = monitor.size();
             // New styles or a new parent take effect only with SWP_FRAMECHANGED; a window moved in
             // place keeps both (WM_STYLECHANGING) and needs no frame recalculation.
-            let frame = if restyle || reparent {
+            let changed = if restyle || reparent {
                 SWP_FRAMECHANGED
             } else {
                 0
@@ -195,9 +191,9 @@ impl DesktopLayer for WindowsDesktop {
                 target.below as HWND,
                 origin.x,
                 origin.y,
-                size.width as i32,
-                size.height as i32,
-                SWP_NOACTIVATE | frame,
+                width as i32,
+                height as i32,
+                SWP_NOACTIVATE | changed,
             ) == 0
             {
                 return Err(last_error("SetWindowPos"));
@@ -223,11 +219,12 @@ impl DesktopLayer for WindowsDesktop {
                 right: 0,
                 bottom: 0,
             };
-            // Screen coordinates in physical pixels (PerMonitorV2), like the monitor's area.
+            // Screen coordinates in physical pixels (PerMonitorV2), like the monitor's work area.
+            let (x, y, width, height) = frame(monitor);
             let framed = GetWindowRect(hwnd, &mut rect) != 0
-                && (rect.left, rect.top) == (monitor.position().x, monitor.position().y)
+                && (rect.left, rect.top) == (x, y)
                 && (rect.right - rect.left, rect.bottom - rect.top)
-                    == (monitor.size().width as i32, monitor.size().height as i32);
+                    == (width as i32, height as i32);
             if styles::is_attached(style, ex) && framed && stacked(hwnd, target) {
                 Attachment::Placed
             } else {
@@ -291,6 +288,20 @@ impl DesktopLayer for WindowsDesktop {
             target.parent, target.below, target.wallpaper
         )
     }
+}
+
+/// Where an attached overlay sits: its monitor's work area (the monitor without the taskbar and
+/// other app bars), so Height 0% and 100% stay readable; the page keeps Size relative to the whole
+/// screen. Physical desktop pixels, like `area`, which stays the whole monitor for matching.
+/// `attach` puts the overlay here and `attachment` compares against it, so a placed one stays put.
+fn frame(monitor: &Monitor) -> Bounds {
+    let work = monitor.work_area();
+    (
+        work.position.x,
+        work.position.y,
+        work.size.width,
+        work.size.height,
+    )
 }
 
 /// The real parent: GetParent would return an owner for a top-level window.

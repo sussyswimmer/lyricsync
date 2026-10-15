@@ -1,19 +1,22 @@
 //! macOS: the overlay stays a normal top-level NSWindow, lowered to the desktop window level
 //! (above the wallpaper, below the Finder's icons and every app window). Nothing to discover.
 use super::{
-    geometry::{self, Bounds, Rect},
+    geometry::{self, Bounds, Rect, Screen},
     request_refresh, Attachment, DesktopLayer,
 };
 use block2::RcBlock;
 use objc2::{msg_send, runtime::AnyObject, sel, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplicationDidChangeScreenParametersNotification, NSColor, NSNormalWindowLevel, NSScreen,
-    NSWindow, NSWindowCollectionBehavior, NSWindowLevel, NSWindowOcclusionState, NSWorkspace,
+    NSApplicationDidChangeScreenParametersNotification, NSApplicationDidHideNotification,
+    NSApplicationDidUnhideNotification, NSColor, NSNormalWindowLevel, NSScreen, NSWindow,
+    NSWindowCollectionBehavior, NSWindowLevel, NSWindowOcclusionState, NSWorkspace,
     NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidWakeNotification,
     NSWorkspaceScreensDidWakeNotification,
 };
 use objc2_core_graphics::{CGWindowLevelForKey, CGWindowLevelKey};
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSNotificationName, NSRect};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSNotificationName, NSPoint, NSRect, NSSize,
+};
 use std::{ptr::NonNull, sync::Once};
 use tauri::{AppHandle, Monitor, WebviewWindow};
 
@@ -49,19 +52,23 @@ fn ns_window(window: &WebviewWindow) -> Result<(MainThreadMarker, &NSWindow), St
     Ok((mtm, unsafe { pointer.as_ref() }))
 }
 
-/// The frame, in Cocoa points, of the screen that shows `monitor`.
-fn screen_frame(mtm: MainThreadMarker, monitor: &Monitor) -> Result<NSRect, String> {
-    let screens = NSScreen::screens(mtm).to_vec();
-    let frames: Vec<Rect> = screens.iter().map(|screen| rect(screen.frame())).collect();
-    let primary = *frames.first().ok_or("no screens attached")?;
-    let quartz: Vec<Rect> = frames
+/// The overlay's frame, in Cocoa points, on the screen that shows `monitor`: that screen's visible
+/// frame (`geometry::overlay_frame`). `attach` sets it and `attachment` compares against it.
+fn overlay_frame(mtm: MainThreadMarker, monitor: &Monitor) -> Result<NSRect, String> {
+    let screens: Vec<Screen> = NSScreen::screens(mtm)
         .iter()
-        .map(|frame| geometry::flip_y(*frame, primary))
+        .map(|screen| Screen {
+            frame: rect(screen.frame()),
+            visible: rect(screen.visibleFrame()),
+        })
         .collect();
     let wanted = geometry::monitor_points(physical(monitor), monitor.scale_factor());
-    let index = geometry::match_screen(wanted, &quartz)
+    let frame = geometry::overlay_frame(wanted, &screens)
         .ok_or_else(|| format!("no screen matches display {wanted:?} yet"))?;
-    Ok(screens[index].frame())
+    Ok(NSRect::new(
+        NSPoint::new(frame.x, frame.y),
+        NSSize::new(frame.width, frame.height),
+    ))
 }
 
 /// Keeps the overlay's page visible while app windows cover it. WebKit hides the page of a window
@@ -110,16 +117,24 @@ impl DesktopLayer for MacDesktop {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {
             // SAFETY: AppKit's notification names are immutable NSString constants.
-            let (screens, wake, screens_wake, space) = unsafe {
+            let (screens, hide, unhide, wake, screens_wake, space) = unsafe {
                 (
                     NSApplicationDidChangeScreenParametersNotification,
+                    NSApplicationDidHideNotification,
+                    NSApplicationDidUnhideNotification,
                     NSWorkspaceDidWakeNotification,
                     NSWorkspaceScreensDidWakeNotification,
                     NSWorkspaceActiveSpaceDidChangeNotification,
                 )
             };
+            let center = NSNotificationCenter::defaultCenter();
             // Displays added, removed, rearranged or rescaled.
-            observe(&NSNotificationCenter::defaultCenter(), screens);
+            observe(&center, screens);
+            // Undertone hidden (⌘H in Settings, Hide Others in another app) or shown again. The
+            // overlays opt out of hiding (`attach`), so neither should touch them; a pass checks
+            // that each one still does and is still shown.
+            observe(&center, hide);
+            observe(&center, unhide);
             // Workspace notifications only arrive on NSWorkspace's own center. Re-applying after
             // sleep and on a Space switch is cheap insurance against a dropped desktop-level window.
             let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
@@ -147,7 +162,7 @@ impl DesktopLayer for MacDesktop {
 
     fn attach(window: &WebviewWindow, monitor: &Monitor, _: ()) -> Result<(), String> {
         let (mtm, ns_window) = ns_window(window)?;
-        let frame = screen_frame(mtm, monitor)?;
+        let frame = overlay_frame(mtm, monitor)?;
         keep_page_visible(window)?;
         // Never key: showing the overlay must not take focus from Settings or another app. The
         // controller and tauri.conf.json create overlays non-focusable; this is a safety net that
@@ -156,6 +171,9 @@ impl DesktopLayer for MacDesktop {
             window.set_focusable(false).map_err(|e| e.to_string())?;
         }
         ns_window.setLevel(desktop_level());
+        // Hiding Undertone (⌘H in Settings, which tauri's default menu binds, or Hide Others in
+        // any app) hides Settings only. The lyrics stay, like the Finder's desktop.
+        ns_window.setCanHide(false);
         ns_window.setIgnoresMouseEvents(true);
         ns_window.setOpaque(false);
         ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -165,7 +183,8 @@ impl DesktopLayer for MacDesktop {
                 | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::IgnoresCycle,
         );
-        // The full frame in Cocoa coordinates, menu bar and Dock included, like the wallpaper.
+        // Below the menu bar and clear of the Dock, so Height 0% and 100% stay readable; the page
+        // keeps Size relative to the whole screen.
         ns_window.setFrame_display(frame, true);
         Ok(())
     }
@@ -178,9 +197,10 @@ impl DesktopLayer for MacDesktop {
             return Attachment::Detached;
         }
         // No matching screen yet: attach runs and reports it, and the controller retries.
-        match screen_frame(mtm, monitor) {
+        match overlay_frame(mtm, monitor) {
             Ok(frame)
                 if ns_window.ignoresMouseEvents()
+                    && !ns_window.canHide()
                     && geometry::same_rect(rect(ns_window.frame()), rect(frame)) =>
             {
                 Attachment::Placed
@@ -192,6 +212,7 @@ impl DesktopLayer for MacDesktop {
     fn detach(window: &WebviewWindow) -> Result<(), String> {
         let (_, ns_window) = ns_window(window)?;
         ns_window.setLevel(NSNormalWindowLevel);
+        ns_window.setCanHide(true);
         ns_window.setIgnoresMouseEvents(false);
         ns_window.setCollectionBehavior(NSWindowCollectionBehavior::Default);
         Ok(())

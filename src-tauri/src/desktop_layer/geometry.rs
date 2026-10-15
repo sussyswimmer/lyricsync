@@ -20,6 +20,14 @@ pub struct Rect {
 /// A monitor's physical bounds as tauri reports them: x, y, width, height.
 pub type Bounds = (i32, i32, u32, u32);
 
+/// An `NSScreen` in Cocoa points: its whole `frame`, and its `visibleFrame` without the menu bar
+/// (and the notch under it) and the Dock.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Screen {
+    pub frame: Rect,
+    pub visible: Rect,
+}
+
 /// Rounding to whole physical pixels moves an edge by at most half a pixel.
 const TOLERANCE: f64 = 1.0;
 
@@ -81,6 +89,16 @@ pub fn match_screen(monitor: Rect, screens: &[Rect]) -> Option<usize> {
             same_origin(s) && near(s.width, monitor.width) && near(s.height, monitor.height)
         })
         .or_else(|| screens.iter().position(same_origin))
+}
+
+/// The Cocoa frame of the overlay that shows `monitor` (Quartz points): its screen's visible
+/// frame, so the lyrics never sit under the menu bar, the notch or the Dock. The screen is found
+/// by its whole frame, which is what tao reports for a monitor, flipped around `screens[0]` (the
+/// primary). `None` while the two lists disagree.
+pub fn overlay_frame(monitor: Rect, screens: &[Screen]) -> Option<Rect> {
+    let primary = screens.first()?.frame;
+    let quartz: Vec<Rect> = screens.iter().map(|s| flip_y(s.frame, primary)).collect();
+    match_screen(monitor, &quartz).map(|index| screens[index].visible)
 }
 
 #[cfg(test)]
@@ -234,6 +252,69 @@ mod tests {
         assert!(same_rect(frame, rect(1512.5, -258.0, 2559.5, 1440.0)));
         assert!(!same_rect(frame, rect(1512.0, -258.0, 2560.0, 1080.0)));
         assert!(!same_rect(frame, rect(0.0, 0.0, 2560.0, 1440.0)));
+    }
+
+    /// `cocoa_screens` as NSScreen reports them: the notched laptop has a 37 pt menu bar and a
+    /// 70 pt Dock along its bottom; the other two show a 25 pt menu bar each (separate Spaces).
+    fn screens_with_bars() -> Vec<Screen> {
+        let frames = cocoa_screens();
+        let visible = [
+            rect(0.0, 70.0, 1512.0, 875.0),
+            rect(1512.0, -258.0, 2560.0, 1415.0),
+            rect(-204.0, 982.0, 1920.0, 1055.0),
+        ];
+        frames
+            .into_iter()
+            .zip(visible)
+            .map(|(frame, visible)| Screen { frame, visible })
+            .collect()
+    }
+
+    #[test]
+    fn overlays_are_framed_to_the_visible_frame_of_their_screen() {
+        let screens = screens_with_bars();
+        let monitors = [
+            ((-408, -2160, 3840, 2160), 2.0, 2),
+            ((1512, -200, 2560, 1440), 1.0, 1),
+            ((0, 0, 3024, 1964), 2.0, 0),
+        ];
+        for (bounds, scale, index) in monitors {
+            assert_eq!(
+                overlay_frame(monitor_points(bounds, scale), &screens),
+                Some(screens[index].visible)
+            );
+        }
+    }
+
+    #[test]
+    fn screens_are_found_by_their_whole_frame() {
+        // tao reports whole displays. Flipped around the primary's visible frame instead, the
+        // displays beside and above the laptop land 12 pt off (its Dock and menu bar differ by
+        // that much) and would find no screen.
+        let screens = screens_with_bars();
+        let visible_only: Vec<Screen> = screens
+            .iter()
+            .map(|s| Screen {
+                frame: s.visible,
+                ..*s
+            })
+            .collect();
+        for (bounds, scale) in [
+            ((1512, -200, 2560, 1440), 1.0),
+            ((-408, -2160, 3840, 2160), 2.0),
+        ] {
+            let monitor = monitor_points(bounds, scale);
+            assert!(overlay_frame(monitor, &screens).is_some());
+            assert_eq!(overlay_frame(monitor, &visible_only), None);
+        }
+        // A screen with nothing hidden (Dock and menu bar set to hide) is covered whole.
+        let bare = [Screen {
+            frame: rect(0.0, 0.0, 1512.0, 982.0),
+            visible: rect(0.0, 0.0, 1512.0, 982.0),
+        }];
+        let laptop = monitor_points((0, 0, 3024, 1964), 2.0);
+        assert_eq!(overlay_frame(laptop, &bare), Some(bare[0].frame));
+        assert_eq!(overlay_frame(laptop, &[]), None);
     }
 
     #[test]

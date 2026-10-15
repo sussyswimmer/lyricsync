@@ -1,6 +1,6 @@
 //! Portable policy plus one controller that drives the native adapters (Windows, macOS) through
 //! the `DesktopLayer` trait. See docs/DESKTOP_LAYER.md.
-use crate::contract::{Displays, ShowWhen};
+use crate::contract::{Displays, Settings, ShowWhen};
 
 pub mod geometry;
 pub mod styles;
@@ -27,6 +27,19 @@ pub fn visible(show_when: &ShowWhen, is_playing: bool) -> bool {
 /// (`Settings.enabled`: the Settings switch, the tray's Hide/Show lyrics, the toggle shortcut).
 pub fn shown(show_when: &ShowWhen, is_playing: bool, enabled: bool) -> bool {
     visible(show_when, is_playing) && enabled
+}
+
+/// The debug flags' changes to the saved settings, made on every pass. `--desktop-layer-test`
+/// shows its test page whatever `showWhen` says but follows the lyrics switch, so Hide lyrics
+/// still hides it, as the acceptance steps check. `--desktop-layer-all` covers every display.
+pub fn debug_overrides(mut settings: Settings, test_page: bool, all_displays: bool) -> Settings {
+    if test_page {
+        settings.show_when = ShowWhen::Always;
+    }
+    if all_displays {
+        settings.displays = Displays::All;
+    }
+    settings
 }
 
 pub fn monitor_indices(displays: &Displays, count: usize, primary: Option<usize>) -> Vec<usize> {
@@ -153,7 +166,8 @@ pub trait DesktopLayer {
     /// False once the desktop the overlays hang from is gone (Explorer restarted).
     fn is_valid(target: Self::Target) -> bool;
     /// Where `monitor` sits, in units all displays share, for `plan`: physical pixels on Windows,
-    /// points on macOS (tao scales each display by its own backing factor).
+    /// points on macOS (tao scales each display by its own backing factor). The whole display;
+    /// `attach` frames its overlay to the work area, without the menu bar, Dock or taskbar.
     fn area(monitor: &tauri::Monitor) -> Bounds;
     /// Native window operations run on the UI thread.
     fn attach(
@@ -199,6 +213,35 @@ mod tests {
         assert!(!shown(&ShowWhen::Playing, true, false));
         assert!(!shown(&ShowWhen::Always, false, false));
         assert!(!shown(&ShowWhen::Always, true, false));
+    }
+    #[test]
+    fn the_test_page_overrides_show_when_but_follows_the_lyrics_switch() {
+        let saved = Settings {
+            show_when: ShowWhen::Playing,
+            displays: Displays::Primary,
+            enabled: false,
+            ..Settings::default()
+        };
+        assert_eq!(debug_overrides(saved.clone(), false, false), saved);
+        let test = debug_overrides(saved.clone(), true, false);
+        assert_eq!(test.show_when, ShowWhen::Always);
+        assert_eq!(test.displays, Displays::Primary);
+        // Lyrics off: the test page hides like the lyrics would, idle or playing.
+        assert!(!test.enabled);
+        assert!(!shown(&test.show_when, false, test.enabled));
+        assert!(!shown(&test.show_when, true, test.enabled));
+        let on = debug_overrides(
+            Settings {
+                enabled: true,
+                ..saved.clone()
+            },
+            true,
+            false,
+        );
+        assert!(shown(&on.show_when, false, on.enabled));
+        let all = debug_overrides(saved.clone(), false, true);
+        assert_eq!(all.displays, Displays::All);
+        assert_eq!(all.show_when, ShowWhen::Playing);
     }
     #[test]
     fn primary_is_not_assumed_to_be_first() {
@@ -365,6 +408,56 @@ mod tests {
     }
 
     #[test]
+    fn every_webview_may_listen_to_events_and_nothing_more() {
+        // The pages call the app's own commands (open to them while build.rs declares no app
+        // manifest) and listen to events; tests/capabilities.test.ts matches the permissions to
+        // their imports. Tray, menu, window and app APIs, and emitting events, stay in Rust.
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
+        for permission in capability["permissions"].as_array().unwrap() {
+            let permission = permission.as_str().unwrap();
+            assert!(
+                permission.starts_with("core:event:allow-") && !permission.contains("emit"),
+                "{permission}"
+            );
+        }
+        let granted: Vec<&str> = capability["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|window| window.as_str().unwrap())
+            .collect();
+        let covered = |label: &str| {
+            granted
+                .iter()
+                .any(|pattern| match pattern.strip_suffix('*') {
+                    Some(prefix) => label.starts_with(prefix),
+                    None => *pattern == label,
+                })
+        };
+        for window in configured_windows() {
+            assert!(covered(window["label"].as_str().unwrap()), "{window}");
+        }
+        // The `overlay-<n>` windows of `displays: all`.
+        assert!(covered("overlay-0") && covered("overlay-12"));
+    }
+
+    #[test]
+    fn settings_is_a_panel_that_never_fills_the_screen() {
+        let windows = configured_windows();
+        let settings = windows.iter().find(|w| w["label"] == "settings").unwrap();
+        // No maximize box on Windows, no zoom or full-screen Space on macOS.
+        assert_eq!(settings["maximizable"], false);
+        // As wide as its column can get (settings.css), so widening it adds no empty margins.
+        let css = include_str!("../../../src/styles/settings.css");
+        let column = regex::Regex::new(r"\.ut-settings #app \{\s*max-width: (\d+)px;").unwrap();
+        let cap = &column.captures(css).expect("no column cap")[1];
+        let width = |key: &str| settings[key].as_u64().unwrap();
+        assert_eq!(width("maxWidth"), cap.parse::<u64>().unwrap());
+        assert!(width("minWidth") <= width("width") && width("width") <= width("maxWidth"));
+    }
+
+    #[test]
     fn every_runtime_webview_uses_the_shared_webview2_args() {
         // The controller only compiles for Windows and macOS, so its builders are checked as
         // source. Needles are joined here so this test's own text never matches.
@@ -422,6 +515,76 @@ mod tests {
                 "CalculateNativeWinOcclusion"
             ]
         );
+    }
+
+    /// The body of `fn <name>(` in a native adapter, checked as source because the adapters only
+    /// compile on their own OS: up to the end of the method.
+    fn method<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("no fn {name}"));
+        let body = &source[start..];
+        &body[..body.find("\n    }\n").unwrap()]
+    }
+
+    #[test]
+    fn macos_overlays_stay_when_undertone_is_hidden() {
+        // ⌘H in Settings (tauri's default menu) or Hide Others in another app hides Undertone.
+        // Overlays opt out, a pass re-attaches one that lost that, and hiding or showing the app
+        // again starts a pass.
+        let macos = include_str!("macos.rs");
+        assert!(method(macos, "attach").contains("ns_window.setCanHide(false);"));
+        assert!(method(macos, "attachment").contains("&& !ns_window.canHide()"));
+        let notifications = method(macos, "install_notifications");
+        for name in [
+            "NSApplicationDidHideNotification",
+            "NSApplicationDidUnhideNotification",
+        ] {
+            assert!(notifications.contains(name), "{name} is not observed");
+        }
+    }
+
+    #[test]
+    fn overlays_are_placed_and_checked_on_the_same_work_area() {
+        // attach and attachment must agree, or every pass would find a placed overlay misplaced
+        // and attach it again. Both use the work area; `area` keeps whole displays for `plan`.
+        let windows = include_str!("windows.rs");
+        let macos = include_str!("macos.rs");
+        for (source, frame) in [
+            (windows, "frame(monitor)"),
+            (macos, "overlay_frame(mtm, monitor)"),
+        ] {
+            for name in ["attach", "attachment"] {
+                let body = method(source, name);
+                assert!(body.contains(frame), "{name}: {frame}");
+                assert!(!body.contains("monitor.position()"), "{name}");
+                assert!(!body.contains("monitor.size()"), "{name}");
+            }
+        }
+        assert!(windows.contains("let work = monitor.work_area();"));
+        assert!(macos.contains("visible: rect(screen.visibleFrame()),"));
+    }
+
+    #[test]
+    fn the_manifest_lets_the_overlay_be_a_layered_child_window() {
+        // An attached overlay is a layered child of Progman or WorkerW. Windows allows layered
+        // child windows only to apps whose manifest declares Windows 8 or later; without a
+        // supportedOS list they run in the Vista context.
+        assert_ne!(styles::attached_ex(0) & styles::WS_EX_LAYERED, 0);
+        let manifest = include_str!("../../windows.manifest");
+        let open = r#"<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">"#;
+        let start = manifest.find(open).expect("no compatibility block");
+        let block = &manifest[start..start + manifest[start..].find("</compatibility>").unwrap()];
+        for (os, id) in [
+            ("8", "{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"),
+            ("8.1", "{1f676c76-80e1-4239-95bb-83d0f6d0da78}"),
+            ("10 and 11", "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"),
+        ] {
+            assert!(
+                block.contains(&format!(r#"<supportedOS Id="{id}"/>"#)),
+                "Windows {os} is not declared"
+            );
+        }
     }
 
     #[test]
