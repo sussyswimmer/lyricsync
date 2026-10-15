@@ -1230,3 +1230,74 @@ html.is-scrolled .top {
     animation: none;
   }
 }
+
+/* ---------- forced colors (Windows Contrast themes) ---------- */
+/* Shadows and gradient backgrounds are dropped and colors forced to the theme's, so the selection
+   rings, the switches (drawn with gradients), the sliders and the button edges vanished. Each gets
+   system colors instead. Selection is a border, never an outline, so a focus ring still shows on the
+   chosen tile. The preview and the swatches show the user's own colors and keep them. */
+@media (forced-colors: active) {
+  .pv,
+  .swatch-chip {
+    forced-color-adjust: none;
+  }
+
+  .swatch-chip {
+    border: 1px solid CanvasText;
+  }
+
+  .tiles .opt-face,
+  .seg .opt-face,
+  .step,
+  .btn,
+  .sc-key {
+    border: 1px solid ButtonText;
+  }
+
+  .tiles input:checked + .opt-face,
+  .seg input:checked + .opt-face,
+  .sc-key.is-recording {
+    border: 2px solid Highlight;
+  }
+
+  .step[aria-disabled="true"],
+  .link-btn[aria-disabled="true"] {
+    border-color: GrayText;
+    color: GrayText;
+  }
+
+  .switch {
+    forced-color-adjust: none;
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+    background-image: radial-gradient(circle at 50% 50%, ButtonText 0 6px, transparent 6.6px);
+    /* inside the border: the knob's square stays centered, and travels as far */
+    background-size: 20px 20px;
+    box-shadow: none;
+  }
+
+  .switch:checked {
+    border-color: Highlight;
+    background-color: Highlight;
+    background-image: radial-gradient(circle at 50% 50%, HighlightText 0 6px, transparent 6.6px);
+  }
+
+  .range {
+    forced-color-adjust: none;
+    --track: GrayText;
+    --accent: Highlight;
+    --thumb: ButtonText;
+    --card: Canvas;
+    --focus: Highlight;
+  }
+
+  .range:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .notice-card,
+  .confirm {
+    border: 1px solid CanvasText;
+  }
+}

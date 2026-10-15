@@ -530,6 +530,25 @@ describe("settings-button-cascade: button classes win over the page's button res
     expect(rules(settingsCss).find(([sel]) => sel === ".seg input:checked + .opt-face")?.[1]).toMatch(/inset 0 0 0 1px var\(--accent\)/);
   });
 
+  it("in forced colors (Windows Contrast themes), selection, switches, sliders and swatches stay visible", () => {
+    const at = settingsCss.indexOf("@media (forced-colors: active)");
+    expect(at).toBeGreaterThan(0);
+    const forced = rules(settingsCss.slice(at));
+    const body = (selector: string): string => forced.find(([sel]) => sel.split(",").map((s) => s.trim()).includes(selector))?.[1] ?? "";
+    // a border, not the dropped box-shadow, and not an outline, which the focus ring needs
+    expect(body(".tiles input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    expect(body(".seg input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    // drawn with gradients and shadows: they keep their own drawing, in system colors
+    expect(body(".switch")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".switch")).toMatch(/ButtonText/);
+    expect(body(".switch:checked")).toMatch(/Highlight/);
+    expect(body(".range")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".range:focus-visible")).toMatch(/outline:\s*2px solid Highlight/);
+    // the user's colors stay the user's colors
+    expect(body(".swatch-chip")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".pv")).toMatch(/forced-color-adjust:\s*none/);
+  });
+
   it("the inert sync buttons dim without `disabled`, and hover skips them", () => {
     const sels = rules(settingsCss).map(([sel]) => sel);
     expect(sels).toContain('.step[aria-disabled="true"]');
