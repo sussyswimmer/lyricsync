@@ -55,7 +55,6 @@ pub fn run() {
                 applog!("second launch: {error}");
             }
         }))
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,

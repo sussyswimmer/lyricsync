@@ -16,7 +16,6 @@ required-features = ["desktop"]
 default = []
 desktop = [
     "dep:tauri",
-    "dep:tauri-plugin-store",
     "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-single-instance",
     "dep:tauri-plugin-global-shortcut",
@@ -47,7 +46,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tauri = { version = "2", optional = true, features = ["macos-private-api", "tray-icon"] }
-tauri-plugin-store = { version = "2", optional = true }
 tauri-plugin-autostart = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }

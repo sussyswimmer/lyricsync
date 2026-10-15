@@ -1,5 +1,6 @@
-//! X4 settings: validation, migration and persistence. The pure functions are portable and tested on
-//! every OS; `runtime` stores settings with tauri-plugin-store and broadcasts `settings-changed`.
+//! X4 settings: validation, migration and persistence. The pure functions, settings.json's reading
+//! and writing included, are portable and tested on every OS; `runtime` keeps the settings in
+//! AppState, saves every change and broadcasts `settings-changed`.
 //!
 //! Every field is validated on its own: unknown keys are dropped, numbers are clamped to the SPEC
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
@@ -11,7 +12,14 @@ use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::{collections::BTreeMap, ops::RangeInclusive, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File},
+    io::{self, Read, Write},
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 pub const SIZE: RangeInclusive<f64> = 22.0..=140.0;
 pub const CURVE: RangeInclusive<f64> = -100.0..=100.0;
@@ -190,8 +198,8 @@ pub fn migrate(stored: &Value) -> Settings {
     merge_patch(&Settings::default(), stored)
 }
 
-/// What `runtime::install` does with the store's value: the settings to use, and whether the
-/// file must be rewritten because migrating changed them (or there was nothing stored yet).
+/// What startup (`open`) does with the stored value: the settings to use, and whether the file
+/// must be rewritten because migrating changed them (or there was nothing stored yet).
 pub fn load(stored: Option<&Value>) -> (Settings, bool) {
     let settings = migrate(stored.unwrap_or(&Value::Null));
     let unchanged = stored.is_some_and(|stored| {
@@ -299,21 +307,135 @@ pub fn commit(
     })
 }
 
+/// settings.json, in the app data dir. Its shape, `{"settings": {...}}` in pretty JSON, is what
+/// tauri-plugin-store wrote before Undertone wrote the file itself, so either one loads unchanged.
+pub const FILE: &str = "settings.json";
+const KEY: &str = "settings";
+/// Settings take a few KiB; a larger file isn't one.
+pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+/// What settings.json holds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stored {
+    /// No file yet: the first launch.
+    Missing,
+    /// A file without usable settings: unreadable, too large, not JSON, or no `settings` entry.
+    Unusable(String),
+    /// The `settings` entry, as stored (`load` makes it valid).
+    Found(Value),
+}
+
+/// Reads settings.json, up to `MAX_FILE_BYTES`; `--diagnose` reads it the same way.
+pub fn read_file(path: &Path) -> Stored {
+    let mut bytes = Vec::new();
+    let read =
+        File::open(path).and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes));
+    match read {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Stored::Missing,
+        Err(error) => return Stored::Unusable(error.to_string()),
+        Ok(_) if bytes.len() as u64 > MAX_FILE_BYTES => {
+            return Stored::Unusable(format!("larger than {} KiB", MAX_FILE_BYTES / 1024))
+        }
+        Ok(_) => {}
+    }
+    match serde_json::from_slice::<Value>(&bytes) {
+        Err(error) => Stored::Unusable(format!("not JSON: {error}")),
+        Ok(mut value) => match value.get_mut(KEY) {
+            Some(stored) => Stored::Found(stored.take()),
+            None => Stored::Unusable(format!("no {KEY:?} entry")),
+        },
+    }
+}
+
+/// The file's bytes for `settings`.
+pub fn encode(settings: &Settings) -> serde_json::Result<Vec<u8>> {
+    let entry = serde_json::Map::from_iter([(KEY.to_owned(), serde_json::to_value(settings)?)]);
+    serde_json::to_vec_pretty(&Value::Object(entry))
+}
+
+/// Saves `settings` to `path` in one step: a temporary file next to it, flushed to the disk, then
+/// renamed over the old one. A crash, logout or power loss mid-save leaves the old file or the new
+/// one, never part of one.
+pub fn write_file(path: &Path, settings: &Settings) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("the settings file has no folder"))?;
+    fs::create_dir_all(dir)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
+    temporary.write_all(&encode(settings)?)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
+/// Where an unusable settings file goes before the defaults replace it:
+/// `settings.corrupt-<unix-secs>.json` next to it.
+pub fn backup_path(path: &Path, now_secs: u64) -> PathBuf {
+    let stem = path
+        .file_stem()
+        .map_or("settings".into(), |stem| stem.to_string_lossy());
+    path.with_file_name(format!("{stem}.corrupt-{now_secs}.json"))
+}
+
+/// What Undertone starts with (`runtime::install`).
+#[derive(Debug, PartialEq)]
+pub struct Opened {
+    pub settings: Settings,
+    /// The file must be written: there was none, it was unusable, or `load` changed it.
+    pub rewrite: bool,
+    /// Open Settings on this launch: there was no file (the first launch; a login-item start never
+    /// is one, as the item can only be turned on after a launch) or its settings were lost.
+    pub show_settings: bool,
+}
+
+/// Reads the settings at `path` for startup. An unusable file is moved aside to
+/// `settings.corrupt-<unix-secs>.json` first, so writing the defaults can't destroy what it held.
+pub fn open(path: &Path, now_secs: u64) -> Opened {
+    let stored = match read_file(path) {
+        Stored::Found(stored) => Some(stored),
+        Stored::Missing => None,
+        Stored::Unusable(error) => {
+            let backup = backup_path(path, now_secs);
+            match fs::rename(path, &backup) {
+                Ok(()) => applog!(
+                    "settings file unusable ({error}); moved to {} and using the defaults",
+                    backup.display()
+                ),
+                Err(move_error) => applog!(
+                    "settings file unusable ({error}) and not moved aside ({move_error}); using \
+                     the defaults"
+                ),
+            }
+            return Opened {
+                settings: Settings::default(),
+                rewrite: true,
+                show_settings: true,
+            };
+        }
+    };
+    let (settings, rewrite) = load(stored.as_ref());
+    Opened {
+        show_settings: stored.is_none(),
+        settings,
+        rewrite,
+    }
+}
+
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub mod runtime {
     use super::Committed;
     use crate::{contract::Settings, contract::SETTINGS_CHANGED_EVENT, state::AppState};
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+    use std::{
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Mutex,
+        },
+        time::{SystemTime, UNIX_EPOCH},
     };
-    use tauri::{AppHandle, Emitter, Manager, Wry};
+    use tauri::{AppHandle, Emitter, Manager};
     use tauri_plugin_autostart::AutoLaunchManager;
-    use tauri_plugin_store::{Store, StoreExt};
 
-    /// In the app data dir. Settings live under one key, so the file stays one readable object.
-    const STORE_FILE: &str = "settings.json";
-    const STORE_KEY: &str = "settings";
     /// Held by every change from reading the settings to saving them (`super::commit`).
     static WRITER: Mutex<()> = Mutex::new(());
     /// Set by `install`, with `WRITER` held, once the stored settings are in AppState. Before that a
@@ -322,25 +444,20 @@ pub mod runtime {
     /// sync) from a tokio task that can run before the app's setup has called `install`.
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-    /// The store, opened (and read from disk) on first use. Every change is saved right away, so
-    /// there is no debounced auto-save task.
-    fn store(app: &AppHandle) -> Result<Arc<Store<Wry>>, String> {
-        app.store_builder(STORE_FILE)
-            .disable_auto_save()
-            .build()
+    /// settings.json in the app data dir, where tauri-plugin-store kept it.
+    fn file(app: &AppHandle) -> Result<PathBuf, String> {
+        app.path()
+            .app_data_dir()
+            .map(|dir| dir.join(super::FILE))
             .map_err(|e| e.to_string())
     }
 
-    /// Writes `settings` to disk. A failure is logged, not returned: the change still applies for
-    /// this session, and the next successful save catches the file up.
+    /// Writes `settings` to disk (`super::write_file`), right away: there is no debounced
+    /// auto-save. A failure is logged, not returned: the change still applies for this session,
+    /// and the next successful save catches the file up.
     fn persist(app: &AppHandle, settings: &Settings) {
-        let saved = store(app).and_then(|store| {
-            store.set(
-                STORE_KEY,
-                serde_json::to_value(settings).map_err(|e| e.to_string())?,
-            );
-            store.save().map_err(|e| e.to_string())
-        });
+        let saved = file(app)
+            .and_then(|path| super::write_file(&path, settings).map_err(|e| e.to_string()));
         if let Err(error) = saved {
             applog!("settings save failed: {error}");
         }
@@ -371,31 +488,29 @@ pub mod runtime {
     /// Loads stored settings into AppState before any window or service reads them, migrated to
     /// the current shape, with `launchAtLogin` taken from the OS login item (the user may have
     /// removed it while Undertone wasn't running), and written back when either changed them. A
-    /// missing or corrupt file starts from the defaults; an unusable store is logged and doesn't
-    /// stop the app. The autostart plugin is set up before the app's setup, so it can be read here.
+    /// missing file starts from the defaults; an unusable one is moved aside first
+    /// (`super::open`). An unknown data dir is logged and doesn't stop the app. The autostart
+    /// plugin is set up before the app's setup, so it can be read here.
     pub fn install(app: &AppHandle) -> Result<(), String> {
         // A change that arrives meanwhile applies on top of the stored settings, not the defaults.
         let _writer = WRITER.lock().unwrap_or_else(|e| e.into_inner());
-        let stored = match store(app) {
-            Ok(store) => {
-                let stored = store.get(STORE_KEY);
-                // The store ignores a file it can't read or parse; say so before it is overwritten.
-                if stored.is_none()
-                    && tauri_plugin_store::resolve_store_path(app, STORE_FILE)
-                        .is_ok_and(|path| path.exists())
-                {
-                    applog!("settings file unreadable or without settings; using defaults");
-                }
-                stored
-            }
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |now| now.as_secs());
+        let opened = match file(app) {
+            Ok(path) => super::open(&path, now_secs),
             Err(error) => {
-                applog!("settings store unavailable; using defaults: {error}");
-                None
+                applog!("settings file unavailable; using the defaults: {error}");
+                super::Opened {
+                    settings: Settings::default(),
+                    rewrite: false,
+                    show_settings: false,
+                }
             }
         };
-        let (mut settings, migrated) = super::load(stored.as_ref());
+        let mut settings = opened.settings;
         let adopted = super::adopt_login_item(&mut settings, login_item(app));
-        if migrated || adopted {
+        if opened.rewrite || adopted {
             persist(app, &settings);
         }
         *app.state::<AppState>()
@@ -1514,5 +1629,124 @@ mod tests {
         future["version"] = json!(2);
         assert_eq!(load(Some(&future)), (custom(), true));
         assert_eq!(load(Some(&json!("corrupt"))), (defaults(), true));
+    }
+
+    /// The bytes tauri-plugin-store's `save` wrote: its default serializer, `to_vec_pretty`, over
+    /// its key map.
+    fn store_bytes(settings: &Settings) -> Vec<u8> {
+        let map = std::collections::HashMap::from([(
+            "settings".to_owned(),
+            serde_json::to_value(settings).unwrap(),
+        )]);
+        serde_json::to_vec_pretty(&map).unwrap()
+    }
+    /// Every file in `dir`, by name.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_file_the_store_wrote_loads_unchanged_and_is_written_back_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        fs::write(&path, store_bytes(&custom())).unwrap();
+        assert_eq!(
+            open(&path, 1),
+            Opened {
+                settings: custom(),
+                rewrite: false,
+                show_settings: false,
+            }
+        );
+        assert_eq!(encode(&custom()).unwrap(), store_bytes(&custom()));
+        write_file(&path, &custom()).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), store_bytes(&custom()));
+    }
+
+    #[test]
+    fn the_first_launch_has_no_file_and_opens_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("com.undertone.desktop").join(FILE);
+        assert_eq!(read_file(&path), Stored::Missing);
+        assert_eq!(
+            open(&path, 1),
+            Opened {
+                settings: defaults(),
+                rewrite: true,
+                show_settings: true,
+            }
+        );
+        // The data dir doesn't exist yet either: saving creates it.
+        write_file(&path, &defaults()).unwrap();
+        assert_eq!(
+            open(&path, 2),
+            Opened {
+                settings: defaults(),
+                rewrite: false,
+                show_settings: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_save_replaces_the_whole_file_and_leaves_nothing_else_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        fs::write(&path, vec![b' '; 50_000]).unwrap();
+        write_file(&path, &custom()).unwrap();
+        assert_eq!(
+            read_file(&path),
+            Stored::Found(serde_json::to_value(custom()).unwrap())
+        );
+        write_file(&path, &defaults()).unwrap();
+        assert_eq!(open(&path, 1).settings, defaults());
+        assert_eq!(names(dir.path()), [FILE]);
+        // A path that can't be a file fails without touching anything.
+        assert!(write_file(dir.path(), &defaults()).is_err());
+        assert_eq!(names(dir.path()), [FILE]);
+    }
+
+    #[test]
+    fn an_unusable_file_is_moved_aside_before_the_defaults_replace_it() {
+        assert_eq!(
+            backup_path(Path::new("data").join(FILE).as_path(), 1_791_277_500),
+            Path::new("data").join("settings.corrupt-1791277500.json")
+        );
+        let truncated = &store_bytes(&custom())[..120];
+        for (bytes, why) in [
+            (truncated.to_vec(), "not JSON: "),
+            (Vec::new(), "not JSON: "),
+            (br#"{"other": 1}"#.to_vec(), "no \"settings\" entry"),
+            (
+                vec![b' '; MAX_FILE_BYTES as usize + 1],
+                "larger than 1024 KiB",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(FILE);
+            fs::write(&path, &bytes).unwrap();
+            assert!(
+                matches!(read_file(&path), Stored::Unusable(error) if error.starts_with(why)),
+                "{why}"
+            );
+            // Settings opens, since the user's settings are gone, and the defaults are saved.
+            assert_eq!(
+                open(&path, 1_791_277_500),
+                Opened {
+                    settings: defaults(),
+                    rewrite: true,
+                    show_settings: true,
+                },
+                "{why}"
+            );
+            let backup = dir.path().join("settings.corrupt-1791277500.json");
+            assert_eq!(fs::read(&backup).unwrap(), bytes, "{why}");
+            assert!(!path.exists(), "{why}");
+        }
     }
 }

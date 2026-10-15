@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use std::{
     ffi::OsString,
     fs::{File, OpenOptions},
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -77,10 +77,6 @@ const LOOKUP_TIMEOUT: Duration = Duration::from_secs(6);
 const MEDIA_TIMEOUT: Duration = Duration::from_secs(10);
 const LRCLIB_API: &str = "https://lrclib.net/api/";
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-/// Where `settings::runtime` keeps the settings: one key in the store's file in the app data dir.
-const SETTINGS_FILE: &str = "settings.json";
-const SETTINGS_KEY: &str = "settings";
-const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 /// How much of the running app's log the report shows.
 const LOG_LINES: usize = 60;
 
@@ -112,7 +108,7 @@ fn write_report(dir: &Path, env: Env<'_>, echo: &mut dyn FnMut(&str)) -> (i32, O
         .build()
         .map_err(|error| format!("async runtime: {error}"));
     let data_dir = identifier().and_then(|id| app_data_dir(std::env::consts::OS, &id, env));
-    let settings_path = data_dir.clone().map(|dir| dir.join(SETTINGS_FILE));
+    let settings_path = data_dir.clone().map(|dir| dir.join(settings::FILE));
     let stored = settings_path
         .as_ref()
         .map(|path| read_settings(path))
@@ -699,7 +695,7 @@ fn tier(delta: f64) -> &'static str {
 pub enum StoredSettings {
     /// No file yet: Undertone starts from the defaults and writes them.
     Missing,
-    /// A file Undertone cannot use: it starts from the defaults and overwrites it.
+    /// A file Undertone cannot use: it moves it aside and starts from the defaults.
     Unreadable(String),
     /// `current` is false when Undertone repairs or migrates (rewrites) `stored` on start.
     Loaded {
@@ -717,36 +713,20 @@ impl StoredSettings {
         }
     }
 }
+/// The settings file read as `settings::open` reads it on start.
 pub fn read_settings(path: &Path) -> StoredSettings {
-    let bytes = match read_limited(path, MAX_SETTINGS_BYTES) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return StoredSettings::Missing,
-        Err(error) => return StoredSettings::Unreadable(error.to_string()),
-    };
-    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(value) => value,
-        Err(error) => return StoredSettings::Unreadable(format!("not JSON: {error}")),
-    };
-    let Some(stored) = value.get(SETTINGS_KEY) else {
-        return StoredSettings::Unreadable(format!("no {SETTINGS_KEY:?} entry"));
-    };
-    let (settings, rewrite) = settings::load(Some(stored));
-    StoredSettings::Loaded {
-        settings: Box::new(settings),
-        current: !rewrite,
-        stored: stored.clone(),
+    match settings::read_file(path) {
+        settings::Stored::Missing => StoredSettings::Missing,
+        settings::Stored::Unusable(error) => StoredSettings::Unreadable(error),
+        settings::Stored::Found(stored) => {
+            let (settings, rewrite) = settings::load(Some(&stored));
+            StoredSettings::Loaded {
+                settings: Box::new(settings),
+                current: !rewrite,
+                stored,
+            }
+        }
     }
-}
-fn read_limited(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > limit {
-        return Err(std::io::Error::other(format!(
-            "larger than {} KiB",
-            limit / 1024
-        )));
-    }
-    Ok(bytes)
 }
 pub fn settings_section(
     path: &Result<PathBuf, String>,
@@ -756,9 +736,10 @@ pub fn settings_section(
         let stored = stored.as_ref().map_err(Clone::clone)?;
         let state = match stored {
             StoredSettings::Missing => "no file yet: Undertone uses the defaults".into(),
-            StoredSettings::Unreadable(error) => {
-                format!("unusable ({error}): Undertone uses the defaults and overwrites it")
-            }
+            StoredSettings::Unreadable(error) => format!(
+                "unusable ({error}): on start Undertone moves it to \
+                 settings.corrupt-<time>.json and uses the defaults"
+            ),
             StoredSettings::Loaded { current: true, .. } => "saved, current".into(),
             StoredSettings::Loaded { current: false, .. } => {
                 "saved; Undertone repairs or migrates it on start".into()
@@ -2779,7 +2760,10 @@ mod tests {
         assert!(text.contains("\"size\": 140.0"));
         let text =
             settings_section(&path, &Ok(StoredSettings::Unreadable("not JSON".into()))).render();
-        assert!(text.contains("unusable (not JSON): Undertone uses the defaults"));
+        assert!(text.contains(
+            "unusable (not JSON): on start Undertone moves it to settings.corrupt-<time>.json \
+             and uses the defaults"
+        ));
         let unknown: Result<PathBuf, String> = Err("HOME is not set".into());
         assert_eq!(
             settings_section(&unknown, &Err("HOME is not set".into())).render(),
