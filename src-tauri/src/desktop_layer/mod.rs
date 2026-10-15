@@ -524,7 +524,15 @@ mod tests {
             .find(&format!("fn {name}("))
             .unwrap_or_else(|| panic!("no fn {name}"));
         let body = &source[start..];
-        &body[..body.find("\n    }\n").unwrap()]
+        // The method's closing brace on a line of its own. A Windows checkout has CRLF line ends.
+        let end = body
+            .match_indices("\n    }")
+            .find(|(at, close)| {
+                matches!(body.as_bytes().get(at + close.len()), Some(b'\n' | b'\r'))
+            })
+            .map(|(at, _)| at)
+            .unwrap_or_else(|| panic!("no end of fn {name}"));
+        &body[..end]
     }
 
     #[test]
