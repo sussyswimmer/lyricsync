@@ -7,10 +7,19 @@ import { sameLyrics, viewFor } from "./view";
 
 /** Longest the loop sleeps between word boundaries, so a slewing clock or a missed event can't strand it. */
 const MAX_SLEEP_MS = 250;
+/**
+ * Busy frames (a glide, Lens following the sung word) start at most this often. requestAnimationFrame
+ * runs at the display's refresh rate, 120 or 144 times a second on many Windows laptops, and a Lens
+ * frame restyles every word of its line. Just over one 120 Hz frame: a display up to 100 Hz still gets
+ * every frame, 120 and 144 Hz ones every other (60 and 72 fps), a 240 Hz one every third (80 fps).
+ */
+const BUSY_FRAME_MS = 8.6;
 /** Wait before asking again when the first lyrics query for a track answers `error`. */
 const QUERY_RETRY_MS = 1500;
 /** A track whose artwork hasn't arrived by now gets the manual colors instead of the last song's. */
 const ARTWORK_GRACE_MS = 1500;
+
+const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 
 export interface ControllerOptions {
   /**
@@ -26,7 +35,8 @@ export interface ControllerOptions {
 /**
  * Drives a stage from a bridge: playback clock, lyrics, album colors, visibility, and the frame loop.
  * The loop runs only while a track is playing and the stage is visible; between word boundaries it
- * sleeps instead of drawing identical frames.
+ * sleeps instead of drawing identical frames, and frames that move (a glide, the Lens fisheye) come at
+ * most every BUSY_FRAME_MS, however fast the display refreshes.
  */
 export class OverlayController {
   readonly clock = new PlaybackClock();
@@ -41,6 +51,8 @@ export class OverlayController {
   private unlisten: Unlisten[] = [];
   private raf = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** After a busy frame: the earliest the next frame may begin (performance.now() clock), else null. */
+  private paceUntil: number | null = null;
   private artworkTimer: ReturnType<typeof setTimeout> | null = null;
   private visible = false;
   private stopped = false;
@@ -107,6 +119,7 @@ export class OverlayController {
     if (this.stopped) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.paceUntil = null;
     if (!this.raf && typeof requestAnimationFrame === "function") this.raf = requestAnimationFrame(this.tick);
   }
 
@@ -219,20 +232,43 @@ export class OverlayController {
     return this.visible && !!this.nowPlaying?.isPlaying && !hidden;
   }
 
-  private readonly tick = (): void => {
+  /**
+   * One frame. `time` is when the frame began (its vsync), on performance.now()'s clock. After a busy
+   * frame, the next may begin BUSY_FRAME_MS later at the earliest; the loop waits for that on a timer
+   * rather than requesting frames and skipping them, so the page doesn't wake at the display's rate.
+   * A frame that began before then anyway (the timer ran ahead of a frame already under way) is passed
+   * over. kick() paints at the next frame regardless: something changed.
+   */
+  private readonly tick = (time: number): void => {
     this.raf = 0;
     if (this.stopped) return;
+    const start = now();
+    // an engine whose timestamp isn't on that clock: count from now
+    const frame = time <= start && start - time < 100 ? time : start;
+    if (this.paceUntil !== null && frame < this.paceUntil) {
+      this.raf = requestAnimationFrame(this.tick);
+      return;
+    }
+    this.paceUntil = null;
     const t = this.clock.position(Date.now());
     const busy = this.stage.render(t);
     if (!this.animating) return;
     if (busy) {
-      this.raf = requestAnimationFrame(this.tick);
+      this.paceUntil = frame + BUSY_FRAME_MS;
+      const due = Math.ceil(this.paceUntil - now());
+      if (due > 0) this.wake(due);
+      else this.raf = requestAnimationFrame(this.tick);
       return;
     }
     const wait = Math.min(MAX_SLEEP_MS, this.stage.nextChange(t));
+    this.wake(Math.max(0, wait - 4));
+  };
+
+  /** Asks for a frame once `ms` have passed. kick() and destroy() cancel the wait. */
+  private wake(ms: number): void {
     this.timer = setTimeout(() => {
       this.timer = null;
       this.raf = requestAnimationFrame(this.tick);
-    }, Math.max(0, wait - 4));
-  };
+    }, ms);
+  }
 }
