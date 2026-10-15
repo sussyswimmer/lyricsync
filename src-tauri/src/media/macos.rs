@@ -4,7 +4,7 @@
 //! parsing, picking the source and artwork all stay off the main thread.
 use super::{
     applescript::{
-        self, Consent, Failure, FailureKind, Player, Reading, Script, Verdict, HOLD,
+        self, Consent, Failure, FailureKind, Launches, Player, Reading, Script, Verdict, HOLD,
         TIMEOUT_COOLDOWN,
     },
     artwork, epoch_ms,
@@ -59,6 +59,8 @@ pub struct MacSource {
     consent: Arc<Mutex<HashMap<Player, Consent>>>,
     /// Which players ran in the last snapshot, and whether Automation is denied for one.
     presence: Mutex<Presence>,
+    /// When each running player was first seen: one still launching is not read yet.
+    launches: Mutex<Launches>,
     /// Each player's last good reading, standing in for it across a transient failure.
     last: Mutex<HashMap<Player, Held>>,
     /// A player that timed out is not sent another script before this time.
@@ -124,6 +126,7 @@ impl Backend for MacSource {
             reported: Mutex::new(HashMap::new()),
             consent: shared_consent(),
             presence: Mutex::new(Presence::Unknown),
+            launches: Mutex::new(Launches::default()),
             last: Mutex::new(HashMap::new()),
             cooldown: Mutex::new(HashMap::new()),
             reading: Arc::new(AtomicBool::new(false)),
@@ -141,9 +144,12 @@ impl Backend for MacSource {
 impl MediaSource for MacSource {
     async fn snapshot(&self) -> Option<RawTrack> {
         let running = running_players();
+        let readable = lock(&self.launches).readable(&running, Instant::now());
+        let running: Vec<Player> = running.into_iter().map(|(player, _)| player).collect();
         let mut readings: Vec<(Player, Reading, f64)> = Vec::new();
         for player in Player::ALL {
-            if !running.contains(&player) {
+            // Closed, or still launching: a script would wait out its timeout on the main thread.
+            if !readable.contains(&player) {
                 lock(&self.last).remove(&player);
                 continue;
             }
@@ -428,21 +434,27 @@ async fn on_main<T: Send + 'static>(
     }
 }
 
-/// Which players run. NSWorkspace's list is thread-safe, and checking it first means a closed
-/// player is never sent an Apple event: `tell application` would launch it.
-fn running_players() -> Vec<Player> {
+/// Which players run, and whether each has finished launching. NSWorkspace's list is
+/// thread-safe, and checking it first means a closed player is never sent an Apple event: `tell
+/// application` would launch it.
+fn running_players() -> Vec<(Player, bool)> {
     autoreleasepool(|_| {
         let apps = NSWorkspace::sharedWorkspace().runningApplications();
         Player::ALL
             .into_iter()
-            .filter(|player| {
+            .filter_map(|player| {
                 let bundle_id = NSString::from_str(player.bundle_id());
-                apps.iter().any(|app| {
-                    !app.isTerminated()
-                        && app
-                            .bundleIdentifier()
-                            .is_some_and(|id| id.isEqualToString(&bundle_id))
-                })
+                let instances: Vec<_> = apps
+                    .iter()
+                    .filter(|app| {
+                        !app.isTerminated()
+                            && app
+                                .bundleIdentifier()
+                                .is_some_and(|id| id.isEqualToString(&bundle_id))
+                    })
+                    .collect();
+                let finished_launching = instances.iter().any(|app| app.isFinishedLaunching());
+                (!instances.is_empty()).then_some((player, finished_launching))
             })
             .collect()
     })

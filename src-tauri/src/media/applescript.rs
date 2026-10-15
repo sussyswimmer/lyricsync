@@ -460,6 +460,33 @@ impl Consent {
     }
 }
 
+/// How long a running player that has not reported finishing its launch is left unread. Until it
+/// does, AppKit holds the Apple events sent to it, so a read script would wait out its whole 2 s
+/// timeout on the main thread (more than once while Spotify starts). Some apps never report it,
+/// so after this long a player is read anyway.
+pub const LAUNCH_GRACE: Duration = Duration::from_secs(10);
+
+/// When each running player was first seen, for `LAUNCH_GRACE`.
+#[derive(Debug, Default)]
+pub struct Launches(HashMap<Player, Instant>);
+impl Launches {
+    /// The players a read script may be sent to now. `running` lists each running player and
+    /// whether it reports having finished launching. A player missing from it is forgotten, so a
+    /// relaunch waits again.
+    pub fn readable(&mut self, running: &[(Player, bool)], now: Instant) -> Vec<Player> {
+        self.0
+            .retain(|player, _| running.iter().any(|(running, _)| running == player));
+        let mut readable = Vec::new();
+        for &(player, finished_launching) in running {
+            let since = *self.0.entry(player).or_insert(now);
+            if finished_launching || now.saturating_duration_since(since) >= LAUNCH_GRACE {
+                readable.push(player);
+            }
+        }
+        readable
+    }
+}
+
 /// What `media-status` hears from macOS: the first running player (Spotify, then Music) that
 /// Automation is denied for, otherwise whether either player runs at all.
 pub fn presence(running: &[Player], denied: impl Fn(Player) -> bool) -> Presence {
@@ -903,6 +930,43 @@ mod tests {
             .unwrap()
             .answered(-1743, now);
         assert_eq!(read(&verdicts), Presence::Denied(Source::Spotify));
+    }
+    #[test]
+    fn a_launching_player_is_read_once_it_finished_or_after_the_grace() {
+        let t0 = Instant::now();
+        let secs = Duration::from_secs;
+        let mut launches = Launches::default();
+        // Already running when Undertone looks: read at once.
+        assert_eq!(
+            launches.readable(&[(Player::Music, true)], t0),
+            [Player::Music]
+        );
+        // Spotify starting: present, but not read until it has finished launching.
+        let starting = [(Player::Spotify, false), (Player::Music, true)];
+        assert_eq!(launches.readable(&starting, t0), [Player::Music]);
+        assert_eq!(launches.readable(&starting, t0 + secs(3)), [Player::Music]);
+        let started = [(Player::Spotify, true), (Player::Music, true)];
+        assert_eq!(
+            launches.readable(&started, t0 + secs(4)),
+            [Player::Spotify, Player::Music]
+        );
+        // An app that never reports finishing its launch is read after the grace.
+        let mut launches = Launches::default();
+        let silent = [(Player::Spotify, false)];
+        assert!(launches.readable(&silent, t0).is_empty());
+        let just_before = t0 + LAUNCH_GRACE - Duration::from_millis(1);
+        assert!(launches.readable(&silent, just_before).is_empty());
+        assert_eq!(
+            launches.readable(&silent, t0 + LAUNCH_GRACE),
+            [Player::Spotify]
+        );
+        // Quit and relaunched: the grace starts over.
+        assert!(launches.readable(&[], t0 + secs(11)).is_empty());
+        assert!(launches.readable(&silent, t0 + secs(12)).is_empty());
+        assert_eq!(
+            launches.readable(&silent, t0 + secs(12) + LAUNCH_GRACE),
+            [Player::Spotify]
+        );
     }
     #[test]
     fn playing_spotify_then_playing_music_then_most_recent() {
