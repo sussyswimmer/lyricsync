@@ -6,6 +6,9 @@
   position: relative;
   overflow: hidden;
   transition: opacity 0.35s ease;
+  /* Lyric, highlight and dim colors and the legibility shadow are the user's (or the album's), and
+     word states are drawn by color alone: a Windows Contrast theme must not flatten them. */
+  forced-color-adjust: none;
 }
 
 .ut-stage.ut-hidden {
@@ -33,6 +36,8 @@
   text-align: center;
   line-height: 1.12;
   overflow-wrap: break-word;
+  /* No lone last word: same number of rows (so the same height DriftMode measures), evened out. */
+  text-wrap: balance;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
@@ -84,7 +89,8 @@
     sans-serif;
   padding: 0.55em 1.05em;
   border-radius: 999px;
-  background: rgba(12, 14, 18, 0.42);
+  /* Dark enough that the lyric color (light by design) reads at 4.5:1 over a white wallpaper. */
+  background: rgba(12, 14, 18, 0.68);
   box-shadow: 0 1px 10px rgba(0, 0, 0, 0.18);
   letter-spacing: 0.01em;
   /* Comes in with its scene's fade, holds (the delay is set by states.ts), then fades out for good. */

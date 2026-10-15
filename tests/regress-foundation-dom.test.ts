@@ -592,33 +592,39 @@ describe("the not-found chip", () => {
   });
 });
 
+/**
+ * stage.css without comments, read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline,
+ * which yields "" in node. A non-literal specifier, because the strict type check runs without node's types.
+ */
+async function stageCss(): Promise<string> {
+  const fsModule = "node:fs";
+  const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+  return fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
+function blocks(sheet: string): { prelude: string; body: string }[] {
+  const out: { prelude: string; body: string }[] = [];
+  let depth = 0;
+  let start = 0;
+  let open = 0;
+  for (let i = 0; i < sheet.length; i++) {
+    if (sheet[i] === "{" && depth++ === 0) open = i;
+    if (sheet[i] === "}" && --depth === 0) {
+      out.push({ prelude: sheet.slice(start, open).trim(), body: sheet.slice(open + 1, i) });
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
 // Regression (reduced-motion-loading-pulse): under reduced motion the loading dots kept pulsing forever;
 // only the instrumental ♪ had stopped breathing. C6: reduced motion means crossfades only.
 describe("stage.css under reduced motion", () => {
-  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
-  // non-literal specifier, because the strict type check runs without node's types.
   let css = "";
   beforeAll(async () => {
-    const fsModule = "node:fs";
-    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-    css = fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    css = await stageCss();
   });
-
-  /** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
-  function blocks(sheet: string): { prelude: string; body: string }[] {
-    const out: { prelude: string; body: string }[] = [];
-    let depth = 0;
-    let start = 0;
-    let open = 0;
-    for (let i = 0; i < sheet.length; i++) {
-      if (sheet[i] === "{" && depth++ === 0) open = i;
-      if (sheet[i] === "}" && --depth === 0) {
-        out.push({ prelude: sheet.slice(start, open).trim(), body: sheet.slice(open + 1, i) });
-        start = i + 1;
-      }
-    }
-    return out;
-  }
 
   const animationOf = (body: string): string => /(?:^|;)\s*animation\s*:\s*([^;]*)/.exec(body)?.[1]?.trim() ?? "";
   /** The rules inside `@media (prefers-reduced-motion: reduce)`, by selector. */
@@ -656,6 +662,49 @@ describe("stage.css under reduced motion", () => {
     const host = new FakeElement("div");
     buildState(asHtml(host), "loading", lookFor());
     expect(host.children[0]?.style["animationDelay"]).toBe("600ms");
+  });
+});
+
+/** WCAG relative luminance of an sRGB color, 0-255 per channel. */
+function luminance([r, g, b]: number[]): number {
+  const lin = (c: number): number => (c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r ?? 0) + 0.7152 * lin(g ?? 0) + 0.0722 * lin(b ?? 0);
+}
+const rgbOf = (hex: string): number[] => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+const contrast = (a: number[], b: number[]): number => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
+};
+
+describe("stage.css legibility", () => {
+  let css = "";
+  beforeAll(async () => {
+    css = await stageCss();
+  });
+  const rule = (selector: string): string => blocks(css).find((b) => b.prelude === selector)?.body ?? "";
+
+  // Regression (chip-contrast): the not-found and error chips' 0.42 dark fill left light lyric text at
+  // about 2.8:1 over a light wallpaper, under the 4.5:1 that 17 px text needs.
+  it("keeps the chip's text at 4.5:1 or better over a white wallpaper, and gives it the lyrics' dark shadow", () => {
+    const m = /background:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(rule(".state-chip"));
+    expect(m).not.toBeNull();
+    const alpha = Number(m?.[4]);
+    const fill = [1, 2, 3].map((i) => Number(m?.[i]) * alpha + 255 * (1 - alpha));
+    // the default lyric color, and the bluest album lyric color paletteFromPixels makes (HSL lightness 0.92, saturation 0.3)
+    for (const lyric of [DEFAULT_SETTINGS.colors.lyric, "#e4e4f1"]) expect(contrast(rgbOf(lyric), fill), lyric).toBeGreaterThanOrEqual(4.5);
+    const host = new FakeElement("div");
+    buildState(asHtml(host), "not-found", lookFor());
+    expect(String(host.children[0]?.style["textShadow"])).toMatch(/rgba\(0, 0, 0,/);
+  });
+
+  // Windows Contrast themes force every color, shadows off: word states, drawn by color alone, vanished.
+  it("keeps the lyric colors and shadows under forced colors", () => {
+    expect(rule(".ut-stage")).toMatch(/forced-color-adjust:\s*none/);
+  });
+
+  // Drift and Stack left one word alone on the last row of a wrapped lyric.
+  it("balances the rows of a wrapped Drift or Stack line", () => {
+    expect(rule(".drift-row")).toMatch(/text-wrap:\s*balance/);
   });
 });
 
