@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings } fr
 import { createMockBridge, type MockBridge } from "../src/bridge/mock";
 import type { Bridge } from "../src/bridge/types";
 import { PaletteCache } from "../src/core/palette";
+import { FONTS } from "../src/overlay/fonts";
 import { GAP_GRACE_MS, TrackHold } from "../src/settings/hold";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
@@ -282,6 +283,42 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
     expect(clampTrackOffset(2100)).toBe(TRACK_OFFSET_LIMIT_MS);
     expect(clampTrackOffset(-2100)).toBe(-TRACK_OFFSET_LIMIT_MS);
     expect(clampTrackOffset(49.6)).toBe(50);
+  });
+});
+
+describe("font-vietnamese: the font picker says which faces draw Vietnamese accents in another font", () => {
+  const note = (p: ReturnType<typeof mountPanel>): FakeElement => p.root.one("font-note");
+  const pick = (p: ReturnType<typeof mountPanel>, family: string): void => {
+    const input = p.root.one("fonts").all("opt").find((o) => o.dataset["family"] === family)?.children[0];
+    if (!input) throw new Error(`no ${family} tile`);
+    input.checked = true;
+    input.dispatch("change");
+  };
+
+  it("says nothing for the default face, and names a face without the subset once it is picked", () => {
+    const p = mountPanel();
+    expect(note(p).textContent).toBe("");
+    expect(p.root.one("fonts").getAttribute("aria-describedby")).toBe(note(p).id);
+    pick(p, "Caveat");
+    expect(note(p).textContent).toBe("Caveat has no Vietnamese accented letters, so those come from a system font.");
+    pick(p, "Instrument Serif");
+    expect(note(p).textContent).toBe("Instrument Serif has no Vietnamese accented letters, so those come from a system font.");
+    pick(p, "Bricolage Grotesque");
+    expect(note(p).textContent).toBe("");
+  });
+
+  it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", async () => {
+    const fsModule = "node:fs";
+    const fs = (await import(/* @vite-ignore */ fsModule)) as { readdirSync(path: URL): string[] };
+    for (const face of FONTS) {
+      if (face.family === "System") {
+        expect(face.vietnamese).toBe(true);
+        continue;
+      }
+      const dir = face.family.toLowerCase().replace(/ /g, "-");
+      const files = fs.readdirSync(new URL(`../node_modules/@fontsource/${dir}/files/`, import.meta.url));
+      expect(face.vietnamese, face.family).toBe(files.some((f) => f.includes("-vietnamese-")));
+    }
   });
 });
 

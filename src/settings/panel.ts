@@ -424,9 +424,18 @@ export class SettingsPanel {
         label.dataset.family = face.family;
       },
     });
-    const { el, card } = group("Font", fonts.el);
+    // Three bundled faces have no Vietnamese subset: their accented letters come from a fallback face,
+    // which shows inside every word. Said here, where the face is picked, rather than only in the guide.
+    const note = hint("", "font-note");
+    note.id = nextId("font-note");
+    fonts.el.setAttribute("aria-describedby", note.id);
+    const { el, card } = group("Font", fonts.el, note);
     card.classList.add("card-plain");
-    this.renderers.push((s) => fonts.set(fontFor(s.settings.font.family).family));
+    this.renderers.push((s) => {
+      const face = fontFor(s.settings.font.family);
+      fonts.set(face.family);
+      setText(note, face.vietnamese ? "" : `${face.label} has no Vietnamese accented letters, so those come from a system font.`);
+    });
     return el;
   }
 

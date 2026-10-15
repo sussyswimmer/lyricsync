@@ -751,6 +751,16 @@ html.is-scrolled .top {
   font-size: 15px;
 }
 
+/* empty (and without height) for a face with Vietnamese accented letters; more specific than
+   `.card > .hint`, which pads every caption in a card */
+.card > .hint.font-note {
+  padding: 8px 4px 0;
+}
+
+.card > .hint.font-note:empty {
+  padding: 0;
+}
+
 /* two-way choices */
 .seg {
   display: grid;

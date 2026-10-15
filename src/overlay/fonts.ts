@@ -12,20 +12,22 @@ export interface FontChoice {
   label: string;
   stack: string;
   weight: number;
+  /** has Vietnamese accented letters; without them those come from a fallback face (Settings says so) */
+  vietnamese: boolean;
 }
 
 const SANS_TAIL = `system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans", "Yu Gothic", "Microsoft YaHei", "Malgun Gothic", sans-serif`;
 const SERIF_TAIL = `Georgia, "Hiragino Mincho ProN", "Yu Mincho", "Songti SC", "SimSun", serif`;
 
 export const FONTS: readonly FontChoice[] = [
-  { family: "Fraunces", label: "Fraunces", stack: `"Fraunces", ${SERIF_TAIL}`, weight: 700 },
-  { family: "Instrument Serif", label: "Instrument Serif", stack: `"Instrument Serif", ${SERIF_TAIL}`, weight: 400 },
-  { family: "Syne", label: "Syne", stack: `"Syne", ${SANS_TAIL}`, weight: 800 },
-  { family: "Unbounded", label: "Unbounded", stack: `"Unbounded", ${SANS_TAIL}`, weight: 700 },
-  { family: "Bricolage Grotesque", label: "Bricolage", stack: `"Bricolage Grotesque", ${SANS_TAIL}`, weight: 700 },
-  { family: "Caveat", label: "Caveat", stack: `"Caveat", "Comic Sans MS", ${SANS_TAIL}`, weight: 600 },
-  { family: "JetBrains Mono", label: "JetBrains Mono", stack: `"JetBrains Mono", ui-monospace, Menlo, Consolas, ${SANS_TAIL}`, weight: 600 },
-  { family: "System", label: "System", stack: SANS_TAIL, weight: 700 },
+  { family: "Fraunces", label: "Fraunces", stack: `"Fraunces", ${SERIF_TAIL}`, weight: 700, vietnamese: true },
+  { family: "Instrument Serif", label: "Instrument Serif", stack: `"Instrument Serif", ${SERIF_TAIL}`, weight: 400, vietnamese: false },
+  { family: "Syne", label: "Syne", stack: `"Syne", ${SANS_TAIL}`, weight: 800, vietnamese: false },
+  { family: "Unbounded", label: "Unbounded", stack: `"Unbounded", ${SANS_TAIL}`, weight: 700, vietnamese: true },
+  { family: "Bricolage Grotesque", label: "Bricolage", stack: `"Bricolage Grotesque", ${SANS_TAIL}`, weight: 700, vietnamese: true },
+  { family: "Caveat", label: "Caveat", stack: `"Caveat", "Comic Sans MS", ${SANS_TAIL}`, weight: 600, vietnamese: false },
+  { family: "JetBrains Mono", label: "JetBrains Mono", stack: `"JetBrains Mono", ui-monospace, Menlo, Consolas, ${SANS_TAIL}`, weight: 600, vietnamese: true },
+  { family: "System", label: "System", stack: SANS_TAIL, weight: 700, vietnamese: true },
 ];
 
 /** The choice for a settings family name; unknown names fall back to the default face. */
