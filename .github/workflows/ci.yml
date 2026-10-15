@@ -39,6 +39,26 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Enable pnpm
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      # THIRD_PARTY_NOTICES.txt must list every font, package and crate the installers ship.
+      # cargo metadata downloads the macOS and Windows crates to read their license files.
+      - run: node scripts/notices.mjs --check
+
   rust:
     name: Rust (${{ matrix.os }})
     strategy:
@@ -75,7 +95,7 @@ jobs:
 
   bundle:
     name: Bundle (${{ matrix.name }})
-    needs: [frontend, rust]
+    needs: [frontend, notices, rust]
     # A pull request from a branch of this repo already gets installers from that branch's push
     # run, so only pull requests from forks build them a second time.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
