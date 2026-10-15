@@ -190,9 +190,10 @@ async function boot(host: HTMLElement): Promise<void> {
 
   // In the app, Settings is a window rather than a web page: no browser context menu, and no reload,
   // print or find bar from the keyboard (WebView2 keeps its browser keys on by default). The mock in a
-  // browser keeps them, for development.
+  // browser keeps them, for development, and so does the context menu in `pnpm tauri dev`: its Inspect
+  // Element is the macOS webview's only way into devtools besides Tauri's ⌘⌥I.
   if (bridge.kind === "tauri") {
-    document.addEventListener("contextmenu", (e) => e.preventDefault());
+    if (!import.meta.env.DEV) document.addEventListener("contextmenu", (e) => e.preventDefault());
     // Bubbling, so a key the shortcut recorder took (and prevented) stays the recorder's.
     window.addEventListener("keydown", (e) => {
       if (!e.defaultPrevented && isBrowserKey(e)) e.preventDefault();

@@ -1,11 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
 /*
- * src-tauri/capabilities/default.json grants the webviews exactly what the frontend uses, nothing of
- * core:default (tray, menu, window, app APIs) and no emitting: every page renders `settings-changed` and
- * `now-playing` from the payload, so a page that could emit could forge them for the others. These tests
- * derive the grant from the frontend's @tauri-apps/api imports, so a new import fails here until the
- * capability allows it, and a permission nothing uses fails until it is dropped.
+ * src-tauri/capabilities/default.json grants the webviews exactly what the frontend uses (plus Tauri's
+ * debug devtools hotkey, TAURI_DEBUG below), nothing else of core:default (tray, menu, window, app APIs)
+ * and no emitting: every page renders `settings-changed` and `now-playing` from the payload, so a page
+ * that could emit could forge them for the others. These tests derive the grant from the frontend's
+ * @tauri-apps/api imports, so a new import fails here until the capability allows it, and a permission
+ * nothing uses fails until it is dropped.
  */
 
 interface Fs {
@@ -24,6 +25,13 @@ beforeAll(async () => {
 });
 
 const LISTEN = ["core:event:allow-listen", "core:event:allow-unlisten"];
+
+/**
+ * Not the frontend's: in debug builds Tauri injects its own toggle-devtools.js into every page, and
+ * its ⌘⌥I / Ctrl+Shift+I calls `plugin:webview|internal_toggle_devtools`. Release builds don't
+ * compile that command (no `devtools` feature), so the grant reaches nothing there.
+ */
+const TAURI_DEBUG = "core:webview:allow-internal-toggle-devtools";
 
 /**
  * What each import needs from the capability. `invoke` reaches the app's own commands, which are open
@@ -79,7 +87,7 @@ describe("webview capability", () => {
       }
     }
     const capability = JSON.parse(read("src-tauri/capabilities/default.json")) as Capability;
-    expect([...capability.permissions].sort()).toEqual([...needed].sort());
+    expect([...capability.permissions].sort()).toEqual([...needed, TAURI_DEBUG].sort());
   });
 
   it("keeps the app's commands open to its pages and never calls core directly", () => {
