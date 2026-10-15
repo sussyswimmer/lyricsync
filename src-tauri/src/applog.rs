@@ -373,4 +373,29 @@ mod tests {
             all[0]
         );
     }
+
+    #[test]
+    fn a_second_launch_logs_no_start() {
+        // A second launch (how Windows reopens Settings) opens the log too, then single-instance
+        // hands it over and exits inside `build`. Logged before that, its "started" line would
+        // read in `--diagnose` like a restart with no exit before it.
+        let lib = include_str!("lib.rs").replace("\r\n", "\n"); // a Windows checkout has CRLF
+        let body = |signature: &str| {
+            let start = lib.find(&format!("\n{signature} {{\n")).expect(signature);
+            &lib[start..start + lib[start..].find("\n}\n").unwrap()]
+        };
+        assert!(!body("fn start_log()").contains("started"));
+        assert!(body("fn log_started()").contains("\"Undertone {} started ("));
+        let run = body("pub fn run()");
+        let order = [
+            "start_log();",
+            "tauri_plugin_single_instance::init(",
+            ".build(tauri::generate_context!())",
+            "log_started();",
+            "app.run(",
+        ]
+        .map(|step| run.find(step).expect(step));
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+        assert_eq!(lib.matches("log_started();").count(), 1);
+    }
 }

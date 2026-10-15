@@ -408,16 +408,28 @@ mod tests {
     }
 
     #[test]
-    fn every_webview_may_listen_to_events_and_nothing_more() {
+    fn every_webview_may_listen_to_events_and_toggle_debug_devtools_only() {
         // The pages call the app's own commands (open to them while build.rs declares no app
         // manifest) and listen to events; tests/capabilities.test.ts matches the permissions to
         // their imports. Tray, menu, window and app APIs, and emitting events, stay in Rust.
+        // The one exception is Tauri's own: in debug builds it injects toggle-devtools.js into
+        // every page, and its ⌘⌥I / Ctrl+Shift+I calls this command. Release builds don't compile
+        // the command (no `devtools` feature), so the grant reaches nothing there.
+        const TAURI_DEBUG: &str = "core:webview:allow-internal-toggle-devtools";
         let capability: serde_json::Value =
             serde_json::from_str(include_str!("../../capabilities/default.json")).unwrap();
-        for permission in capability["permissions"].as_array().unwrap() {
-            let permission = permission.as_str().unwrap();
+        let permissions: Vec<&str> = capability["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|permission| permission.as_str().unwrap())
+            .collect();
+        assert!(permissions.contains(&TAURI_DEBUG), "{permissions:?}");
+        for permission in permissions {
             assert!(
-                permission.starts_with("core:event:allow-") && !permission.contains("emit"),
+                permission == TAURI_DEBUG
+                    || (permission.starts_with("core:event:allow-")
+                        && !permission.contains("emit")),
                 "{permission}"
             );
         }

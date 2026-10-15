@@ -153,6 +153,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -395,6 +396,7 @@ describe("settings window: nothing is lost as the window goes away", () => {
 
 describe("settings window: a window, not a web page", () => {
   it("in the app, turns off the browser's context menu and its reload, print and find keys", async () => {
+    vi.stubEnv("DEV", false); // a built app, release or debug
     await boot(scriptedBridge());
     expect(fire(documentListeners, "contextmenu").defaultPrevented).toBe(true);
     const key = (init: Record<string, unknown>): boolean =>
@@ -407,6 +409,13 @@ describe("settings window: a window, not a web page", () => {
     for (const free of [{ key: "Tab", code: "Tab" }, { key: "ArrowLeft", code: "ArrowLeft" }, { key: " ", code: "Space" }, { key: "w", code: "KeyW", metaKey: true }, { key: "q", code: "KeyQ", metaKey: true }]) {
       expect(key(free), free.code).toBe(false);
     }
+  });
+
+  it("in `pnpm tauri dev`, keeps the context menu for Inspect Element, and still turns off the keys", async () => {
+    vi.stubEnv("DEV", true);
+    await boot(scriptedBridge());
+    expect(fire(documentListeners, "contextmenu").defaultPrevented).toBe(false);
+    expect(fire(windowListeners, "keydown", { key: "F5", code: "F5" }).defaultPrevented).toBe(true);
   });
 
   it("in the mock in a browser, keeps them for development", async () => {
