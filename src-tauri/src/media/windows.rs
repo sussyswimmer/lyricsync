@@ -63,7 +63,8 @@ struct Read {
     track: RawTrack,
     halves: KeyHalves,
     art_key: ArtKey,
-    thumbnail: Option<IRandomAccessStreamReference>,
+    /// `Ok(None)`: the song has no thumbnail. `Err`: reading it failed.
+    thumbnail: Result<Option<IRandomAccessStreamReference>, String>,
 }
 struct Subscription {
     session: Session,
@@ -342,7 +343,12 @@ impl WindowsSource {
         Ok(Some(Read {
             halves: KeyHalves::new(app_id, &artist, &title, &album, duration_ms),
             art_key,
-            thumbnail: properties.Thumbnail().ok(),
+            thumbnail: match properties.Thumbnail() {
+                Ok(reference) => Ok(Some(reference)),
+                // windows-rs reports a null interface, a song without artwork, as an empty error.
+                Err(error) if error.code().is_ok() => Ok(None),
+                Err(error) => Err(error.to_string()),
+            },
             track: RawTrack {
                 source: candidates[selected].source.clone(),
                 title,
@@ -374,7 +380,7 @@ impl WindowsSource {
     fn artwork(
         &self,
         key: ArtKey,
-        thumbnail: Option<IRandomAccessStreamReference>,
+        thumbnail: Result<Option<IRandomAccessStreamReference>, String>,
     ) -> Option<String> {
         let (value, fetch) = self
             .art
@@ -384,9 +390,15 @@ impl WindowsSource {
         if !fetch {
             return value;
         }
-        let thumbnail = thumbnail
-            .as_ref()
-            .and_then(|reference| AgileReference::new(reference).ok());
+        // No thumbnail is an answer (the cover goes); a reference that can't be shared is a
+        // failure (the cover stays, and is fetched again later).
+        let thumbnail = match thumbnail {
+            Ok(Some(reference)) => AgileReference::new(&reference)
+                .map(Some)
+                .map_err(|e| e.to_string()),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        };
         let cache = self.art.clone();
         let wake = self.notify.clone();
         let mut worker = self.art_task.lock().unwrap_or_else(|e| e.into_inner());
@@ -395,16 +407,24 @@ impl WindowsSource {
         }
         *worker = Some(tauri::async_runtime::spawn(async move {
             let result = tokio::time::timeout(Duration::from_secs(3), async {
-                let reference = thumbnail.ok_or_else(|| "no artwork available".to_string())?;
+                let Some(reference) = thumbnail? else {
+                    return Ok(None);
+                };
                 let bytes = read_thumbnail(reference).await.map_err(|e| e.to_string())?;
                 tauri::async_runtime::spawn_blocking(move || artwork::to_data_url(&bytes))
                     .await
                     .map_err(|e| e.to_string())?
+                    .map(Some)
             })
             .await;
+            // A timeout, read error or decode error keeps the cover for a retry.
+            let outcome = match result {
+                Ok(Ok(value)) => Ok(value),
+                _ => Err(()),
+            };
             let changed = cache.lock().unwrap_or_else(|e| e.into_inner()).fetched(
                 &key,
-                result.ok().and_then(Result::ok),
+                outcome,
                 Instant::now(),
             );
             if changed {
