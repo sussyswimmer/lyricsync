@@ -143,12 +143,20 @@ pub fn run() {
                 }
             };
             // Settings first: every service and window below reads them (and the shortcuts).
-            settings::runtime::install(handle).map_err(failed("settings"))?;
+            let first_launch = settings::runtime::install(handle).map_err(failed("settings"))?;
             lyrics::runtime::install(handle).map_err(failed("lyrics"))?;
             desktop_layer::start(handle).map_err(failed("desktop layer"))?;
             media::start(handle);
             tray::install(handle).map_err(failed("tray"))?;
             shortcuts::install(handle).map_err(failed("shortcuts"))?;
+            // With nothing playing, a first launch would show nothing but a tray icon that is
+            // often out of sight. Settings says what Undertone needs and has the demo preview.
+            // (Also when the stored settings were lost: the user should see that they were.)
+            if first_launch {
+                if let Err(error) = commands::show_settings(handle) {
+                    applog!("first launch: {error}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

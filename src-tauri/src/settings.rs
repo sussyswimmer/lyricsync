@@ -490,8 +490,9 @@ pub mod runtime {
     /// removed it while Undertone wasn't running), and written back when either changed them. A
     /// missing file starts from the defaults; an unusable one is moved aside first
     /// (`super::open`). An unknown data dir is logged and doesn't stop the app. The autostart
-    /// plugin is set up before the app's setup, so it can be read here.
-    pub fn install(app: &AppHandle) -> Result<(), String> {
+    /// plugin is set up before the app's setup, so it can be read here. True when Settings should
+    /// open on this launch (`Opened::show_settings`): the first one, or the settings were lost.
+    pub fn install(app: &AppHandle) -> Result<bool, String> {
         // A change that arrives meanwhile applies on top of the stored settings, not the defaults.
         let _writer = WRITER.lock().unwrap_or_else(|e| e.into_inner());
         let now_secs = SystemTime::now()
@@ -518,7 +519,7 @@ pub mod runtime {
             .lock()
             .map_err(|e| e.to_string())? = settings;
         INSTALLED.store(true, Ordering::Release);
-        Ok(())
+        Ok(opened.show_settings)
     }
 
     /// Changes the settings through `super::commit`, so a command (async runtime) and a tray click
