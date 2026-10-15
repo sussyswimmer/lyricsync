@@ -510,6 +510,26 @@ describe("settings-button-cascade: button classes win over the page's button res
     expect(danger?.[1]).toMatch(/color:\s*#fff\b/);
   });
 
+  it("light mode marks what is selected or on at 3:1 or more (WCAG 1.4.11)", () => {
+    const light = settingsCss.slice(settingsCss.indexOf(":root"), settingsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    const token = (name: string): string => light.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
+    const [accent, card, bg] = [token("--accent"), token("--card"), token("--bg")];
+    // the tile ring, the on switch and the slider fill, on the card and the window
+    expect(contrast(accent, card)).toBeGreaterThanOrEqual(3);
+    expect(contrast(accent, bg)).toBeGreaterThanOrEqual(3);
+    // the on switch's white knob on the accent
+    expect(contrast("#ffffff", accent)).toBeGreaterThanOrEqual(3);
+    // the off switch's edge, drawn over the white card
+    const ring = token("--switch-ring").match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+    expect(ring).not.toBeNull();
+    const [r, g, b, a] = (ring ?? []).slice(1).map(Number);
+    const over = [r, g, b].map((c) => Math.round((c ?? 0) * (a ?? 0) + 255 * (1 - (a ?? 0))));
+    expect(contrast(`#${over.map((c) => c.toString(16).padStart(2, "0")).join("")}`, card)).toBeGreaterThanOrEqual(3);
+    expect(rules(settingsCss).find(([sel]) => sel === ".switch:not(:checked)")?.[1]).toMatch(/inset 0 0 0 1px var\(--switch-ring\)/);
+    // the chosen segment has an accent edge, as the tiles have their ring
+    expect(rules(settingsCss).find(([sel]) => sel === ".seg input:checked + .opt-face")?.[1]).toMatch(/inset 0 0 0 1px var\(--accent\)/);
+  });
+
   it("the inert sync buttons dim without `disabled`, and hover skips them", () => {
     const sels = rules(settingsCss).map(([sel]) => sel);
     expect(sels).toContain('.step[aria-disabled="true"]');

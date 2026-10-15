@@ -13,13 +13,17 @@
   --text-2: #41464f;
   /* ≥ 4.5:1 for small text on both --bg and --card */
   --muted: #62676f;
-  --accent: #e8893b;
+  /* marks what is selected or on (tile ring, on switch, slider fill): ≥ 3:1 on --card and --bg, and
+     the switch's white knob on it too */
+  --accent: #cf6f22;
   --accent-strong: #a4541a;
   --focus: #b8601b;
   --track: rgba(24, 26, 32, 0.13);
   --thumb: #ffffff;
   --thumb-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.22);
   --switch-off: rgba(24, 26, 32, 0.16);
+  /* the off switch's edge, ≥ 3:1 on --card: its track and white knob alone are about 1.4:1 */
+  --switch-ring: rgba(24, 26, 32, 0.5);
   --seg-bg: rgba(24, 26, 32, 0.06);
   --seg-on: #ffffff;
   --seg-on-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.12);
@@ -48,6 +52,8 @@
     --thumb: #f3f3f5;
     --thumb-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
     --switch-off: rgba(255, 255, 255, 0.16);
+    /* the light knob already stands out on the dark card */
+    --switch-ring: transparent;
     --seg-bg: rgba(0, 0, 0, 0.28);
     --seg-on: #3a3d46;
     --seg-on-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35);
@@ -542,6 +548,10 @@ html.is-scrolled .top {
     background-position 0.18s ease;
 }
 
+.switch:not(:checked) {
+  box-shadow: inset 0 0 0 1px var(--switch-ring);
+}
+
 .switch:checked {
   background-color: var(--accent);
   background-position: 16px 0;
@@ -784,9 +794,13 @@ html.is-scrolled .top {
   font-weight: 500;
 }
 
+/* The raised pill alone is about 1.1:1 on the light track (1.7:1 in dark): an accent edge marks the
+   choice, as the ring does on the tiles. */
 .seg input:checked + .opt-face {
   background: var(--seg-on);
-  box-shadow: var(--seg-on-shadow);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--seg-on-shadow);
   color: var(--text);
 }
 
