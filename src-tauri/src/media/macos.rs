@@ -289,7 +289,7 @@ impl MacSource {
         };
         let mut reported = lock(&self.reported);
         if reported.get(&player) != Some(&line) {
-            eprintln!("{line}");
+            applog!("{line}");
             reported.insert(player, line);
         }
     }
@@ -377,7 +377,7 @@ async fn fetch_artwork(
 fn unusable_artwork(player: Player, error: &str) {
     static LOGGED: AtomicBool = AtomicBool::new(false);
     if !LOGGED.swap(true, Ordering::Relaxed) {
-        eprintln!(
+        applog!(
             "{} artwork unusable, shown without a cover: {error}",
             player.name()
         );

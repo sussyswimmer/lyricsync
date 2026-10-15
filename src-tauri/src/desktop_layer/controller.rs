@@ -89,7 +89,7 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
     for (label, window) in app.webview_windows() {
         if is_overlay(&label) {
             if let Err(error) = set_shown(&window, false) {
-                eprintln!("desktop layer: {label} page: {error}");
+                applog!("desktop layer: {label} page: {error}");
             }
         }
     }
@@ -155,7 +155,7 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
                         }
                     });
                     if previous_error.as_ref() != Some(&error) {
-                        eprintln!("desktop layer: {error}");
+                        applog!("desktop layer: {error}");
                     }
                     previous_error = Some(error);
                 }

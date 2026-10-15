@@ -204,7 +204,7 @@ impl WindowsSource {
         let message = error.to_string();
         let mut previous = self.last_error.lock().unwrap_or_else(|e| e.into_inner());
         if previous.as_ref() != Some(&message) {
-            eprintln!("SMTC snapshot unavailable: {message}");
+            applog!("SMTC snapshot unavailable: {message}");
         }
         *previous = Some(message);
     }

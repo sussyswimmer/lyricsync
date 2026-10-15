@@ -83,7 +83,7 @@ fn run<S: Backend>(app: AppHandle) {
                             _ => format!("{} connection timed out", S::NAME),
                         };
                         if connection_error.as_ref() != Some(&message) {
-                            eprintln!("{} connection unavailable: {message}", S::NAME);
+                            applog!("{} connection unavailable: {message}", S::NAME);
                         }
                         connection_error = Some(message);
                         publish(
@@ -166,7 +166,7 @@ fn publish(
         );
     }
     if let Err(error) = app.emit(MEDIA_STATUS_EVENT, &status) {
-        eprintln!("media-status event: {error}");
+        applog!("media-status event: {error}");
     }
 }
 fn emit(app: &AppHandle, update: super::Update) {
@@ -192,6 +192,6 @@ fn emit(app: &AppHandle, update: super::Update) {
             .is_some_and(|track| track.is_playing),
     );
     if let Err(error) = app.emit(NOW_PLAYING_EVENT, &update.now_playing) {
-        eprintln!("now-playing event: {error}");
+        applog!("now-playing event: {error}");
     }
 }

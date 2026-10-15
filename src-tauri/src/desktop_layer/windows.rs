@@ -255,7 +255,7 @@ impl DesktopLayer for WindowsDesktop {
             .with_webview(move |webview| {
                 // SAFETY: tauri hands out the live controller on the thread that owns it.
                 if let Err(error) = unsafe { webview.controller().SetIsVisible(visible) } {
-                    eprintln!("desktop layer: page visibility: {error}");
+                    applog!("desktop layer: page visibility: {error}");
                 }
             })
             .map_err(|e| e.to_string())
