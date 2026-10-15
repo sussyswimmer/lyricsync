@@ -533,6 +533,19 @@ describe("Arc restyle", () => {
     expect(spec).toBe('800 16px "Syne"');
     expect(chars?.length).toBe(new Set(LINES.map((l) => l.text).join("")).size);
   });
+
+  it("still waits for the bundled face when a song's CJK families lead the stack's fallbacks", () => {
+    const load = vi.fn(async (_spec: string, _text?: string) => []);
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+      fonts: { check: () => false, load },
+    });
+    const l = stageLook({ font: { family: "Unbounded", weight: 700 } }, { lang: "ko" });
+    expect(l.font).toMatch(/^"Unbounded", system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo"/);
+    arcOn(l);
+    expect(load).toHaveBeenCalledWith('700 16px "Unbounded"', expect.any(String));
+  });
 });
 
 // Regression (arc-long-lines-off-screen): a long line shrank to 55% of its size at most, then ran

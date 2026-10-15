@@ -4,10 +4,11 @@ import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from 
 import { parseLrc, type Line } from "../src/core/lrc";
 import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
+import { fontFor } from "../src/overlay/fonts";
 import { resolveLook, type Frame, type Look } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
-import { LINGER_MS, LyricStage } from "../src/overlay/stage";
+import { LINGER_MS, LyricStage, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -543,6 +544,35 @@ describe("the stage on a device pixel ratio change", () => {
 
     s.destroy();
     expect(watched()).toEqual([]);
+  });
+});
+
+// Regression (cjk-fallback-order): every song got one fixed CJK fallback order, and the page said
+// lang="en", so Chinese lines mixed Japanese and Chinese faces.
+describe("the stage's CJK language", () => {
+  const song = (text: string): StageView => ({
+    kind: "lyrics",
+    timeline: { lines: parseLrc(`[00:01.00]${text}\n[00:05.00]${text}`, 20_000), unsynced: false },
+  });
+
+  it("is picked once per song, set on the scene, and puts that language's faces first", () => {
+    const { stage: s, scenes } = stage();
+    s.show(song("夜明けの駅で、紙の鳥が待っている"), "ja");
+    const ja = scenes()[0];
+    expect((ja as unknown as { lang?: string }).lang).toBe("ja");
+    expect(String(ja?.find("drift")[0]?.style["fontFamily"])).toMatch(/^"Fraunces", Georgia, "Hiragino Mincho ProN"/);
+    clock += 5000;
+    s.show(song("灯笼漂过安静的河面，我们说好再见"), "zh");
+    const zh = scenes()[scenes().length - 1];
+    expect((zh as unknown as { lang?: string }).lang).toBe("zh-Hans");
+    expect(String(zh?.find("drift")[0]?.style["fontFamily"])).toMatch(/^"Fraunces", Georgia, "Songti SC"/);
+  });
+
+  it("leaves a song without CJK text, and the states, in the page's language", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    expect((scenes()[0] as unknown as { lang?: string }).lang).toBeUndefined();
+    expect(String(scenes()[0]?.find("drift")[0]?.style["fontFamily"])).toBe(fontFor("Fraunces").stack);
   });
 });
 

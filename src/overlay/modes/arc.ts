@@ -421,7 +421,7 @@ export class ArcMode implements ModeRenderer {
    * is cached (see whenFaceLoads): a Size drag rebuilds on every step.
    */
   private refitWhenFontsLoad(look: Look, box: HTMLDivElement): void {
-    const loading = whenFaceLoads(look.font, look.weight, this.lines.map((l) => l.text).join(""));
+    const loading = whenFaceLoads(look.family, look.weight, this.lines.map((l) => l.text).join(""));
     if (!loading) return;
     void loading.then(
       () => {

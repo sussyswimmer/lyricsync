@@ -205,7 +205,7 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(true);
     const fraunces = fontFor("Fraunces");
     const text = "Paper lanterns over the river Paper lanterns over the river";
-    expect(whenFaceLoads(fraunces.stack, 700, text)).toBeNull();
+    expect(whenFaceLoads(fraunces.family, 700, text)).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
     const [spec, chars] = check.mock.calls[0] ?? [];
     expect(spec).toBe('700 16px "Fraunces"');
@@ -217,11 +217,11 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(true);
     const syne = fontFor("Syne");
     const text = "Neon on the wet street, every sign a little sun";
-    for (let i = 0; i < 10; i++) expect(whenFaceLoads(syne.stack, 800, text)).toBeNull();
+    for (let i = 0; i < 10; i++) expect(whenFaceLoads(syne.family, 800, text)).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
     // another weight or other lyrics are asked about once each
-    whenFaceLoads(syne.stack, 700, text);
-    whenFaceLoads(syne.stack, 800, `${text}!`);
+    whenFaceLoads(syne.family, 700, text);
+    whenFaceLoads(syne.family, 800, `${text}!`);
     expect(check).toHaveBeenCalledTimes(3);
   });
 
@@ -229,11 +229,11 @@ describe("Lens: waiting for the lyric face", () => {
     const { check, load } = stubFonts(false);
     const caveat = fontFor("Caveat");
     const text = "Thương nhớ con đường cũ";
-    const loading = whenFaceLoads(caveat.stack, 600, text);
+    const loading = whenFaceLoads(caveat.family, 600, text);
     expect(loading).not.toBeNull();
     await loading;
     expect(load).toHaveBeenCalledWith('600 16px "Caveat"', [...new Set(text)].join(""));
-    whenFaceLoads(caveat.stack, 600, text);
+    whenFaceLoads(caveat.family, 600, text);
     expect(check).toHaveBeenCalledTimes(2);
   });
 
@@ -241,10 +241,10 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(false);
     const system = FONTS.find((f) => f.family === "System");
     expect(system).toBeDefined();
-    expect(whenFaceLoads(system?.stack ?? "", 700, "anything")).toBeNull();
+    expect(whenFaceLoads(system?.family ?? "", 700, "anything")).toBeNull();
     expect(check).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
-    expect(whenFaceLoads(fontFor("Fraunces").stack, 700, "anything")).toBeNull();
+    expect(whenFaceLoads(fontFor("Fraunces").family, 700, "anything")).toBeNull();
   });
 });
 

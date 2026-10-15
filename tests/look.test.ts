@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import type { Palette } from "../src/core/palette";
-import { FONTS, fontFor } from "../src/overlay/fonts";
+import { FONTS, fontFor, stackFor } from "../src/overlay/fonts";
 import { REFERENCE_HEIGHT, dropShadow, resolveLook, rgba, shadowLayers, snap, textShadow, workAreaReference, type Frame, type Look } from "../src/overlay/look";
 
 const FRAME: Frame = { width: 1920, height: 1080, dpr: 2, motion: true, unsynced: false };
@@ -133,6 +133,16 @@ describe("resolveLook: font", () => {
 
   it("gives the system stack CJK fallbacks", () => {
     expect(look({ font: { family: "System", weight: 700 } }).font).toMatch(/PingFang SC.*sans-serif$/u);
+  });
+
+  it("puts the song's CJK language first in the stack, and names the face to wait for", () => {
+    const ja = look({ font: { family: "Syne", weight: 800 } }, { lang: "ja" });
+    expect(ja.font).toBe(stackFor(fontFor("Syne"), "ja"));
+    expect(ja.font.indexOf("Hiragino Sans")).toBeLessThan(ja.font.indexOf("PingFang SC"));
+    expect(look({}, { lang: "zh-Hans" }).font).toMatch(/^"Fraunces", Georgia, "Songti SC"/u);
+    expect(look({}, { lang: null }).font).toBe(fontFor("Fraunces").stack);
+    expect(ja.family).toBe("Syne");
+    expect(look({ font: { family: "Not A Real Font", weight: 700 } }).family).toBe("Fraunces");
   });
 });
 

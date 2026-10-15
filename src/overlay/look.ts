@@ -1,6 +1,6 @@
 import type { Settings } from "../../contract/contract";
 import type { Palette } from "../core/palette";
-import { fontFor } from "./fonts";
+import { fontFor, stackFor, type CjkLang } from "./fonts";
 
 /** `Settings.size` is in px on a display this many CSS px tall; lyrics scale with the stage height. */
 export const REFERENCE_HEIGHT = 1080;
@@ -10,7 +10,10 @@ export const MIN_TEXT_PX = 11;
 /** Everything a mode needs to draw, resolved to concrete px and colors for the current stage. */
 export interface Look {
   colors: Palette;
+  /** the CSS font stack, with the song's CJK families first */
   font: string;
+  /** the face's family (FontChoice.family), the one there is to wait for (see whenFaceLoads) */
+  family: string;
   weight: number;
   /** font size of the current line, px */
   size: number;
@@ -39,6 +42,8 @@ export interface Frame {
   unsynced: boolean;
   /** stage height that counts as 1× (default 1080) */
   referenceHeight?: number;
+  /** the song's CJK language (cjkLang), whose families the font stack puts first */
+  lang?: CjkLang | null;
 }
 
 /**
@@ -59,7 +64,8 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
   const margin = Math.min(size * 0.75, frame.height / 2);
   return {
     colors: settings.autoColor && palette ? palette : settings.colors,
-    font: font.stack,
+    font: stackFor(font, frame.lang ?? null),
+    family: font.family,
     weight: settings.font.weight || font.weight,
     size,
     y: Math.min(frame.height - margin, Math.max(margin, (frame.height * settings.yPos) / 100)),

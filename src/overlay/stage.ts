@@ -3,7 +3,7 @@ import type { Line } from "../core/lrc";
 import type { Palette } from "../core/palette";
 import { lineAt, type Timeline } from "../core/timing";
 import { h } from "./dom";
-import { fontFor, loadFont } from "./fonts";
+import { cjkLang, fontFor, loadFont, type CjkLang } from "./fonts";
 import { resolveLook, type Look } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
@@ -119,6 +119,8 @@ interface Scene {
   key: string;
   mode: ModeRenderer | null;
   cues: CueMap | null;
+  /** the song's CJK language, which picks the font stack's CJK families (one per song, so lines measure alike) */
+  lang: CjkLang | null;
   /** performance.now() when the scene appeared; rebuilt state animations resume from here */
   shownAt: number;
   /** performance.now() when it starts fading in, once whatever it replaced has faded out */
@@ -251,9 +253,11 @@ export class LyricStage {
       key,
       mode: null,
       cues: view.kind === "lyrics" ? cueMap(view.timeline) : null,
+      lang: view.kind === "lyrics" ? cjkLang(view.timeline.lines.map((l) => l.text).join("\n")) : null,
       shownAt: t,
       revealAt: t,
     };
+    if (scene.lang) scene.el.lang = scene.lang;
     this.root.append(scene.el);
     this.scene = scene;
     this.lastCue = null;
@@ -352,6 +356,7 @@ export class LyricStage {
       dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
       motion: !reducedMotion(),
       unsynced: scene.cues?.unsynced ?? false,
+      lang: scene.lang,
       ...(reference ? { referenceHeight: reference } : {}),
     });
   }

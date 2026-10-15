@@ -444,7 +444,7 @@ export class LensMode implements ModeRenderer {
    */
   private remeasureWhenFontsLoad(box: HTMLDivElement, lines: readonly Line[], look: Look): void {
     const generation = ++this.generation;
-    const loading = whenFaceLoads(look.font, look.weight, lines.map((l) => l.text).join(""));
+    const loading = whenFaceLoads(look.family, look.weight, lines.map((l) => l.text).join(""));
     if (!loading) return;
     void loading.then(
       () => {
