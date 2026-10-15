@@ -599,4 +599,143 @@ mod tests {
         assert_eq!(SETTINGS_VERSION, 1);
         assert_eq!(DEFAULT_SETTINGS.version, 1);
     }
+
+    /// The frontend's command and event map, read at compile time like contract.ts. A renamed
+    /// command, argument or event still compiles on both sides; it fails only at runtime, as a
+    /// rejected call or an event nobody hears.
+    const BRIDGE_TS: &str = include_str!("../../src/bridge/types.ts");
+
+    /// The body of `export interface <name>` in types.ts, one member per line.
+    fn bridge_interface(name: &str) -> &'static str {
+        let start = format!("export interface {name} {{");
+        let body = &BRIDGE_TS[BRIDGE_TS.find(&start).unwrap() + start.len()..];
+        &body[..body.find("\n}").unwrap()]
+    }
+
+    /// The members of a types.ts interface, so a pattern that misses one can't pass unnoticed.
+    fn member_count(body: &str) -> usize {
+        let member = regex::Regex::new(r#"(?m)^\s*"?[\w-]+"?:"#).unwrap();
+        member.find_iter(body).count()
+    }
+
+    /// `trackKey` from `track_key`: Tauri's default for command arguments on the wire.
+    fn camel(snake: &str) -> String {
+        let mut parts = snake.split('_');
+        let first = parts.next().unwrap_or_default().to_owned();
+        parts.fold(first, |mut out, part| {
+            let mut chars = part.chars();
+            if let Some(c) = chars.next() {
+                out.extend(c.to_uppercase());
+                out.push_str(chars.as_str());
+            }
+            out
+        })
+    }
+
+    /// Splits a parameter list on the commas outside `<…>` (`State<'_, AppState>` has one).
+    fn parameters(list: &str) -> Vec<&str> {
+        let (mut depth, mut start, mut out) = (0, 0, Vec::new());
+        for (i, c) in list.char_indices() {
+            match c {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                ',' if depth == 0 => {
+                    out.push(list[start..i].trim());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        out.push(list[start..].trim());
+        out.retain(|p| !p.is_empty());
+        out
+    }
+
+    #[test]
+    fn every_command_and_argument_name_matches_the_frontend() {
+        // TypeScript: `name: { args: NoArgs | { a: A; b: B }; result: … }`.
+        let body = bridge_interface("Commands");
+        let entry =
+            regex::Regex::new(r"(?m)^\s*(\w+): \{ args: (?:NoArgs|\{([^}]*)\}); result:").unwrap();
+        let mut ts = BTreeMap::new();
+        for c in entry.captures_iter(body) {
+            let args = c.get(2).map_or("", |m| m.as_str());
+            let mut keys: Vec<String> = args
+                .split(';')
+                .filter_map(|arg| arg.split_once(':'))
+                .map(|(key, _)| key.trim().to_owned())
+                .collect();
+            keys.sort();
+            ts.insert(c[1].to_owned(), keys);
+        }
+        assert_eq!(
+            ts.len(),
+            member_count(body),
+            "a command types.ts writes another way"
+        );
+
+        // Rust: every `#[tauri::command]` in commands.rs and the arguments the page passes,
+        // without the ones Tauri fills in itself (the app, managed state, the calling webview).
+        let commands = include_str!("commands.rs");
+        let command = regex::Regex::new(
+            r"(?ms)^#\[tauri::command(\([^)]*\))?\]\s*pub (?:async )?fn (\w+)\((.*?)\)\s*(?:->|\{)",
+        )
+        .unwrap();
+        let attribute = regex::Regex::new(r"(?m)^#\[tauri::command").unwrap();
+        let injected = regex::Regex::new(r"^(tauri::)?(AppHandle|State<|Webview|Window)").unwrap();
+        let mut rust = BTreeMap::new();
+        for c in command.captures_iter(commands) {
+            // Arguments are camelCase only while no command renames them.
+            assert!(!c.get(1).is_some_and(|m| m.as_str().contains("rename_all")));
+            let mut keys: Vec<String> = parameters(&c[3])
+                .into_iter()
+                .filter_map(|p| p.split_once(':'))
+                .filter(|(_, ty)| !injected.is_match(ty.trim()))
+                .map(|(name, _)| camel(name.trim()))
+                .collect();
+            keys.sort();
+            rust.insert(c[2].to_owned(), keys);
+        }
+        assert_eq!(
+            attribute.find_iter(commands).count(),
+            rust.len(),
+            "a command commands.rs writes another way"
+        );
+
+        // Registered with Tauri: the list in lib.rs.
+        let lib = include_str!("lib.rs");
+        let start = lib.find("generate_handler![").unwrap();
+        let list = &lib[start..start + lib[start..].find(']').unwrap()];
+        let mut registered: Vec<String> = regex::Regex::new(r"commands::(\w+)")
+            .unwrap()
+            .captures_iter(list)
+            .map(|c| c[1].to_owned())
+            .collect();
+        registered.sort();
+        let defined: Vec<String> = rust.keys().cloned().collect();
+        assert_eq!(
+            registered, defined,
+            "commands.rs and generate_handler! disagree"
+        );
+
+        // `debug_probe` is debug-only: lib.rs's `--overlay-probe` script calls it, not the bridge.
+        assert_eq!(rust.remove("debug_probe"), Some(vec!["message".to_owned()]));
+        assert!(lib.contains("invoke('debug_probe',{message:"));
+        assert_eq!(rust, ts);
+    }
+
+    #[test]
+    fn every_event_name_matches_the_frontend() {
+        use std::collections::BTreeSet;
+        let body = bridge_interface("Events");
+        let key = regex::Regex::new(r#"(?m)^\s*"?([\w-]+)"?:"#).unwrap();
+        let ts: BTreeSet<String> = key.captures_iter(body).map(|c| c[1].to_owned()).collect();
+        // Every `*_EVENT` constant at the top of this file.
+        let constant = regex::Regex::new(r#"pub const \w+_EVENT: &str = "([^"]+)";"#).unwrap();
+        let rust: BTreeSet<String> = constant
+            .captures_iter(include_str!("contract.rs"))
+            .map(|c| c[1].to_owned())
+            .collect();
+        assert_eq!(rust, ts);
+    }
 }
