@@ -108,8 +108,9 @@ describe("doc links", () => {
 
 describe("README development notes", () => {
   it("names everything `pnpm coverage` measures", () => {
-    const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
-    const includes = [...(pkg.scripts["coverage"] ?? "").matchAll(/--coverage\.include=(\S+)/g)].map((m) => m[1] ?? "");
+    // vite.config.ts's test.coverage.include
+    const list = /coverage:\s*\{[\s\S]*?include:\s*\[([^\]]*)\]/.exec(read("vite.config.ts"))?.[1] ?? "";
+    const includes = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(includes.length).toBeGreaterThan(0);
     const line = read("README.md")
       .split("\n")
