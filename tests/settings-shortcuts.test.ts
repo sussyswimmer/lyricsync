@@ -542,6 +542,15 @@ describe("Shortcuts: recording a new one", () => {
     expect(mac.message(1).textContent).toBe("⌘Q quits apps. Choose another combination.");
     mac.earlierKey.key({ code: "Space", key: " ", metaKey: true });
     expect(mac.message(1).textContent).toBe("⌘Space opens Spotlight. Choose another combination.");
+    mac.earlierKey.key({ code: "KeyF", key: "f", metaKey: true });
+    expect(mac.message(1).textContent).toBe("⌘F finds in most apps. Choose another combination.");
+    mac.earlierKey.key({ code: "KeyH", key: "h", metaKey: true });
+    expect(mac.message(1).textContent).toBe("⌘H hides apps. Choose another combination.");
+    mac.earlierKey.key({ code: "KeyZ", key: "z", metaKey: true, shiftKey: true });
+    expect(mac.message(1).textContent).toBe("⇧⌘Z redoes in most apps. Choose another combination.");
+    // a key the core can't register on a Mac
+    mac.earlierKey.key({ code: "F22", key: "F22", metaKey: true, altKey: true });
+    expect(mac.message(1).textContent).toBe("That key can't be part of a shortcut.");
     expect(mac.earlierKey.classList.contains("is-recording")).toBe(true);
     expect(mac.edits).toEqual([]);
     // with another modifier it's a different combination
@@ -554,6 +563,10 @@ describe("Shortcuts: recording a new one", () => {
     expect(win.message(1).textContent).toBe("Alt+F4 closes the window. Choose another combination.");
     win.earlierKey.key({ code: "KeyV", key: "v", ctrlKey: true });
     expect(win.message(1).textContent).toBe("Ctrl+V pastes in every app. Choose another combination.");
+    win.earlierKey.key({ code: "KeyY", key: "y", ctrlKey: true });
+    expect(win.message(1).textContent).toBe("Ctrl+Y redoes in most apps. Choose another combination.");
+    win.earlierKey.key({ code: "KeyP", key: "p", ctrlKey: true });
+    expect(win.message(1).textContent).toBe("Ctrl+P prints. Choose another combination.");
     expect(win.edits).toEqual([]);
   });
 
