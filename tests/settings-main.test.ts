@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings, type ShortcutsStatus } from "../contract/contract";
 import type { Bridge } from "../src/bridge/types";
-import { activeElement, resetDom, stubDom, type FakeElement } from "./fake-dom";
+import { isBrowserKey } from "../src/settings/browser-keys";
+import { activeElement, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
 
 /*
  * The settings window as main.ts boots it, on a scripted bridge: shortcut status (subscribe, then
- * read), suspending the shortcuts in order while a row records, a refused login item, and Reset to
- * defaults keeping the two General switches.
+ * read), suspending the shortcuts in order while a row records, a refused login item, Reset to
+ * defaults keeping the two General switches, saving before the window hides, and the browser keys
+ * and context menu it turns off in the app.
  */
 
 const env = vi.hoisted(() => ({ bridge: null as unknown }));
@@ -28,7 +30,7 @@ const OK: ShortcutsStatus = { toggleLyrics: "ok", nudgeEarlier: "ok", nudgeLater
 type Reply = (args: Record<string, unknown>) => Promise<unknown>;
 
 /** A core that answers from `replies` (or sensibly), logs every call, and can send events. */
-function scriptedBridge(replies: Record<string, Reply> = {}) {
+function scriptedBridge(replies: Record<string, Reply> = {}, kind: Bridge["kind"] = "tauri") {
   let settings: Settings = structuredClone(DEFAULT_SETTINGS);
   const log: string[] = [];
   const invoked: { name: string; args: Record<string, unknown> }[] = [];
@@ -45,7 +47,7 @@ function scriptedBridge(replies: Record<string, Reply> = {}) {
     },
   };
   const bridge = {
-    kind: "tauri",
+    kind,
     invoke(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
       log.push(`invoke ${name}`);
       invoked.push({ name, args });
@@ -69,14 +71,32 @@ function scriptedBridge(replies: Record<string, Reply> = {}) {
   };
 }
 
-let windowListeners: Map<string, (() => void)[]>;
+type Listener = (e?: unknown) => void;
+let windowListeners: Map<string, Listener[]>;
+let documentListeners: Map<string, Listener[]>;
+let page: { visibilityState: string };
+
+/** Runs the page's listeners for `type` on `target` with an event carrying `init`; returns the event. */
+function fire(target: Map<string, Listener[]>, type: string, init: Record<string, unknown> = {}): { defaultPrevented: boolean } {
+  const event = {
+    ...init,
+    type,
+    defaultPrevented: Boolean(init["defaultPrevented"]),
+    preventDefault(): void {
+      event.defaultPrevented = true;
+    },
+  };
+  for (const fn of target.get(type) ?? []) fn(event);
+  return event;
+}
 
 function stubWindow(): void {
   windowListeners = new Map();
+  documentListeners = new Map();
   const host = document.createElement("main") as unknown as FakeElement;
   host.id = "app";
   const doc = document as unknown as Record<string, unknown>;
-  vi.stubGlobal("document", {
+  page = {
     ...doc,
     createElement: doc["createElement"],
     createElementNS: doc["createElementNS"],
@@ -84,13 +104,14 @@ function stubWindow(): void {
       return activeElement();
     },
     getElementById: (id: string) => (id === "app" ? host : null),
-    addEventListener: () => undefined,
+    addEventListener: (type: string, fn: Listener) => documentListeners.set(type, [...(documentListeners.get(type) ?? []), fn]),
     visibilityState: "visible",
     documentElement: { style: {}, classList: { toggle: () => undefined } },
-  });
+  } as { visibilityState: string };
+  vi.stubGlobal("document", page);
   vi.stubGlobal("window", {
     scrollY: 0,
-    addEventListener: (type: string, fn: () => void) => windowListeners.set(type, [...(windowListeners.get(type) ?? []), fn]),
+    addEventListener: (type: string, fn: Listener) => windowListeners.set(type, [...(windowListeners.get(type) ?? []), fn]),
   });
   vi.stubGlobal(
     "ResizeObserver",
@@ -259,6 +280,10 @@ describe("settings window: Launch at login", () => {
     await settle();
     expect(login.checked).toBe(false);
     expect(note.textContent).toContain("Couldn't change Undertone's login item.");
+    // the note is a status region itself: the panel's announcer doesn't say it a second time
+    runFrames();
+    expect(note.getAttribute("role")).toBe("status");
+    expect(root.children.find((c) => c.getAttribute("role") === "status" && c.classList.contains("sr-only"))?.textContent).toBe("");
     refuse = false;
     login.checked = true;
     login.dispatch("change");
@@ -309,6 +334,103 @@ describe("settings window: Reset to defaults", () => {
     const patch = sent?.["patch"] as Partial<Settings>;
     expect(patch).not.toHaveProperty("enabled");
     expect(patch).not.toHaveProperty("launchAtLogin");
+    expect(patch).not.toHaveProperty("trackOffsetsMs");
     expect(patch).toMatchObject({ mode: "arc", shortcuts: DEFAULT_SETTINGS.shortcuts });
+  });
+
+  it("with Also clear sync, sends one patch that empties the map, not one set_track_offset per song", async () => {
+    const core = scriptedBridge({
+      get_settings: () => Promise.resolve({ ...structuredClone(DEFAULT_SETTINGS), size: 90, trackOffsetsMs: { "a|one|x|200": 150, "b|two|y|180": -100 } }),
+    });
+    const root = await boot(core);
+    root.withText("Reset to defaults…").click();
+    const forget = root.one("check");
+    expect(forget.textContent).toBe("Also clear sync for 2 songs");
+    const box = forget.children[0] as FakeElement;
+    box.checked = true;
+    root.withText("Reset").click();
+    await settle();
+    expect(core.calls("set_track_offset")).toEqual([]);
+    const sent = core.calls("update_settings");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.["patch"]).toMatchObject({ size: DEFAULT_SETTINGS.size, trackOffsetsMs: {} });
+  });
+});
+
+describe("settings window: nothing is lost as the window goes away", () => {
+  const lyricsSwitch = (root: FakeElement): FakeElement => {
+    const general = root.all("group").find((g) => g.one("group-title").textContent === "General") as FakeElement;
+    return general.all("switch")[0] as FakeElement;
+  };
+
+  it("an edit still waiting for its debounce goes out at once when the window hides, blurs or closes", async () => {
+    for (const leave of ["hidden", "blur", "pagehide"]) {
+      stubWindow(); // a fresh page for each
+      const core = scriptedBridge();
+      const root = await boot(core);
+      const lyrics = lyricsSwitch(root);
+      lyrics.checked = false;
+      lyrics.dispatch("change");
+      expect(core.calls("update_settings"), leave).toEqual([]);
+      if (leave === "hidden") {
+        page.visibilityState = "hidden";
+        fire(documentListeners, "visibilitychange");
+      } else {
+        fire(windowListeners, leave);
+      }
+      expect(core.calls("update_settings"), leave).toEqual([{ patch: { enabled: false } }]);
+    }
+  });
+
+  it("becoming visible again sends nothing", async () => {
+    const core = scriptedBridge();
+    const root = await boot(core);
+    const lyrics = lyricsSwitch(root);
+    lyrics.checked = false;
+    lyrics.dispatch("change");
+    fire(documentListeners, "visibilitychange");
+    expect(core.calls("update_settings")).toEqual([]);
+  });
+});
+
+describe("settings window: a window, not a web page", () => {
+  it("in the app, turns off the browser's context menu and its reload, print and find keys", async () => {
+    await boot(scriptedBridge());
+    expect(fire(documentListeners, "contextmenu").defaultPrevented).toBe(true);
+    const key = (init: Record<string, unknown>): boolean =>
+      fire(windowListeners, "keydown", { key: "", code: "", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init }).defaultPrevented;
+    expect(key({ key: "F5", code: "F5" })).toBe(true);
+    expect(key({ key: "r", code: "KeyR", ctrlKey: true })).toBe(true);
+    expect(key({ key: "p", code: "KeyP", metaKey: true })).toBe(true);
+    expect(key({ key: "ArrowLeft", code: "ArrowLeft", altKey: true })).toBe(true);
+    // everything else is left alone: Tab, arrows on a slider, Space on a switch, ⌘W and ⌘Q
+    for (const free of [{ key: "Tab", code: "Tab" }, { key: "ArrowLeft", code: "ArrowLeft" }, { key: " ", code: "Space" }, { key: "w", code: "KeyW", metaKey: true }, { key: "q", code: "KeyQ", metaKey: true }]) {
+      expect(key(free), free.code).toBe(false);
+    }
+  });
+
+  it("in the mock in a browser, keeps them for development", async () => {
+    await boot(scriptedBridge({}, "mock"));
+    expect(documentListeners.get("contextmenu") ?? []).toEqual([]);
+    expect(fire(windowListeners, "keydown", { key: "F5", code: "F5" }).defaultPrevented).toBe(false);
+  });
+
+  it("isBrowserKey: reload, print, find, view source, caret browsing, back and forward", () => {
+    const press = (key: string, code: string, mods: { ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean } = {}) =>
+      isBrowserKey({ key, code, ctrlKey: false, metaKey: false, altKey: false, ...mods });
+    for (const k of ["F3", "F5", "F7", "BrowserBack", "BrowserForward", "BrowserRefresh"]) expect(press(k, k), k).toBe(true);
+    // with Shift too (a hard reload), and with either Ctrl or ⌘
+    for (const [key, code] of [["R", "KeyR"], ["r", "KeyR"], ["p", "KeyP"], ["f", "KeyF"], ["g", "KeyG"], ["u", "KeyU"]] as const) {
+      expect(press(key, code, { ctrlKey: true }), key).toBe(true);
+      expect(press(key, code, { metaKey: true }), key).toBe(true);
+      expect(press(key, code), key).toBe(false);
+    }
+    // a letter by what it types (Dvorak's u on the F key is Ctrl+U), or by place on a non-Latin layout
+    expect(press("u", "KeyF", { ctrlKey: true })).toBe(true);
+    expect(press("а", "KeyF", { ctrlKey: true })).toBe(true);
+    expect(press("x", "KeyR", { ctrlKey: true })).toBe(false);
+    expect(press("ArrowRight", "ArrowRight", { altKey: true })).toBe(true);
+    expect(press("ArrowRight", "ArrowRight", { altKey: true, ctrlKey: true })).toBe(false);
+    for (const [key, code] of [["w", "KeyW"], ["q", "KeyQ"], ["c", "KeyC"], ["[", "BracketLeft"]] as const) expect(press(key, code, { metaKey: true }), key).toBe(false);
   });
 });

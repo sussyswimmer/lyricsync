@@ -220,6 +220,9 @@ export function heldModifiers(press: KeyPress, platform: Platform): Modifier[] {
   return MODIFIERS.filter((m) => held.has(m));
 }
 
+/** Keys global-hotkey has no macOS key code for (`shortcuts::MISSING_ON_MACOS`): the core can't register them there. */
+const MISSING_ON_MAC: ReadonlySet<string> = new Set(["F21", "F22", "F23", "F24"]);
+
 /**
  * The key a press at `code` records: undefined when no shortcut can use it, null when it can't on
  * this layout. macOS registers a shortcut by key position, as `code` gives it. Windows registers it
@@ -231,6 +234,7 @@ export function heldModifiers(press: KeyPress, platform: Platform): Modifier[] {
  */
 function keyAt(code: string, platform: Platform, layout: KeyLayout | null): string | null | undefined {
   const key = CODE_KEYS.get(code);
+  if (platform === "mac" && key !== undefined && MISSING_ON_MAC.has(key)) return undefined;
   const typed = layout?.get(code);
   if (key === undefined || platform !== "windows" || typed === undefined) return key;
   if (/^[a-z]$/i.test(typed)) return typed.toUpperCase();
@@ -250,6 +254,30 @@ export function recordKey(press: KeyPress, platform: Platform, layout: KeyLayout
   return { kind: "combo", accelerator: formatCanonical({ modifiers, key }) };
 }
 
+/** Where each punctuation key sits on a US keyboard: the virtual key Windows registers it by. */
+const US_CODE_OF: ReadonlyMap<string, string> = new Map(
+  [...CODE_KEYS].filter(([, key]) => PUNCTUATION.includes(key)).map(([code, key]): [string, string] => [key, code]),
+);
+
+/** A letter of a script other than Latin: Russian х, Greek ς, Arabic ج. */
+const NON_LATIN_LETTER = /^(?!\p{Script=Latin})\p{L}$/u;
+
+/**
+ * True when a saved binding's punctuation key may be on another key on this Windows keyboard layout.
+ * Windows registers `[` by the virtual key a US keyboard has there, and on German that is the ß key.
+ * The recorder's rule (`keyAt`) the other way round: the key at the US position types something
+ * else. A letter of another script there (Russian х) means a non-Latin layout, which keeps the US
+ * virtual keys, so the shortcut is still where the US key is. A guess from what the keys type, so
+ * Settings says "may".
+ */
+export function movedOnLayout(binding: string, platform: Platform, layout: KeyLayout | null): boolean {
+  if (platform !== "windows" || !layout) return false;
+  const key = parseAccelerator(binding)?.key;
+  const code = key === undefined ? undefined : US_CODE_OF.get(key);
+  const typed = code === undefined ? undefined : layout.get(code);
+  return typed !== undefined && typed !== key && !NON_LATIN_LETTER.test(typed);
+}
+
 // ---------- combinations to leave alone ----------
 
 /** What these already do in (nearly) every app. A global shortcut would take them from all of them. */
@@ -258,18 +286,29 @@ const EVERY_APP: readonly [string, string][] = [
   ["CmdOrCtrl+V", "pastes in every app"],
   ["CmdOrCtrl+X", "cuts in every app"],
   ["CmdOrCtrl+Z", "undoes in every app"],
+  ["CmdOrCtrl+Shift+Z", "redoes in most apps"],
   ["CmdOrCtrl+A", "selects all in every app"],
   ["CmdOrCtrl+S", "saves in most apps"],
+  ["CmdOrCtrl+F", "finds in most apps"],
+  ["CmdOrCtrl+N", "opens a new window or document"],
+  ["CmdOrCtrl+O", "opens files"],
+  ["CmdOrCtrl+P", "prints"],
+  ["CmdOrCtrl+T", "opens a new tab"],
   ["CmdOrCtrl+W", "closes windows and tabs"],
 ];
 const MAC_RESERVED: ReadonlyMap<string, string> = new Map([
   ...EVERY_APP,
   ["CmdOrCtrl+Q", "quits apps"],
+  ["CmdOrCtrl+H", "hides apps"],
+  ["CmdOrCtrl+M", "minimizes windows"],
+  ["CmdOrCtrl+,", "opens an app's settings"],
+  ["CmdOrCtrl+`", "switches an app's windows"],
   ["CmdOrCtrl+Tab", "switches apps"],
   ["CmdOrCtrl+Space", "opens Spotlight"],
 ]);
 const PC_RESERVED: ReadonlyMap<string, string> = new Map([
   ...EVERY_APP,
+  ["CmdOrCtrl+Y", "redoes in most apps"],
   ["CmdOrCtrl+Q", "quits many apps"],
   ["CmdOrCtrl+Tab", "switches tabs in most apps"],
   ["Alt+Tab", "switches apps"],

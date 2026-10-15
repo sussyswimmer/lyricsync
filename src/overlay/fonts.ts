@@ -17,6 +17,8 @@ export interface FontChoice {
   latin: string;
   /** serif faces fall back to serif system and CJK faces (Mincho, Song, Myeongjo), the rest to sans ones */
   serif: boolean;
+  /** has Vietnamese accented letters; without them those come from a fallback face (Settings says so) */
+  vietnamese: boolean;
 }
 
 /** The language a song's Chinese, Japanese or Korean text is set in, picked once per song (cjkLang). */
@@ -53,20 +55,27 @@ export function stackFor(font: Pick<FontChoice, "family" | "latin" | "serif">, l
   ].join(", ");
 }
 
-const face = (family: string, label: string, weight: number, serif: boolean, latin = ""): FontChoice => {
-  const spec = { family, label, weight, serif, latin };
+const face = (
+  family: string,
+  label: string,
+  weight: number,
+  serif: boolean,
+  vietnamese: boolean,
+  latin = "",
+): FontChoice => {
+  const spec = { family, label, weight, serif, vietnamese, latin };
   return { ...spec, stack: stackFor(spec, null) };
 };
 
 export const FONTS: readonly FontChoice[] = [
-  face("Fraunces", "Fraunces", 700, true),
-  face("Instrument Serif", "Instrument Serif", 400, true),
-  face("Syne", "Syne", 800, false),
-  face("Unbounded", "Unbounded", 700, false),
-  face("Bricolage Grotesque", "Bricolage", 700, false),
-  face("Caveat", "Caveat", 600, false, `"Comic Sans MS"`),
-  face("JetBrains Mono", "JetBrains Mono", 600, false, "ui-monospace, Menlo, Consolas"),
-  face("System", "System", 700, false),
+  face("Fraunces", "Fraunces", 700, true, true),
+  face("Instrument Serif", "Instrument Serif", 400, true, false),
+  face("Syne", "Syne", 800, false, false),
+  face("Unbounded", "Unbounded", 700, false, true),
+  face("Bricolage Grotesque", "Bricolage", 700, false, true),
+  face("Caveat", "Caveat", 600, false, false, `"Comic Sans MS"`),
+  face("JetBrains Mono", "JetBrains Mono", 600, false, true, "ui-monospace, Menlo, Consolas"),
+  face("System", "System", 700, false, true),
 ];
 
 /** The choice for a settings family name; unknown names fall back to the default face. */

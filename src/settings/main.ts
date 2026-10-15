@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, typ
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
+import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
 import { SettingsPreview, type PreviewInfo } from "./preview";
@@ -107,11 +108,11 @@ async function boot(host: HTMLElement): Promise<void> {
       console.warn("Undertone: couldn't save settings", error);
       // The core keeps Launch at login as it was when the OS refuses the login item; the switch has
       // already snapped back to it, and the note under it says why.
+      // The note is a status region of its own, so it is announced once, in full, without help.
       if (write.kind === "patch" && write.patch.launchAtLogin !== undefined) {
         loginError = true;
         loginErrorFor = write.patch.launchAtLogin;
         render();
-        panel?.announce("Couldn't change Launch at login");
         return;
       }
       panel?.announce("Couldn't save that change");
@@ -134,11 +135,11 @@ async function boot(host: HTMLElement): Promise<void> {
       sync.editNow(patch);
     },
     setTrackOffset: (key, ms) => sync.setTrackOffset(key, ms),
+    // One save either way. Forgetting every song's sync replaces the whole map, which is the intent, so
+    // it goes in the same patch rather than as one set_track_offset (and one settings.json write) per song.
     reset: (forgetSongs) => {
-      const offsets = Object.entries(view.trackOffsetsMs);
-      sync.edit(defaultsPatch());
+      sync.edit(forgetSongs ? { ...defaultsPatch(), trackOffsetsMs: {} } : defaultsPatch());
       sync.flush();
-      if (forgetSongs) for (const [key, ms] of offsets) if (ms !== 0) sync.setTrackOffset(key, 0);
     },
     suspendShortcuts,
   });
@@ -184,6 +185,19 @@ async function boot(host: HTMLElement): Promise<void> {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") leave();
   });
+  // Back in front: the keyboard layout may have changed meanwhile (Windows; a no-op elsewhere).
+  window.addEventListener("focus", () => panel?.refreshKeyLayout());
+
+  // In the app, Settings is a window rather than a web page: no browser context menu, and no reload,
+  // print or find bar from the keyboard (WebView2 keeps its browser keys on by default). The mock in a
+  // browser keeps them, for development.
+  if (bridge.kind === "tauri") {
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Bubbling, so a key the shortcut recorder took (and prevented) stays the recorder's.
+    window.addEventListener("keydown", (e) => {
+      if (!e.defaultPrevented && isBrowserKey(e)) e.preventDefault();
+    });
+  }
 
   // Keyboard focus and scrollIntoView stop below the pinned preview, never under it.
   const pad = (): void => {

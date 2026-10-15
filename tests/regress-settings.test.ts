@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings } fr
 import { createMockBridge, type MockBridge } from "../src/bridge/mock";
 import type { Bridge } from "../src/bridge/types";
 import { PaletteCache } from "../src/core/palette";
+import { FONTS } from "../src/overlay/fonts";
 import { GAP_GRACE_MS, TrackHold } from "../src/settings/hold";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
@@ -285,6 +286,42 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
   });
 });
 
+describe("font-vietnamese: the font picker says which faces draw Vietnamese accents in another font", () => {
+  const note = (p: ReturnType<typeof mountPanel>): FakeElement => p.root.one("font-note");
+  const pick = (p: ReturnType<typeof mountPanel>, family: string): void => {
+    const input = p.root.one("fonts").all("opt").find((o) => o.dataset["family"] === family)?.children[0];
+    if (!input) throw new Error(`no ${family} tile`);
+    input.checked = true;
+    input.dispatch("change");
+  };
+
+  it("says nothing for the default face, and names a face without the subset once it is picked", () => {
+    const p = mountPanel();
+    expect(note(p).textContent).toBe("");
+    expect(p.root.one("fonts").getAttribute("aria-describedby")).toBe(note(p).id);
+    pick(p, "Caveat");
+    expect(note(p).textContent).toBe("Caveat has no Vietnamese accented letters, so those come from a system font.");
+    pick(p, "Instrument Serif");
+    expect(note(p).textContent).toBe("Instrument Serif has no Vietnamese accented letters, so those come from a system font.");
+    pick(p, "Bricolage Grotesque");
+    expect(note(p).textContent).toBe("");
+  });
+
+  it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", async () => {
+    const fsModule = "node:fs";
+    const fs = (await import(/* @vite-ignore */ fsModule)) as { readdirSync(path: URL): string[] };
+    for (const face of FONTS) {
+      if (face.family === "System") {
+        expect(face.vietnamese).toBe(true);
+        continue;
+      }
+      const dir = face.family.toLowerCase().replace(/ /g, "-");
+      const files = fs.readdirSync(new URL(`../node_modules/@fontsource/${dir}/files/`, import.meta.url));
+      expect(face.vietnamese, face.family).toBe(files.some((f) => f.includes("-vietnamese-")));
+    }
+  });
+});
+
 describe("media-status: Settings says why it can't see the song", () => {
   const DENIED_SPOTIFY: MediaStatus = { source: "spotify", problem: "automation-denied" };
   const DENIED_MUSIC: MediaStatus = { source: "apple-music", problem: "automation-denied" };
@@ -471,6 +508,45 @@ describe("settings-button-cascade: button classes win over the page's button res
     for (const hex of dangers) expect(contrast("#ffffff", hex)).toBeGreaterThanOrEqual(4.5);
     const danger = rules(settingsCss).find(([sel]) => sel === ".btn-danger");
     expect(danger?.[1]).toMatch(/color:\s*#fff\b/);
+  });
+
+  it("light mode marks what is selected or on at 3:1 or more (WCAG 1.4.11)", () => {
+    const light = settingsCss.slice(settingsCss.indexOf(":root"), settingsCss.indexOf("@media (prefers-color-scheme: dark)"));
+    const token = (name: string): string => light.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
+    const [accent, card, bg] = [token("--accent"), token("--card"), token("--bg")];
+    // the tile ring, the on switch and the slider fill, on the card and the window
+    expect(contrast(accent, card)).toBeGreaterThanOrEqual(3);
+    expect(contrast(accent, bg)).toBeGreaterThanOrEqual(3);
+    // the on switch's white knob on the accent
+    expect(contrast("#ffffff", accent)).toBeGreaterThanOrEqual(3);
+    // the off switch's edge, drawn over the white card
+    const ring = token("--switch-ring").match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+    expect(ring).not.toBeNull();
+    const [r, g, b, a] = (ring ?? []).slice(1).map(Number);
+    const over = [r, g, b].map((c) => Math.round((c ?? 0) * (a ?? 0) + 255 * (1 - (a ?? 0))));
+    expect(contrast(`#${over.map((c) => c.toString(16).padStart(2, "0")).join("")}`, card)).toBeGreaterThanOrEqual(3);
+    expect(rules(settingsCss).find(([sel]) => sel === ".switch:not(:checked)")?.[1]).toMatch(/inset 0 0 0 1px var\(--switch-ring\)/);
+    // the chosen segment has an accent edge, as the tiles have their ring
+    expect(rules(settingsCss).find(([sel]) => sel === ".seg input:checked + .opt-face")?.[1]).toMatch(/inset 0 0 0 1px var\(--accent\)/);
+  });
+
+  it("in forced colors (Windows Contrast themes), selection, switches, sliders and swatches stay visible", () => {
+    const at = settingsCss.indexOf("@media (forced-colors: active)");
+    expect(at).toBeGreaterThan(0);
+    const forced = rules(settingsCss.slice(at));
+    const body = (selector: string): string => forced.find(([sel]) => sel.split(",").map((s) => s.trim()).includes(selector))?.[1] ?? "";
+    // a border, not the dropped box-shadow, and not an outline, which the focus ring needs
+    expect(body(".tiles input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    expect(body(".seg input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    // drawn with gradients and shadows: they keep their own drawing, in system colors
+    expect(body(".switch")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".switch")).toMatch(/ButtonText/);
+    expect(body(".switch:checked")).toMatch(/Highlight/);
+    expect(body(".range")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".range:focus-visible")).toMatch(/outline:\s*2px solid Highlight/);
+    // the user's colors stay the user's colors
+    expect(body(".swatch-chip")).toMatch(/forced-color-adjust:\s*none/);
+    expect(body(".pv")).toMatch(/forced-color-adjust:\s*none/);
   });
 
   it("the inert sync buttons dim without `disabled`, and hover skips them", () => {

@@ -30,9 +30,10 @@ export function withDefaults(settings: Settings): Settings {
 }
 
 /**
- * Reset to defaults: everything but `version`, per-song offsets (those go through `set_track_offset`),
- * and the two switches that aren't about how lyrics look: resetting must neither turn the lyrics back
- * on (or off) nor add or remove the login item. The shortcuts are reset, switch and bindings.
+ * Reset to defaults: everything but `version`, per-song offsets (kept, unless Reset also forgets them
+ * with its own `trackOffsetsMs: {}`), and the two switches that aren't about how lyrics look:
+ * resetting must neither turn the lyrics back on (or off) nor add or remove the login item. The
+ * shortcuts are reset, switch and bindings.
  */
 export function defaultsPatch(): Partial<Settings> {
   const patch: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
@@ -72,12 +73,19 @@ export interface SettingsSyncOptions {
  * echo replaces only the bottom layer, so an older value arriving mid-drag can't pull a slider back
  * under the user's pointer. Edits go out debounced as one shallow `update_settings` patch (nested
  * objects are always whole); per-song nudges use `set_track_offset` so they never resend the map.
+ *
+ * A reply and an echo travel separately, so a reply can land after an echo of a newer change (the
+ * toggle shortcut, the tray). The core reads the settings it sends with each echo as the echo goes
+ * out, after every change it commits, so an echo that arrived after a write was sent is at least as
+ * new as that write's reply: the reply then leaves the bottom layer alone.
  */
 export class SettingsSync {
   private base: Settings;
   private pending: Partial<Settings> = {};
   private readonly queue: Write[] = [];
   private busy = false;
+  /** Echoes received so far, so a reply can tell whether one came in after its write was sent. */
+  private echoes = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private firstPendingAt = 0;
   private disposed = false;
@@ -110,6 +118,7 @@ export class SettingsSync {
   /** A `settings-changed` echo, from this window or any other. */
   receive(settings: Settings): void {
     if (this.disposed) return;
+    this.echoes++;
     this.base = withDefaults(settings);
     this.onChange(this.view);
   }
@@ -168,6 +177,7 @@ export class SettingsSync {
     const write = this.queue[0];
     if (!write) return;
     this.busy = true;
+    const echoesBefore = this.echoes;
     const sent =
       write.kind === "patch"
         ? this.bridge.invoke("update_settings", { patch: write.patch })
@@ -175,7 +185,8 @@ export class SettingsSync {
     sent
       .then(
         (settings) => {
-          this.base = withDefaults(settings);
+          // An echo since this write went out is at least as new as this reply (see the class comment).
+          if (this.echoes === echoesBefore) this.base = withDefaults(settings);
         },
         (error: unknown) => this.onError(error, write),
       )

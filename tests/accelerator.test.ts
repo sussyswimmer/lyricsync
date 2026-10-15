@@ -13,6 +13,7 @@ import {
   loadKeyLayout,
   mergeShortcuts,
   MODIFIERS,
+  movedOnLayout,
   normalizeBinding,
   parseAccelerator,
   recordKey,
@@ -189,6 +190,56 @@ describe("recordKey: a key press to an accelerator", () => {
     expect(recordKey(press("BracketLeft", { metaKey: true }), "mac", azerty)).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+[" });
   });
 
+  it("movedOnLayout: on Windows, a saved punctuation key whose US position types something else may be elsewhere", () => {
+    // German: ü where US has [, + where US has ]; the keys Windows registers [ and ] by are ß and ´
+    const german = new Map([
+      ["BracketLeft", "ü"],
+      ["BracketRight", "+"],
+      ["Minus", "ß"],
+      ["KeyZ", "y"],
+      ["Digit1", "1"],
+    ]);
+    const uk = new Map([
+      ["BracketLeft", "["],
+      ["BracketRight", "]"],
+      ["Backslash", "#"],
+    ]);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", german)).toBe(true);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+]", "windows", german)).toBe(true);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+-", "windows", german)).toBe(true);
+    // a UK keyboard types [ and ] where US does
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", uk)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+]", "windows", uk)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+\\", "windows", uk)).toBe(true);
+    // letters, digits, F keys: recorded as Windows registers them, never flagged
+    for (const binding of ["CmdOrCtrl+Alt+Shift+Z", "CmdOrCtrl+Alt+Shift+1", "Control+F9", "Alt+Space"]) {
+      expect(movedOnLayout(binding, "windows", german), binding).toBe(false);
+    }
+    // a key the layout map doesn't list, no binding, an unusable one
+    for (const binding of ["CmdOrCtrl+Alt+;", "", "Shift+["]) expect(movedOnLayout(binding, "windows", german), binding).toBe(false);
+    // a Mac registers by position; without a layout nothing can be said
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "mac", german)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "other", german)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", null)).toBe(false);
+  });
+
+  it("movedOnLayout: a non-Latin layout keeps the US virtual keys, so its own letters there don't count", () => {
+    const russian = new Map([
+      ["BracketLeft", "х"],
+      ["BracketRight", "ъ"],
+      ["Period", "ю"],
+      ["Slash", "."],
+    ]);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", russian)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+]", "windows", russian)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+.", "windows", russian)).toBe(false);
+    // other punctuation there is still a different key
+    expect(movedOnLayout("CmdOrCtrl+Alt+/", "windows", russian)).toBe(true);
+    // Latin letters with accents are a Latin layout (Nordic å, French AZERTY's ^ dead key)
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", new Map([["BracketLeft", "å"]]))).toBe(true);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", new Map([["BracketLeft", "^"]]))).toBe(true);
+  });
+
   it("loadKeyLayout asks the engine, and is null where it can't say or refuses", async () => {
     const map = new Map([["KeyQ", "a"]]);
     expect(await loadKeyLayout({ keyboard: { getLayoutMap: () => Promise.resolve(map) } })).toBe(map);
@@ -206,14 +257,25 @@ describe("recordKey: a key press to an accelerator", () => {
       ...["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Insert", "Delete", "Backspace", "Tab", "Enter"],
       ...["BracketLeft", "BracketRight", "Semicolon", "Quote", "Comma", "Period", "Slash", "Backslash", "Backquote", "Minus", "Equal"],
     ];
+    // Windows without a layout map reads every key by position
     const recorded = codes.map((code) => {
-      const r = recordKey(press(code, { altKey: true }), "mac");
+      const r = recordKey(press(code, { altKey: true }), "windows");
       return r.kind === "combo" ? r.accelerator.replace(/^Alt\+/, "") : `(${code}: ${r.kind})`;
     });
     expect(recorded).toEqual([...KEYS]);
     for (const code of ["Escape", "CapsLock", "NumpadAdd", "Numpad1", "NumpadEnter", "IntlBackslash", "F25", "MediaPlayPause", "PrintScreen", ""]) {
       expect(recordKey(press(code, { altKey: true }), "mac"), code).toEqual({ kind: "unsupported" });
     }
+  });
+
+  it("on a Mac, turns down F21 to F24, which the core can't register there (shortcuts::MISSING_ON_MACOS)", () => {
+    for (const code of ["F21", "F22", "F23", "F24"]) {
+      expect(recordKey(press(code, { metaKey: true }), "mac"), code).toEqual({ kind: "unsupported" });
+      expect(recordKey(press(code, { ctrlKey: true }), "windows"), code).toEqual({ kind: "combo", accelerator: `CmdOrCtrl+${code}` });
+    }
+    expect(recordKey(press("F20", { metaKey: true }), "mac")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+F20" });
+    // without a modifier, the modifier comes first
+    expect(recordKey(press("F21"), "mac")).toEqual({ kind: "needs-modifier" });
   });
 
   it("needs ⌘, ⌃, ⌥ or the Windows key; Shift alone isn't enough", () => {
@@ -243,6 +305,34 @@ describe("combinations to leave alone", () => {
     expect(reservedUse("Alt+F4", "windows")).toBe("closes the window");
     expect(reservedUse("Alt+F4", "mac")).toBeNull();
     for (const free of ["CmdOrCtrl+Shift+C", "Control+C", "CmdOrCtrl+Alt+Shift+L", ""]) expect(reservedUse(free, "windows"), free).toBeNull();
+  });
+
+  it.each([
+    ["CmdOrCtrl+Shift+Z", "redoes in most apps"],
+    ["CmdOrCtrl+F", "finds in most apps"],
+    ["CmdOrCtrl+N", "opens a new window or document"],
+    ["CmdOrCtrl+O", "opens files"],
+    ["CmdOrCtrl+P", "prints"],
+    ["CmdOrCtrl+T", "opens a new tab"],
+  ])("turns down %s on both platforms: it %s", (binding, use) => {
+    expect(reservedUse(binding, "mac")).toBe(use);
+    expect(reservedUse(binding, "windows")).toBe(use);
+  });
+
+  it("knows the Mac's own: hide, minimize, an app's settings and its windows", () => {
+    expect(reservedUse("CmdOrCtrl+H", "mac")).toBe("hides apps");
+    expect(reservedUse("CmdOrCtrl+M", "mac")).toBe("minimizes windows");
+    expect(reservedUse("CmdOrCtrl+,", "mac")).toBe("opens an app's settings");
+    expect(reservedUse("CmdOrCtrl+`", "mac")).toBe("switches an app's windows");
+    // the keys as the recorder spells them
+    expect(recordKey(press("Comma", { metaKey: true }), "mac")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+," });
+    expect(recordKey(press("Backquote", { metaKey: true }), "mac")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+`" });
+    for (const binding of ["CmdOrCtrl+H", "CmdOrCtrl+M", "CmdOrCtrl+,", "CmdOrCtrl+`"]) expect(reservedUse(binding, "windows"), binding).toBeNull();
+    // and Windows' Redo
+    expect(reservedUse("CmdOrCtrl+Y", "windows")).toBe("redoes in most apps");
+    expect(reservedUse("CmdOrCtrl+Y", "mac")).toBeNull();
+    // with another modifier, free again
+    for (const free of ["CmdOrCtrl+Alt+H", "CmdOrCtrl+Shift+F", "Control+M", "CmdOrCtrl+Alt+Shift+P"]) expect(reservedUse(free, "mac"), free).toBeNull();
   });
 
   it("on Windows, Ctrl+Alt on a typing key without Shift or Win may take an AltGr character", () => {
