@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, typ
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
+import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
 import { SettingsPreview, type PreviewInfo } from "./preview";
@@ -186,6 +187,17 @@ async function boot(host: HTMLElement): Promise<void> {
   });
   // Back in front: the keyboard layout may have changed meanwhile (Windows; a no-op elsewhere).
   window.addEventListener("focus", () => panel?.refreshKeyLayout());
+
+  // In the app, Settings is a window rather than a web page: no browser context menu, and no reload,
+  // print or find bar from the keyboard (WebView2 keeps its browser keys on by default). The mock in a
+  // browser keeps them, for development.
+  if (bridge.kind === "tauri") {
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Bubbling, so a key the shortcut recorder took (and prevented) stays the recorder's.
+    window.addEventListener("keydown", (e) => {
+      if (!e.defaultPrevented && isBrowserKey(e)) e.preventDefault();
+    });
+  }
 
   // Keyboard focus and scrollIntoView stop below the pinned preview, never under it.
   const pad = (): void => {

@@ -78,6 +78,9 @@ html.ut-settings body {
   font: 400 13px/1.4 var(--ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* a window, not a page: a double click on a label doesn't select its text */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* not inside the preview stage: the modes measure text there exactly as in the overlay window */
