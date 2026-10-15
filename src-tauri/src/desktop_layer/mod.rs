@@ -425,6 +425,28 @@ mod tests {
     }
 
     #[test]
+    fn the_manifest_lets_the_overlay_be_a_layered_child_window() {
+        // An attached overlay is a layered child of Progman or WorkerW. Windows allows layered
+        // child windows only to apps whose manifest declares Windows 8 or later; without a
+        // supportedOS list they run in the Vista context.
+        assert_ne!(styles::attached_ex(0) & styles::WS_EX_LAYERED, 0);
+        let manifest = include_str!("../../windows.manifest");
+        let open = r#"<compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">"#;
+        let start = manifest.find(open).expect("no compatibility block");
+        let block = &manifest[start..start + manifest[start..].find("</compatibility>").unwrap()];
+        for (os, id) in [
+            ("8", "{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"),
+            ("8.1", "{1f676c76-80e1-4239-95bb-83d0f6d0da78}"),
+            ("10 and 11", "{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"),
+        ] {
+            assert!(
+                block.contains(&format!(r#"<supportedOS Id="{id}"/>"#)),
+                "Windows {os} is not declared"
+            );
+        }
+    }
+
+    #[test]
     fn configured_overlays_are_never_throttled() {
         let windows = configured_windows();
         let overlays: Vec<_> = windows
