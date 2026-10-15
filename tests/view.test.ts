@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Lyrics, LyricsStatus } from "../contract/contract";
 import { parseLrc } from "../src/core/lrc";
 import { pacePlain } from "../src/core/timing";
+import type { StageView } from "../src/overlay/stage";
 import { sameLyrics, viewFor } from "../src/overlay/view";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
@@ -119,6 +120,38 @@ describe("viewFor: found", () => {
       expect(viewFor(lyrics("found", { synced: short, plain: FOUR }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: false } });
       const credits = `Words and music by nobody in particular\n${neonMonsoon}`;
       expect(viewFor(lyrics("found", { synced: credits }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: false } });
+    });
+
+    // Regression (shape-knife-edge): every unstamped row counted as untimed text, so an unstamped
+    // translation under each stamped row, or the synced block's text pasted under it, sat one credit
+    // or title row away from throwing away good timing and pacing every row evenly.
+    const ORIGINALS = Array.from({ length: 10 }, (_, n) => `placeholder line number ${n + 1}`);
+    const stamp = (n: number): string => `[00:${String(1 + 3 * n).padStart(2, "0")}.00]`;
+    const synced = (lrc: string): StageView => ({ kind: "lyrics", timeline: { lines: parseLrc(lrc, DURATION), unsynced: false } });
+
+    it("keeps an unstamped translation under every stamped row synced, with a credit row too", () => {
+      const rows = ORIGINALS.map((t, n) => `${stamp(n)}${t}\nthe same placeholder line ${n + 1}, translated`);
+      const lrc = `Lyrics by somebody placeholder\n${rows.join("\n")}`;
+      const view = viewFor(lyrics("found", { synced: lrc }), DURATION);
+      expect(view).toEqual(synced(lrc));
+      expect(view.kind === "lyrics" && view.timeline.lines.map((l) => l.text)).toEqual(ORIGINALS);
+    });
+
+    it("keeps a stamped block synced with a blank row, a title and its plain text pasted under it", () => {
+      const block = ORIGINALS.map((t, n) => `${stamp(n)}${t}`).join("\n");
+      for (const lrc of [`${block}\n\nA Placeholder Title\n${ORIGINALS.join("\n")}`, `A Placeholder Title\n${block}\n${ORIGINALS.join("\n")}`]) {
+        expect(viewFor(lyrics("found", { synced: lrc, plain: ORIGINALS.join("\n") }), DURATION)).toEqual(synced(lrc));
+      }
+    });
+
+    it("still paces a partly timed LRC, not counting the row under a stamped one or copies of stamped rows", () => {
+      // two stamped rows, then all ten as plain text: eight rows the parser would never show
+      const lrc = `${stamp(0)}${ORIGINALS[0]}\n${stamp(1)}${ORIGINALS[1]}\n${ORIGINALS.join("\n")}`;
+      const view = viewFor(lyrics("found", { synced: lrc, plain: ORIGINALS.join("\n") }), DURATION);
+      expect(view).toEqual({ kind: "lyrics", timeline: pacePlain(ORIGINALS.join("\n"), DURATION) });
+      // and one stamped row over three plain ones, the row right under it skipped: two against one
+      const one = `${stamp(0)}${ORIGINALS[0]}\n${ORIGINALS.slice(1, 4).join("\n")}`;
+      expect(viewFor(lyrics("found", { synced: one }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: true } });
     });
   });
 
