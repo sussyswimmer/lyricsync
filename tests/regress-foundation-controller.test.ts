@@ -326,18 +326,33 @@ describe("an error reply to the first lyrics query", () => {
 });
 
 /**
- * A 60 Hz display and the page's visibility, for the frame loop: every 16 ms of fake time, the frames
- * requested by then run. They keep running while the page is hidden (an embedded webview may keep
- * ticking a hidden window), so a test sees the controller stop by itself, not the browser throttle it.
+ * A display (a vsync every 16 ms unless told otherwise) and the page's visibility, for the frame loop:
+ * at every vsync of fake time, the frames requested by then run, given the vsync's time on
+ * performance.now()'s clock as browsers do. With `latency`, a frame's callbacks run that many ms after
+ * its vsync, after any timers due by then, as on a busy main thread. Frames keep running while the
+ * page is hidden (an embedded webview may keep ticking a hidden window), so a test sees the controller
+ * stop by itself, not the browser throttle it. Whole ms only: fake timers carry fractions oddly.
  */
 class FakeDisplay {
   visibility: DocumentVisibilityState = "visible";
   /** Vsyncs so far. */
   vsyncs = 0;
-  private sinceVsync = 0;
+  /** Frame callbacks run so far: how often the page woke for a frame. */
+  callbacks = 0;
+  private readonly frameMs: number;
+  private readonly latency: number;
+  /** fake ms run so far, and when the next vsync is */
+  private elapsed = 0;
+  private nextVsync: number;
   private readonly queued = new Map<number, FrameRequestCallback>();
   private readonly listeners = new Set<() => void>();
   private lastId = 0;
+
+  constructor(frameMs = 16, latency = 0) {
+    this.frameMs = frameMs;
+    this.latency = latency;
+    this.nextVsync = frameMs;
+  }
 
   install(): void {
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback): number => {
@@ -377,20 +392,27 @@ class FakeDisplay {
     return this.listeners.size;
   }
 
-  /** Lets `ms` pass: timers fire when due, and at every vsync (each 16 ms) the frames requested by then run. */
+  /** Lets `ms` pass: timers fire when due, and at every vsync (each 16 ms by default) the frames requested by then run. */
   run(ms: number): void {
-    for (let left = ms; left > 0; ) {
-      const step = Math.min(left, 16 - this.sinceVsync);
-      vi.advanceTimersByTime(step);
-      left -= step;
-      this.sinceVsync += step;
-      if (this.sinceVsync < 16) continue;
-      this.sinceVsync = 0;
+    const end = this.elapsed + ms;
+    while (this.nextVsync + this.latency <= end) {
+      this.advanceTo(this.nextVsync);
+      const time = performance.now();
+      this.advanceTo(this.nextVsync + this.latency);
+      this.nextVsync += this.frameMs;
       this.vsyncs++;
       const due = [...this.queued.values()];
       this.queued.clear();
-      for (const cb of due) cb(Date.now());
+      this.callbacks += due.length;
+      for (const cb of due) cb(time);
     }
+    this.advanceTo(end);
+  }
+
+  private advanceTo(at: number): void {
+    if (at <= this.elapsed) return;
+    vi.advanceTimersByTime(at - this.elapsed);
+    this.elapsed = at;
   }
 }
 
@@ -443,6 +465,60 @@ describe("the frame loop", () => {
       painted += paintsIn(stage, 100).length;
     }
     expect(painted).toBe(display.vsyncs - vsyncs);
+    controller.destroy();
+  });
+
+  // Regression (busy-at-display-rate): a busy stage (Lens follows the sung word through every line)
+  // asked for every display frame, so a 120 or 144 Hz display drew it two or more times as often as a
+  // 60 Hz one, against the CPU budget.
+  // Whole-ms stand-ins for 60, 100, 120, 144 and 240 Hz: every frame up to 100 Hz, then every other or third.
+  it.each([
+    [16, 62],
+    [10, 100],
+    [8, 62],
+    [7, 71],
+    [4, 83],
+  ])("with a vsync every %s ms, draws a busy stage about %s times a second", async (frameMs, fps) => {
+    display = new FakeDisplay(frameMs);
+    display.install();
+    const { stage, controller } = await playing();
+    const woke = display.callbacks;
+    const times = paintsIn(stage, 1000);
+    expect(times.length).toBeGreaterThanOrEqual(fps - 1);
+    expect(times.length).toBeLessThanOrEqual(fps + 2);
+    // it waits on a timer, not by asking for frames it then skips
+    expect(display.callbacks - woke).toBeLessThanOrEqual(times.length + 1);
+    // never two frames closer than BUSY_FRAME_MS (8.6 ms), never a frame skipped that could be drawn
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(Math.min(frameMs, 9));
+    for (const gap of gaps(times)) expect(gap).toBeLessThanOrEqual(Math.max(frameMs, 8.6 + frameMs));
+    controller.destroy();
+  });
+
+  it("passes over a frame that began before the wait was over, on a busy main thread", async () => {
+    // a 125 Hz display whose frames run 2 ms late, after the timer that asked for them
+    display = new FakeDisplay(8, 2);
+    display.install();
+    const { stage, controller } = await playing();
+    const times = paintsIn(stage, 1000);
+    expect(times.length).toBeLessThanOrEqual(63);
+    for (const gap of gaps(times)) expect(gap).toBe(16);
+    controller.destroy();
+  });
+
+  it("on a fast display, still sleeps between word boundaries and paints a change at the next frame", async () => {
+    display = new FakeDisplay(8);
+    display.install();
+    const { bridge, stage, controller } = await playing();
+    paintsIn(stage, 2);
+    bridge.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), glow: 90 });
+    expect(paintsIn(stage, 8)).toHaveLength(1);
+    stage.busy = false;
+    stage.next = 100;
+    paintsIn(stage, 300);
+    const times = paintsIn(stage, 2000);
+    expect(times.length).toBeGreaterThanOrEqual(19);
+    expect(times.length).toBeLessThanOrEqual(21);
+    for (const gap of gaps(times)) expect(gap).toBeLessThanOrEqual(100 + 8);
     controller.destroy();
   });
 

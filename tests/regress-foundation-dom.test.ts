@@ -4,10 +4,11 @@ import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from 
 import { parseLrc, type Line } from "../src/core/lrc";
 import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
+import { fontFor } from "../src/overlay/fonts";
 import { resolveLook, type Frame, type Look } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
-import { LINGER_MS, LyricStage } from "../src/overlay/stage";
+import { LINGER_MS, LyricStage, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -244,7 +245,7 @@ describe("Drift while paused", () => {
     const { mode, rows } = drift();
     mode.paint(cue(1, 5000));
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfadeLines).toBe(true);
+    expect(mode.crossfades(cue(2, 10_000, false, true))).toBe(true);
     expect(mode.paint(cue(2, 10_000, false, true))).toBe(false);
     expect(scaleOf(rows[2])).toBe(1);
     expect(yOf(rows[2])).toBe(0);
@@ -257,11 +258,42 @@ describe("Drift while paused", () => {
   it("glides again (no stage crossfade) once playing", () => {
     const { mode } = drift();
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfadeLines).toBe(true);
+    expect(mode.crossfades(cue(2, 12_500, false))).toBe(true);
     mode.paint(cue(1, 5016));
-    expect(mode.crossfadeLines).toBe(false);
+    expect(mode.crossfades(cue(2, 12_500))).toBe(false);
     clock += 16;
     expect(mode.paint(cue(2, 12_500))).toBe(true);
+  });
+});
+
+// Regression (drift-seek-cut): a jump of more than three lines while playing cut the whole stack in
+// one frame, where Arc and Lens fade a seek out and in.
+describe("Drift on a seek while playing", () => {
+  it("has the stage crossfade a jump of more than three lines, and glides a step", () => {
+    const { mode } = drift(1, lookFor(), EIGHT);
+    mode.paint(cue(1, 3500));
+    expect(mode.crossfades(cue(2, 5500))).toBe(false);
+    expect(mode.crossfades(cue(4, 9500))).toBe(false);
+    expect(mode.crossfades(cue(5, 11_500))).toBe(true);
+    // a repeated song starting over
+    mode.paint(cue(7, 15_500));
+    expect(mode.crossfades(cue(0, 500, true, true))).toBe(true);
+    // the stack fades out by itself after the last line
+    expect(mode.crossfades(cue(-1, 19_000))).toBe(false);
+  });
+
+  it("leaves a fading copy of the old line on the stage for a jump, none for a step", () => {
+    const { stage: s, root } = stage();
+    s.show({ kind: "lyrics", timeline: { lines: EIGHT, unsynced: false } }, "a");
+    const ghosts = (): number => root.children.filter((c) => c.classList.contains("ut-ghost")).length;
+    clock += 1000;
+    s.render(1500);
+    clock += 16;
+    s.render(3500);
+    expect(ghosts()).toBe(0);
+    clock += 600;
+    s.render(13_500);
+    expect(ghosts()).toBe(1);
   });
 });
 
@@ -468,6 +500,97 @@ describe("frames on a boundary", () => {
   });
 });
 
+// Regression (dpr-change-no-resize): layouts are snapped to device pixels, but only a resize rebuilt
+// them, and a window moved between a 2× and a 1× screen of the same size never resizes.
+describe("the stage on a device pixel ratio change", () => {
+  interface Query {
+    media: string;
+    matches: boolean;
+    listeners: Set<() => void>;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(type: string, fn: () => void): void;
+  }
+  let queries: Query[] = [];
+
+  beforeEach(() => {
+    queries = [];
+    vi.stubGlobal("devicePixelRatio", 2);
+    vi.stubGlobal("matchMedia", (media: string): Query => {
+      const listeners = new Set<() => void>();
+      const query: Query = {
+        media,
+        matches: false,
+        listeners,
+        addEventListener: (_type, fn) => listeners.add(fn),
+        removeEventListener: (_type, fn) => listeners.delete(fn),
+      };
+      queries.push(query);
+      return query;
+    });
+  });
+
+  const watched = (): Query[] => queries.filter((q) => q.media.startsWith("(resolution") && q.listeners.size > 0);
+
+  it("rebuilds with the new ratio, then watches that one; destroy stops watching", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    const before = scenes()[0]?.find("drift")[0];
+    expect(watched().map((q) => q.media)).toEqual(["(resolution: 2dppx)"]);
+
+    vi.stubGlobal("devicePixelRatio", 1);
+    for (const fn of [...(watched()[0]?.listeners ?? [])]) fn();
+    expect(scenes()[0]?.find("drift")[0]).not.toBe(before);
+    expect(watched().map((q) => q.media)).toEqual(["(resolution: 1dppx)"]);
+
+    s.destroy();
+    expect(watched()).toEqual([]);
+  });
+});
+
+// Regression (cjk-fallback-order): every song got one fixed CJK fallback order, and the page said
+// lang="en", so Chinese lines mixed Japanese and Chinese faces.
+describe("the stage's CJK language", () => {
+  const song = (text: string): StageView => ({
+    kind: "lyrics",
+    timeline: { lines: parseLrc(`[00:01.00]${text}\n[00:05.00]${text}`, 20_000), unsynced: false },
+  });
+
+  it("is picked once per song, set on the scene, and puts that language's faces first", () => {
+    const { stage: s, scenes } = stage();
+    s.show(song("夜明けの駅で、紙の鳥が待っている"), "ja");
+    const ja = scenes()[0];
+    expect((ja as unknown as { lang?: string }).lang).toBe("ja");
+    expect(String(ja?.find("drift")[0]?.style["fontFamily"])).toMatch(/^"Fraunces", Georgia, "Hiragino Mincho ProN"/);
+    clock += 5000;
+    s.show(song("灯笼漂过安静的河面，我们说好再见"), "zh");
+    const zh = scenes()[scenes().length - 1];
+    expect((zh as unknown as { lang?: string }).lang).toBe("zh-Hans");
+    expect(String(zh?.find("drift")[0]?.style["fontFamily"])).toMatch(/^"Fraunces", Georgia, "Songti SC"/);
+  });
+
+  it("leaves a song without CJK text, and the states, in the page's language", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    expect((scenes()[0] as unknown as { lang?: string }).lang).toBeUndefined();
+    expect(String(scenes()[0]?.find("drift")[0]?.style["fontFamily"])).toBe(fontFor("Fraunces").stack);
+  });
+});
+
+describe("the stage's reference height", () => {
+  it("asks for one given as a function on every layout (the overlay's follows its screen)", () => {
+    let reference = 720;
+    const host = new FakeElement("main");
+    const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
+    s.setSettings(settings({ mode: "stack" }));
+    s.show(lyricsView, "a");
+    const drift = (): FakeElement | undefined => host.find("drift")[0];
+    expect(drift()?.style["fontSize"]).toBe("58px");
+    reference = 360;
+    s.setSettings(settings({ mode: "stack", glow: 41 }));
+    expect(drift()?.style["fontSize"]).toBe("116px");
+  });
+});
+
 describe("the stage while paused", () => {
   it("tells the mode the clock isn't running", () => {
     const { stage: s } = stage();
@@ -514,33 +637,39 @@ describe("the not-found chip", () => {
   });
 });
 
+/**
+ * stage.css without comments, read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline,
+ * which yields "" in node. A non-literal specifier, because the strict type check runs without node's types.
+ */
+async function stageCss(): Promise<string> {
+  const fsModule = "node:fs";
+  const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+  return fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
+function blocks(sheet: string): { prelude: string; body: string }[] {
+  const out: { prelude: string; body: string }[] = [];
+  let depth = 0;
+  let start = 0;
+  let open = 0;
+  for (let i = 0; i < sheet.length; i++) {
+    if (sheet[i] === "{" && depth++ === 0) open = i;
+    if (sheet[i] === "}" && --depth === 0) {
+      out.push({ prelude: sheet.slice(start, open).trim(), body: sheet.slice(open + 1, i) });
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
 // Regression (reduced-motion-loading-pulse): under reduced motion the loading dots kept pulsing forever;
 // only the instrumental ♪ had stopped breathing. C6: reduced motion means crossfades only.
 describe("stage.css under reduced motion", () => {
-  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
-  // non-literal specifier, because the strict type check runs without node's types.
   let css = "";
   beforeAll(async () => {
-    const fsModule = "node:fs";
-    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-    css = fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    css = await stageCss();
   });
-
-  /** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
-  function blocks(sheet: string): { prelude: string; body: string }[] {
-    const out: { prelude: string; body: string }[] = [];
-    let depth = 0;
-    let start = 0;
-    let open = 0;
-    for (let i = 0; i < sheet.length; i++) {
-      if (sheet[i] === "{" && depth++ === 0) open = i;
-      if (sheet[i] === "}" && --depth === 0) {
-        out.push({ prelude: sheet.slice(start, open).trim(), body: sheet.slice(open + 1, i) });
-        start = i + 1;
-      }
-    }
-    return out;
-  }
 
   const animationOf = (body: string): string => /(?:^|;)\s*animation\s*:\s*([^;]*)/.exec(body)?.[1]?.trim() ?? "";
   /** The rules inside `@media (prefers-reduced-motion: reduce)`, by selector. */
@@ -578,6 +707,49 @@ describe("stage.css under reduced motion", () => {
     const host = new FakeElement("div");
     buildState(asHtml(host), "loading", lookFor());
     expect(host.children[0]?.style["animationDelay"]).toBe("600ms");
+  });
+});
+
+/** WCAG relative luminance of an sRGB color, 0-255 per channel. */
+function luminance([r, g, b]: number[]): number {
+  const lin = (c: number): number => (c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r ?? 0) + 0.7152 * lin(g ?? 0) + 0.0722 * lin(b ?? 0);
+}
+const rgbOf = (hex: string): number[] => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+const contrast = (a: number[], b: number[]): number => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
+};
+
+describe("stage.css legibility", () => {
+  let css = "";
+  beforeAll(async () => {
+    css = await stageCss();
+  });
+  const rule = (selector: string): string => blocks(css).find((b) => b.prelude === selector)?.body ?? "";
+
+  // Regression (chip-contrast): the not-found and error chips' 0.42 dark fill left light lyric text at
+  // about 2.8:1 over a light wallpaper, under the 4.5:1 that 17 px text needs.
+  it("keeps the chip's text at 4.5:1 or better over a white wallpaper, and gives it the lyrics' dark shadow", () => {
+    const m = /background:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(rule(".state-chip"));
+    expect(m).not.toBeNull();
+    const alpha = Number(m?.[4]);
+    const fill = [1, 2, 3].map((i) => Number(m?.[i]) * alpha + 255 * (1 - alpha));
+    // the default lyric color, and the bluest album lyric color paletteFromPixels makes (HSL lightness 0.92, saturation 0.3)
+    for (const lyric of [DEFAULT_SETTINGS.colors.lyric, "#e4e4f1"]) expect(contrast(rgbOf(lyric), fill), lyric).toBeGreaterThanOrEqual(4.5);
+    const host = new FakeElement("div");
+    buildState(asHtml(host), "not-found", lookFor());
+    expect(String(host.children[0]?.style["textShadow"])).toMatch(/rgba\(0, 0, 0,/);
+  });
+
+  // Windows Contrast themes force every color, shadows off: word states, drawn by color alone, vanished.
+  it("keeps the lyric colors and shadows under forced colors", () => {
+    expect(rule(".ut-stage")).toMatch(/forced-color-adjust:\s*none/);
+  });
+
+  // Drift and Stack left one word alone on the last row of a wrapped lyric.
+  it("balances the rows of a wrapped Drift or Stack line", () => {
+    expect(rule(".drift-row")).toMatch(/text-wrap:\s*balance/);
   });
 });
 

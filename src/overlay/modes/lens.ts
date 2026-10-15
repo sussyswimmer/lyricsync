@@ -34,6 +34,8 @@ const NEXT_SIZE = 0.4;
 /** ...but no larger than this share of the focus line's fitted size (its far words are at 0.5), nor wider than this share of the stage. */
 const NEXT_MAX_SHARE = 0.45;
 const NEXT_FIT = 0.88;
+/** Room the next line keeps below its top, in its own font sizes (descenders), when it would otherwise run off the bottom. */
+const NEXT_DEPTH = 1.15;
 /** A line that was shown at rest while waiting eases into the fisheye over this long as it starts. */
 const RAMP_MS = 320;
 /**
@@ -197,6 +199,29 @@ export function zoomAt(f: RowFit, lens: number, width: number): number {
   return width > 0 && widest > 0 ? Math.min(f.fit, (ROW_FIT * width) / widest) : f.fit;
 }
 
+/**
+ * The next line's font size under a focus line of `focusSize` px: NEXT_SIZE of the look's, at most
+ * NEXT_MAX_SHARE of the focus line's, readable, and narrow enough for the stage. `full` is its width
+ * set at the look's size.
+ */
+export function nextSize(full: number, focusSize: number, look: Look): number {
+  const fits = full > 0 ? (NEXT_FIT * look.width * look.size) / full : Infinity;
+  const preferred = Math.min(look.size * NEXT_SIZE, focusSize * NEXT_MAX_SHARE);
+  const readable = Math.min(MIN_TEXT_PX, focusSize * 0.8);
+  return Math.min(Math.max(preferred, readable), fits);
+}
+
+/**
+ * Where the focus line's center goes: at `look.y`, unless the next line (`next` px, null for none)
+ * would run off the bottom of the stage there. Then the pair moves up until it fits, but the focus
+ * line no higher than resolveLook's top margin.
+ */
+export function focusCenter(look: Look, focusSize: number, next: number | null): number {
+  if (next === null) return look.y;
+  const room = look.height - focusSize * NEXT_DROP - next * NEXT_DEPTH - 2;
+  return Math.max(Math.min(look.y, room), Math.min(look.size * 0.75, look.height / 2));
+}
+
 /** A px length from shadowLayers, divided by the transform's scale it will be drawn under. */
 const unscaled = (v: string, scale: number): string => `${(Number.parseFloat(v) / scale).toFixed(2)}px`;
 
@@ -297,7 +322,7 @@ export class LensMode implements ModeRenderer {
   private generation = 0;
 
   /** The stage crossfades line changes only under reduced motion; otherwise Lens moves its lines itself (see mount). */
-  get crossfadeLines(): boolean {
+  crossfades(): boolean {
     return this.look ? !this.look.motion : true;
   }
 
@@ -419,7 +444,7 @@ export class LensMode implements ModeRenderer {
    */
   private remeasureWhenFontsLoad(box: HTMLDivElement, lines: readonly Line[], look: Look): void {
     const generation = ++this.generation;
-    const loading = whenFaceLoads(look.font, look.weight, lines.map((l) => l.text).join(""));
+    const loading = whenFaceLoads(look.family, look.weight, lines.map((l) => l.text).join(""));
     if (!loading) return;
     void loading.then(
       () => {
@@ -535,8 +560,10 @@ export class LensMode implements ModeRenderer {
       span.style.transformOrigin = `0 ${this.baseline.toFixed(2)}px`;
       return span;
     });
-    // a 1em box of the fitted size centered on look.y at scale 1; its baseline lands on a device pixel
-    const baseline = snap(look.y - size / 2 + this.baseline * fit.fit, look.dpr);
+    const after = this.lines[index + 1] ? this.metrics[index + 1] : undefined;
+    const y = focusCenter(look, size, after ? nextSize(after.full, size, look) : null);
+    // a 1em box of the fitted size centered on y at scale 1; its baseline lands on a device pixel
+    const baseline = snap(y - size / 2 + this.baseline * fit.fit, look.dpr);
     this.focus = {
       ...shape,
       ...fit,
@@ -549,7 +576,7 @@ export class LensMode implements ModeRenderer {
       rampMs: GLIDE_MS,
       scales: new Array<number>(n).fill(1),
     };
-    this.mountNext(index + 1, size, look, change, glide);
+    this.mountNext(index + 1, size, y, look, change, glide);
     const ms = look.unsynced ? CALM_GLIDE_MS : GLIDE_MS;
     if (glide && was) {
       // Grow from where this line just was, as the next line, around the middle of its baseline. It
@@ -577,22 +604,20 @@ export class LensMode implements ModeRenderer {
     }
   }
 
-  private mountNext(index: number, focusSize: number, look: Look, change: boolean, glide: boolean): void {
+  /** Draws line `index` small and dim below a focus line of `focusSize` px centered at `y`. */
+  private mountNext(index: number, focusSize: number, y: number, look: Look, change: boolean, glide: boolean): void {
     const next = this.next;
     const line = this.lines[index];
     const m = this.metrics[index];
     if (!next || !line || !m) return;
-    const fits = m.full > 0 ? (NEXT_FIT * look.width * look.size) / m.full : Infinity;
-    const preferred = Math.min(look.size * NEXT_SIZE, focusSize * NEXT_MAX_SHARE);
-    const readable = Math.min(MIN_TEXT_PX, focusSize * 0.8);
-    const size = Math.min(Math.max(preferred, readable), fits);
+    const size = nextSize(m.full, focusSize, look);
     next.textContent = line.words.map((w) => w.text).join("").trimEnd();
     next.style.fontSize = `${size}px`;
     next.style.color = look.colors.dim;
     next.style.textShadow = textShadow(look, size);
     // centered from the measured width (not translate(-50%)), so the text sits on whole device pixels
     const x = snap((look.width - (m.full * size) / look.size) / 2, look.dpr);
-    const top = snap(look.y + focusSize * NEXT_DROP, look.dpr);
+    const top = snap(y + focusSize * NEXT_DROP, look.dpr);
     const to = `translate(${x}px, ${top}px)`;
     next.style.transform = to;
     this.nextShown = { index, size, baseline: top + (this.baseline * size) / look.size };

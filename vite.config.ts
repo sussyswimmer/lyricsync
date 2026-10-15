@@ -1,5 +1,9 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
+
+/** CLAUDE.md C8: at least 90% coverage on the parser, word timing and the playback clock, enforced by `pnpm coverage` (CI). */
+const CORE_FLOOR = { lines: 90, branches: 90, functions: 90, statements: 90 };
+
 export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
@@ -11,5 +15,17 @@ export default defineConfig({
       overlay: fileURLToPath(new URL("./index.html", import.meta.url)),
       settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
     } },
+  },
+  test: {
+    coverage: {
+      provider: "v8",
+      include: ["src/core/**", "src/bridge/**", "src/overlay/view.ts", "src/overlay/look.ts", "src/overlay/stage.ts"],
+      // one entry per file: a glob matching several would be checked against their total
+      thresholds: {
+        "src/core/lrc.ts": CORE_FLOOR,
+        "src/core/timing.ts": CORE_FLOOR,
+        "src/core/clock.ts": CORE_FLOOR,
+      },
+    },
   },
 });

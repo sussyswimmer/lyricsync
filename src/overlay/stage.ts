@@ -3,7 +3,7 @@ import type { Line } from "../core/lrc";
 import type { Palette } from "../core/palette";
 import { lineAt, type Timeline } from "../core/timing";
 import { h } from "./dom";
-import { fontFor, loadFont } from "./fonts";
+import { cjkLang, fontFor, loadFont, type CjkLang } from "./fonts";
 import { resolveLook, type Look } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
@@ -119,6 +119,8 @@ interface Scene {
   key: string;
   mode: ModeRenderer | null;
   cues: CueMap | null;
+  /** the song's CJK language, which picks the font stack's CJK families (one per song, so lines measure alike) */
+  lang: CjkLang | null;
   /** performance.now() when the scene appeared; rebuilt state animations resume from here */
   shownAt: number;
   /** performance.now() when it starts fading in, once whatever it replaced has faded out */
@@ -126,8 +128,11 @@ interface Scene {
 }
 
 export interface StageOptions {
-  /** Stage height that counts as 1× for `Settings.size`. Default 1080; the settings preview can zoom in. */
-  referenceHeight?: number;
+  /**
+   * Stage height that counts as 1× for `Settings.size`. Default 1080; the settings preview can zoom in.
+   * A function is asked on every layout (the overlay's follows its screen).
+   */
+  referenceHeight?: number | (() => number);
   /** Called when the stage needs a fresh frame on its own (fonts loaded, resized, motion preference flipped). */
   onInvalidate?: () => void;
 }
@@ -184,6 +189,12 @@ export class LyricStage {
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
+  /** Matches the device pixel ratio the layout was snapped to; see watchDpr. */
+  private dprQuery: MediaQueryList | null = null;
+  private readonly onDpr = (): void => {
+    this.watchDpr();
+    this.rebuild();
+  };
   /** A face (or a script subset of one, e.g. Vietnamese) finished loading: measured layouts redo themselves. */
   private readonly onFontsLoaded = (): void => {
     if (this.fontTimer) return;
@@ -203,6 +214,7 @@ export class LyricStage {
     this.resize?.observe(host);
     this.motionQuery = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
     this.motionQuery?.addEventListener("change", this.onMotion);
+    this.watchDpr();
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
   }
 
@@ -241,9 +253,11 @@ export class LyricStage {
       key,
       mode: null,
       cues: view.kind === "lyrics" ? cueMap(view.timeline) : null,
+      lang: view.kind === "lyrics" ? cjkLang(view.timeline.lines.map((l) => l.text).join("\n")) : null,
       shownAt: t,
       revealAt: t,
     };
+    if (scene.lang) scene.el.lang = scene.lang;
     this.root.append(scene.el);
     this.scene = scene;
     this.lastCue = null;
@@ -286,7 +300,7 @@ export class LyricStage {
     if (!scene?.mode || !scene.cues) return false;
     const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused };
     const last = this.lastCue;
-    if (last && cue.line !== last.line && scene.mode.crossfadeLines) this.ghost(scene);
+    if (last && cue.line !== last.line && scene.mode.crossfades(cue)) this.ghost(scene);
     this.lastCue = cue;
     return scene.mode.paint(cue);
   }
@@ -311,6 +325,8 @@ export class LyricStage {
   destroy(): void {
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
+    this.dprQuery?.removeEventListener("change", this.onDpr);
+    this.dprQuery = null;
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     if (this.fontTimer) clearTimeout(this.fontTimer);
     this.scene?.mode?.destroy();
@@ -318,14 +334,30 @@ export class LyricStage {
     this.host.classList.remove("ut-stage", "ut-hidden");
   }
 
+  /**
+   * Layouts are snapped to device pixels. A window that moves to a screen of another scale (the
+   * settings window dragged to another display, an overlay kept across a primary-display change) may
+   * keep its CSS size, so no resize says so: listen for the current ratio to stop matching instead,
+   * then for the new one.
+   */
+  private watchDpr(): void {
+    this.dprQuery?.removeEventListener("change", this.onDpr);
+    const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 0;
+    this.dprQuery = typeof matchMedia === "function" && ratio > 0 ? matchMedia(`(resolution: ${ratio}dppx)`) : null;
+    this.dprQuery?.addEventListener("change", this.onDpr);
+  }
+
   private look(scene: Scene): Look {
+    const option = this.options.referenceHeight;
+    const reference = typeof option === "function" ? option() : option;
     return resolveLook(this.settings, this.palette, {
       width: this.host.clientWidth,
       height: this.host.clientHeight,
       dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
       motion: !reducedMotion(),
       unsynced: scene.cues?.unsynced ?? false,
-      ...(this.options.referenceHeight ? { referenceHeight: this.options.referenceHeight } : {}),
+      lang: scene.lang,
+      ...(reference ? { referenceHeight: reference } : {}),
     });
   }
 

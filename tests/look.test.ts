@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import type { Palette } from "../src/core/palette";
-import { FONTS, fontFor } from "../src/overlay/fonts";
-import { REFERENCE_HEIGHT, dropShadow, resolveLook, rgba, shadowLayers, snap, textShadow, type Frame, type Look } from "../src/overlay/look";
+import { FONTS, fontFor, stackFor } from "../src/overlay/fonts";
+import { REFERENCE_HEIGHT, dropShadow, resolveLook, rgba, shadowLayers, snap, textShadow, workAreaReference, type Frame, type Look } from "../src/overlay/look";
 
 const FRAME: Frame = { width: 1920, height: 1080, dpr: 2, motion: true, unsynced: false };
 const PALETTE: Palette = { lyric: "#f5efe6", highlight: "#e0559a", dim: "#7d7f99" };
@@ -31,6 +31,22 @@ describe("resolveLook: size", () => {
   it("scales against a custom reference height (the settings preview)", () => {
     expect(look({}, { height: 270, referenceHeight: 270 }).size).toBe(58);
     expect(look({}, { height: 540, referenceHeight: 270 }).size).toBe(116);
+  });
+
+  // The native overlays cover their display's work area (menu bar, Dock or taskbar left out), which
+  // would set every lyric 3-5% smaller than Size says.
+  it("keeps Size relative to the whole screen on a stage framed to the work area", () => {
+    expect(workAreaReference(1032, 1080)).toBe(1032);
+    expect(look({}, { height: 1032, referenceHeight: workAreaReference(1032, 1080) }).size).toBeCloseTo(58, 9);
+    expect(look({}, { height: 1415, referenceHeight: workAreaReference(1415, 1440) }).size).toBeCloseTo(58 * (1440 / 1080), 9);
+    expect(workAreaReference(1080, 1080)).toBe(REFERENCE_HEIGHT);
+  });
+
+  it("bounds a wrong screen report: the work area counts as 80-100% of the screen", () => {
+    expect(workAreaReference(700, 1080)).toBeCloseTo(0.8 * REFERENCE_HEIGHT, 9);
+    expect(workAreaReference(1200, 1080)).toBe(REFERENCE_HEIGHT);
+    for (const screen of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(workAreaReference(1032, screen)).toBe(REFERENCE_HEIGHT);
+    expect(workAreaReference(0, 1080)).toBe(REFERENCE_HEIGHT);
   });
 
   it("never drops below 1 px, even on a collapsed stage", () => {
@@ -117,6 +133,16 @@ describe("resolveLook: font", () => {
 
   it("gives the system stack CJK fallbacks", () => {
     expect(look({ font: { family: "System", weight: 700 } }).font).toMatch(/PingFang SC.*sans-serif$/u);
+  });
+
+  it("puts the song's CJK language first in the stack, and names the face to wait for", () => {
+    const ja = look({ font: { family: "Syne", weight: 800 } }, { lang: "ja" });
+    expect(ja.font).toBe(stackFor(fontFor("Syne"), "ja"));
+    expect(ja.font.indexOf("Hiragino Sans")).toBeLessThan(ja.font.indexOf("PingFang SC"));
+    expect(look({}, { lang: "zh-Hans" }).font).toMatch(/^"Fraunces", Georgia, "Songti SC"/u);
+    expect(look({}, { lang: null }).font).toBe(fontFor("Fraunces").stack);
+    expect(ja.family).toBe("Syne");
+    expect(look({ font: { family: "Not A Real Font", weight: 700 } }).family).toBe("Fraunces");
   });
 });
 

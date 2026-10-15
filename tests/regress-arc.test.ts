@@ -533,4 +533,69 @@ describe("Arc restyle", () => {
     expect(spec).toBe('800 16px "Syne"');
     expect(chars?.length).toBe(new Set(LINES.map((l) => l.text).join("")).size);
   });
+
+  it("still waits for the bundled face when a song's CJK families lead the stack's fallbacks", () => {
+    const load = vi.fn(async (_spec: string, _text?: string) => []);
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+      fonts: { check: () => false, load },
+    });
+    const l = stageLook({ font: { family: "Unbounded", weight: 700 } }, { lang: "ko" });
+    expect(l.font).toMatch(/^"Unbounded", system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo"/);
+    arcOn(l);
+    expect(load).toHaveBeenCalledWith('700 16px "Unbounded"', expect.any(String));
+  });
+});
+
+// Regression (arc-long-lines-off-screen): a long line shrank to 55% of its size at most, then ran
+// past its path's ends and off both screen edges, so at Size 100 and up an ordinary 60-70 character
+// line on a 16:9 display lost its first and last words.
+describe("Arc long lines", () => {
+  beforeEach(() => {
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A 106-character line between two short ones. */
+  const LONG = "this placeholder line keeps going well past the point where any style could hold it whole on one row again";
+  const SONG: Line[] = parseLrc(`[00:01.00]a short line first\n[00:04.00]${LONG}\n[00:09.00]and a short line after`, 20_000);
+
+  it.each([22, 58, 100, 140])("never draws a line longer than its path at Size %s", (size) => {
+    const host = new FakeNode("main");
+    const mode = new ArcMode();
+    mode.build(asHost(host), SONG, stageLook({ size }));
+    // the long line in focus, then as the previous line
+    for (const [line, t] of [[1, 5000], [2, 9500]] as const) {
+      mode.paint(cue(line, t));
+      const bands = host.children[0]?.find("arc-line") ?? [];
+      expect(bands.length).toBeGreaterThanOrEqual(2);
+      for (const band of bands) {
+        const natural = sizeOf(band) * 0.5 * band.textContent.length;
+        expect(natural, `${band.className} at size ${size}`).toBeLessThanOrEqual(1160 + 0.5);
+      }
+    }
+  });
+
+  it("leaves lines that fit at their size, and shrinks a slightly long one only to FIT of its path", () => {
+    const host = new FakeNode("main");
+    const mode = new ArcMode();
+    const l = stageLook({ size: 58 });
+    mode.build(asHost(host), SONG, l);
+    mode.paint(cue(0, 2000));
+    expect(sizeOf(host.children[0]?.find("arc-focus")[0] as FakeNode)).toBeCloseTo(l.size, 2);
+    // 64 characters at 0.5 em: a little longer than 94% of the path at Size 58 on 1280x720
+    const near = parseLrc(`[00:01.00]${"placeholder words ".repeat(4).slice(0, 64)}`, 20_000);
+    const m = new ArcMode();
+    const h = new FakeNode("main");
+    m.build(asHost(h), near, l);
+    m.paint(cue(0, 2000));
+    const focus = h.children[0]?.find("arc-focus")[0] as FakeNode;
+    expect(sizeOf(focus) * 0.5 * focus.textContent.length).toBeCloseTo(1160 * 0.94, 0);
+  });
 });

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import { parseLrc, type Line } from "../src/core/lrc";
 import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
 import { resolveLook, shadowLayers, type Frame, type Look } from "../src/overlay/look";
-import { drawnShadow, fitRow, LensMode, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
+import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
 import type { Cue } from "../src/overlay/modes/types";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -205,7 +205,7 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(true);
     const fraunces = fontFor("Fraunces");
     const text = "Paper lanterns over the river Paper lanterns over the river";
-    expect(whenFaceLoads(fraunces.stack, 700, text)).toBeNull();
+    expect(whenFaceLoads(fraunces.family, 700, text)).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
     const [spec, chars] = check.mock.calls[0] ?? [];
     expect(spec).toBe('700 16px "Fraunces"');
@@ -217,11 +217,11 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(true);
     const syne = fontFor("Syne");
     const text = "Neon on the wet street, every sign a little sun";
-    for (let i = 0; i < 10; i++) expect(whenFaceLoads(syne.stack, 800, text)).toBeNull();
+    for (let i = 0; i < 10; i++) expect(whenFaceLoads(syne.family, 800, text)).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
     // another weight or other lyrics are asked about once each
-    whenFaceLoads(syne.stack, 700, text);
-    whenFaceLoads(syne.stack, 800, `${text}!`);
+    whenFaceLoads(syne.family, 700, text);
+    whenFaceLoads(syne.family, 800, `${text}!`);
     expect(check).toHaveBeenCalledTimes(3);
   });
 
@@ -229,11 +229,11 @@ describe("Lens: waiting for the lyric face", () => {
     const { check, load } = stubFonts(false);
     const caveat = fontFor("Caveat");
     const text = "Thương nhớ con đường cũ";
-    const loading = whenFaceLoads(caveat.stack, 600, text);
+    const loading = whenFaceLoads(caveat.family, 600, text);
     expect(loading).not.toBeNull();
     await loading;
     expect(load).toHaveBeenCalledWith('600 16px "Caveat"', [...new Set(text)].join(""));
-    whenFaceLoads(caveat.stack, 600, text);
+    whenFaceLoads(caveat.family, 600, text);
     expect(check).toHaveBeenCalledTimes(2);
   });
 
@@ -241,10 +241,10 @@ describe("Lens: waiting for the lyric face", () => {
     const { check } = stubFonts(false);
     const system = FONTS.find((f) => f.family === "System");
     expect(system).toBeDefined();
-    expect(whenFaceLoads(system?.stack ?? "", 700, "anything")).toBeNull();
+    expect(whenFaceLoads(system?.family ?? "", 700, "anything")).toBeNull();
     expect(check).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
-    expect(whenFaceLoads(fontFor("Fraunces").stack, 700, "anything")).toBeNull();
+    expect(whenFaceLoads(fontFor("Fraunces").family, 700, "anything")).toBeNull();
   });
 });
 
@@ -418,5 +418,73 @@ describe("Lens: line changes while paused", () => {
     expect(full).toBeGreaterThan(1.2);
     // during playback it is still easing in at that moment
     expect(Math.max(...scales(playing.row()))).toBeLessThan(full - 0.05);
+  });
+});
+
+// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the Height whatever
+// the Height, so at 95% and up it was drawn entirely below the screen and Lens showed one lone line.
+describe("Lens: the next line near the bottom of the stage", () => {
+  beforeEach(() => {
+    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const translateOf = (transform: unknown): [number, number] => {
+    const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(String(transform ?? ""));
+    return [Number(m?.[1]), Number(m?.[2])];
+  };
+
+  const FRAMES: Partial<Frame>[] = [
+    { width: 1920, height: 1080 },
+    { width: 1280, height: 720 },
+  ];
+
+  it("moves the focus line up just enough to keep its next line on screen, below the focus line", () => {
+    for (const frame of FRAMES)
+      for (const yPos of [95, 100])
+        for (const size of [22, 58, 140]) {
+          const l = look({ size, yPos }, frame);
+          const host = new FakeElement("main");
+          const mode = new LensMode();
+          mode.build(host as unknown as HTMLElement, LINES, l);
+          mode.paint(cue(0, 2000, true));
+          const box = host.children[0];
+          const next = box?.children.find((c) => c.classList.contains("lens-next") && !c.classList.contains("lens-leaving"));
+          const row = box?.children.find((c) => c.classList.contains("lens-row") && !c.classList.contains("lens-leaving"));
+          const where = `${frame.width}x${frame.height} Height ${yPos} Size ${size}`;
+          expect(next?.textContent, where).toBe(LINES[1]?.text);
+          const top = translateOf(next?.style["transform"])[1];
+          const below = Number.parseFloat(String(next?.style["fontSize"]));
+          expect(top + below, where).toBeLessThanOrEqual(l.height);
+          // every focus word's box as drawn (scaled around its baseline, 0.8 em down in this DOM) ends above it
+          for (const span of row?.children ?? []) {
+            const transform = span.style.props.get("transform");
+            const y = translateOf(transform)[1];
+            const k = Number(/scale\(([\d.]+)\)/.exec(transform ?? "")?.[1]);
+            expect(y + 0.8 * l.size + 0.2 * l.size * k, where).toBeLessThanOrEqual(top);
+          }
+        }
+  });
+
+  it("leaves the Height alone where the next line fits, and on the last line", () => {
+    for (const yPos of [0, 46, 85]) {
+      const l = look({ yPos });
+      expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(l.y);
+    }
+    const bottom = look({ yPos: 100 });
+    expect(focusCenter(bottom, bottom.size, null)).toBe(bottom.y);
+    expect(focusCenter(bottom, bottom.size, nextSize(600, bottom.size, bottom))).toBeLessThan(bottom.y);
+  });
+
+  it("never lifts the focus line past resolveLook's top margin on a stage too small for both lines", () => {
+    const l = look({ yPos: 100, size: 140 }, { width: 400, height: 120, referenceHeight: 120 });
+    expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(Math.min(l.size * 0.75, l.height / 2));
+    // the settings preview has the room
+    const preview = look({ yPos: 100, size: 140 }, { width: 340, height: 191, referenceHeight: 680 });
+    const y = focusCenter(preview, preview.size, nextSize(600, preview.size, preview));
+    expect(y).toBeLessThan(preview.y);
+    expect(y).toBeGreaterThan(preview.size * 0.75);
   });
 });
