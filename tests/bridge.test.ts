@@ -380,7 +380,7 @@ describe("mock bridge: settings", () => {
     expect(await bridge.invoke("get_settings")).toEqual(DEFAULT_SETTINGS);
   });
 
-  it("merges a patch shallowly: nested objects are replaced whole", async () => {
+  it("merges a patch per field: a whole nested object sets every key, trackOffsetsMs replaces the map", async () => {
     const { bridge } = await mock();
     await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
     const next = await bridge.invoke("update_settings", {

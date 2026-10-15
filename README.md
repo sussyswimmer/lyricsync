@@ -1,6 +1,6 @@
 # Undertone
 
-Undertone shows the synced lyrics of the song you're playing on your desktop, between the wallpaper and your icons. Windows and folders sit on top of the lyrics, and clicks go straight through to the desktop. Words light up as they're sung, and the colors come from the album cover unless you pick your own. It lives in the menu bar on macOS and the system tray on Windows, with no Dock icon or taskbar button.
+Undertone shows the synced lyrics of the song you're playing on your desktop, between the wallpaper and your icons. Windows and folders sit on top of the lyrics, and clicks go straight through to the desktop. Words light up as they're sung, and the colors come from the album cover unless you pick your own. It lives in the menu bar on macOS and the system tray on Windows, with no Dock icon, and on Windows no taskbar button except while Settings is open.
 
 - **Players:** Spotify on macOS 14+ and Windows 10/11, and the Music app (Apple Music) on macOS. On Windows, other players that show up in the Windows media controls work too.
 - **Lyrics:** fetched from [LRCLIB](https://lrclib.net), a free community lyrics database. No account and no API key.
@@ -8,7 +8,7 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
 
-> **Status: pre-release.** Every part of v1 is built, but the desktop app hasn't been tested on a real Mac or Windows PC yet, so expect rough edges. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
+> **Status: pre-release.** Every part of v1 is built. A first run on a real Mac (macOS 26, Spotify) showed the song, cover art and lyrics arriving and the overlay sitting on the desktop. The rest of the Mac checks, Apple Music and Windows haven't been run yet, so expect rough edges. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## Install
 
@@ -16,7 +16,7 @@ Released versions will be on [GitHub Releases](https://github.com/sussyswimmer/l
 
 Builds aren't code-signed yet, so macOS and Windows warn you the first time you open Undertone. In short: on macOS, open it once, then click **Open Anyway** in **System Settings → Privacy & Security**; on Windows, click **More info**, then **Run anyway**. **[docs/INSTALL.md](docs/INSTALL.md)** has the full steps for each macOS version and Windows, the fix for "Undertone is damaged", WebView2, test builds from CI, updating and uninstalling.
 
-After launch, Undertone shows up as an icon in the menu bar (macOS) or the system tray (Windows). Start a song and the lyrics appear on your desktop.
+After launch, Undertone shows up as an icon in the menu bar (macOS) or the system tray (Windows). The first time, the settings window opens too. Start a song and the lyrics appear on your desktop.
 
 ## Permissions
 
@@ -37,6 +37,8 @@ Nothing to grant. Undertone reads the system media session, the same information
 ### Network
 
 Undertone sends the title, artist, album and length of the current song to `lrclib.net` to look up lyrics. For Spotify on macOS, it also downloads the cover art from Spotify's image server. Lyrics are cached on your computer so the same song loads instantly next time.
+
+If you set a proxy by hand in your system's network settings, Undertone uses it. A proxy set up automatically (a PAC script or WPAD) isn't supported.
 
 ## Using Undertone
 
@@ -67,7 +69,7 @@ These work from any app. They are the defaults: you can change each one, remove 
 | ⌥⇧⌘[ | Ctrl+Alt+Shift+[ | Nudge this song 50 ms later |
 | ⌥⇧⌘] | Ctrl+Alt+Shift+] | Nudge this song 50 ms earlier |
 
-If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Alt+Shift+L, and on Windows some keyboard layouts type characters with AltGr, which counts as Ctrl+Alt), record a different one. Settings warns under any shortcut another app already holds. The [user guide](docs/USER_GUIDE.md#shortcuts) explains how.
+If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Alt+Shift+L, and on Windows some keyboard layouts type characters with AltGr, which counts as Ctrl+Alt), record a different one. Settings warns under a shortcut only when the system refuses it: on Windows, when another app already has it as a global shortcut or Windows keeps it for itself; on a Mac this is rare. Shortcuts that work only inside another app, like JetBrains' Reformat File, can't be detected. The [user guide](docs/USER_GUIDE.md#shortcuts) explains how.
 
 ### Settings
 
@@ -77,10 +79,10 @@ The settings window has a live preview at the top that plays the current song, o
 
 ### No lyrics, or the wrong song
 
-- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then falls back to a search by title and artist. It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
-- **"Couldn't load lyrics"** means the lookup failed: no connection, or LRCLIB didn't answer within 6 seconds. Check your connection, then use **Refetch lyrics**.
+- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then falls back to a search by title and artist. Songs by several artists match however the credits are written ("A & B", "A, B", "A feat. B", "A x B"). It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
+- **"Couldn't load lyrics"** means the lookup failed: no connection, or LRCLIB didn't answer within 6 seconds. Undertone tries again by itself after 5, 20 and 60 seconds, and the lyrics appear as soon as one try works. If they don't, check your connection (and your proxy, see [Network](#network)), then use **Refetch lyrics**.
 - **Wrong lyrics:** **Refetch lyrics** skips the cache, which fixes lyrics that were corrected on LRCLIB since Undertone saved them. If LRCLIB's best match is itself wrong, refetching returns the same thing. Lyrics on LRCLIB are submitted by the community; [lrclib.net](https://lrclib.net) explains how to add or correct them.
-- **Lyrics but no word highlight:** LRCLIB only has unsynced text for this song. Undertone paces the lines evenly across the song instead (see "Plain (unsynced) lyrics" in the [user guide](docs/USER_GUIDE.md#loading-missing-and-unsynced-lyrics)).
+- **Lyrics but no word highlight:** LRCLIB only has unsynced text for this song. Undertone paces the lines evenly across the song instead (see "Plain (unsynced) lyrics" in the [user guide](docs/USER_GUIDE.md#loading-missing-and-unsynced-lyrics)). When you play the song more than 30 days after Undertone saved them, it checks LRCLIB for synced lyrics again; **Refetch lyrics** checks right away. Synced lyrics whose timestamps would keep one line up for most of the song are paced the same way.
 
 ### Lyrics are early or late
 
@@ -108,12 +110,23 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 
 Undertone reattaches the lyrics to the desktop by itself when Windows Explorer restarts, when your computer wakes from sleep, and when displays are connected, removed or rearranged. It also picks up again when Spotify quits and relaunches. If the lyrics don't come back, quit Undertone from the menu and open it again, then report the problem with the diagnostics below.
 
+### Settings went back to the defaults
+
+Undertone keeps your settings, including each song's sync nudge, in `settings.json` in its data folder: `~/Library/Application Support/com.undertone.desktop` on macOS, `%APPDATA%\com.undertone.desktop` on Windows. It saves the file in one step, so a crash can't leave half a file. If the file still can't be read, Undertone renames it to `settings.corrupt-<number>.json` in the same folder, starts from the defaults and opens the settings window. Cached lyrics are kept.
+
 ### Reporting a bug
 
 Run Undertone with `--diagnose`. It reports what Undertone sees right now: the media sources it found and which one it picked, the current track, the LRCLIB match with its length difference, your settings, the lyrics cache, your displays and the desktop-layer window handles. It never includes lyric text, and it works while Undertone is running. The report is also saved to your temp folder as `undertone-diagnose-<date>-<time>.txt`, with the path on its last line. Attach that file to your bug report.
 
 - **macOS** (Terminal): `open -n -a Undertone --args --diagnose`. The report opens in TextEdit. Running `/Applications/Undertone.app/Contents/MacOS/undertone --diagnose` prints it in Terminal instead, but then macOS checks Terminal's Automation permission rather than Undertone's, so the Automation lines may not match what the app sees.
 - **Windows** (PowerShell): find the folder with `undertone.exe` (right-click Undertone in the Start menu and choose **Open file location**; if that opens a folder of shortcuts, do it again on the Undertone shortcut), open PowerShell there and run `.\undertone.exe --diagnose | Out-Host`, so PowerShell waits for the report. In Command Prompt, use `undertone.exe --diagnose | more`. Started from a shortcut, the report opens in your default text editor.
+
+Undertone also keeps a log of what went wrong while it ran, such as a lyrics lookup that failed or a shortcut it couldn't register. It may name songs, but never holds lyric text. `--diagnose` ends with its last 60 lines under **Recent log**; if you can, attach the whole file too:
+
+- **macOS:** `~/Library/Logs/com.undertone.desktop/undertone.log`
+- **Windows:** `%LOCALAPPDATA%\com.undertone.desktop\logs\undertone.log`
+
+When the log reaches 512 KB it moves to `undertone.1.log` next to it, replacing the one before.
 
 ## Development
 
@@ -122,17 +135,22 @@ Use Node 24+, pnpm 11 and Rust stable (`rust-toolchain.toml` selects the stable 
 ```sh
 pnpm install --frozen-lockfile
 pnpm test                 # vitest
-pnpm coverage             # vitest with coverage of src/core, src/bridge and the overlay's view.ts, look.ts and stage.ts
+pnpm coverage             # vitest with coverage of src/core, src/bridge and the overlay's view.ts, look.ts and stage.ts; fails below 90% on lrc.ts, timing.ts or clock.ts (CI runs this)
 pnpm build                # tsc, then vite build into dist/
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 pnpm tauri dev            # the desktop app
+node scripts/notices.mjs  # regenerate THIRD_PARTY_NOTICES.txt after changing dependencies
 ```
+
+`THIRD_PARTY_NOTICES.txt` lists every font, JavaScript package and Rust crate the installers ship, with its license. The installers copy it next to the app, and **Settings › Licenses** shows it. CI's **Third-party notices** job runs `node scripts/notices.mjs --check` and fails when the file is out of date.
 
 `pnpm tauri dev` enables the `desktop` Cargo feature. Native checks must use it too: run `cargo check --features desktop` and `cargo clippy --features desktop -- -D warnings` from `src-tauri`. Linux can run the frontend and the portable Rust tests, but it isn't a supported desktop target. In cloud tasks, reuse the existing checkout; don't create a worktree unless asked.
 
-The Rust core in `src-tauri/src` has `media/` (now playing: the Windows media session, and AppleScript for Spotify and Music on macOS), `lyrics/` (LRCLIB and the cache), `settings.rs` (the settings store), `desktop_layer/`, `tray.rs`, `shortcuts.rs` and `diagnose.rs` (`--diagnose`). Native code builds only for Windows and macOS with the `desktop` feature; the decisions behind it are plain functions tested on every OS. The frontend listens to events first, then reads the initial settings and playback through commands.
+The Rust core in `src-tauri/src` has `media/` (now playing: the Windows media session, and AppleScript for Spotify and Music on macOS), `lyrics/` (LRCLIB and the cache), `settings.rs` (settings.json), `login_item.rs` (launch at login on macOS), `applog.rs` (the runtime log), `desktop_layer/`, `tray.rs`, `shortcuts.rs` and `diagnose.rs` (`--diagnose`). Native code builds only for Windows and macOS with the `desktop` feature; the decisions behind it are plain functions tested on every OS. The frontend listens to events first, then reads the initial settings and playback through commands.
+
+Debug builds read four more flags: `--media-test` prints each now-playing and lyrics event, `--overlay-probe` prints every 2 s whether each page is visible and drawing, `--desktop-layer-test` shows a test line in place of the lyrics, even with nothing playing, and `--desktop-layer-all` shows the overlay on every display. Pass them with two `--`, as in `pnpm tauri dev -- -- --media-test`. [docs/NOW_PLAYING.md](docs/NOW_PLAYING.md) and [docs/DESKTOP_LAYER.md](docs/DESKTOP_LAYER.md) explain them, and [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) lists the checks a real Mac and PC still need.
 
 ### Frontend in a browser
 
@@ -156,6 +174,7 @@ Keys in mock mode (ignored while a form control has focus):
 | Space | Play / pause |
 | ← / → | Seek −5 s / +5 s |
 | N / Shift+N | Next / previous track |
+| S | Open Settings, as the tray's **Settings…** does (it carries this page's `?media` and `?loginItem`) |
 
 The global shortcuts work too, while the page has focus: the default ⌥⇧⌘L / Ctrl+Alt+Shift+L turns the lyrics off and on (the overlay page hides them, the settings preview shows **Off on the desktop**), and the nudges change the current song's offset. They follow what you record in Settings › Shortcuts, and pause while Settings listens for a new one.
 
@@ -170,13 +189,14 @@ URL parameters (combine them with `&`):
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |
 | `?shortcutConflict=toggleLyrics,nudgeLater` | Act as if another app held the combinations those actions start with: they report `"unavailable"` in `shortcuts-status`, and Settings warns under them. Recording a different combination clears the warning. Actions: `toggleLyrics`, `nudgeEarlier`, `nudgeLater`. |
 | `?media=automation-denied\|no-player` | Act like a core that can't see the player: nothing playing, and `media-status` says why (`automation-denied` names Spotify). The settings window then shows its Automation notice, or **No music app open** under This song, and its preview plays the demo song as the app does. |
+| `?loginItem=refuse` | Act like a core whose system refuses the login item: a **Launch at login** change fails, the rest of the change applies, and Settings shows its note under the switch. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 
 For example, <http://localhost:1420/?mock&track=1&t=4900&settings=%7B%22mode%22%3A%22arc%22%7D> opens Paper Lanterns mid-line in Arc.
 
-`?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is shallow: a nested object such as `colors` is replaced whole, and any field you leave out of it falls back to its default.
+`?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is applied like `update_settings`: inside `colors`, `font` or `shortcuts` only the keys you give change, and the rest keep their saved values. `trackOffsetsMs` replaces the whole map, and invalid values are ignored.
 
-`?media` works the same way: it applies only to its page and isn't saved, so without it the mock reports the demo player as usual. The settings window that the overlay page opens inherits it. To change it while both pages are open, run `undertone.bridge.setMedia("no-player")` (or `"automation-denied"`, or `null` to see the player again) in either page's console; the other page follows.
+`?media` and `?loginItem` work the same way: they apply only to their page and aren't saved, so without them the mock reports the demo player and accepts the login item as usual. The settings window the overlay page opens (press S) inherits both. To change the media problem while both pages are open, run `undertone.bridge.setMedia("no-player")` (or `"automation-denied"`, or `null` to see the player again) in either page's console; the other page follows.
 
 The mock remembers the player and settings in `localStorage`. `track`, `t` and `paused` override the saved player; run `localStorage.clear()` in the devtools console to start fresh. On the overlay page, `window.undertone` exposes `{ bridge, stage, controller }` for poking at it from the console, for example `undertone.bridge.player.select(1, 5000)`.
 
@@ -195,6 +215,10 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the work orders for the frontend and the Rust core.
+[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.
+
+## Acknowledgements
+
+Lyrics come from [LRCLIB](https://lrclib.net). The lyric fonts (Fraunces, Instrument Serif, Syne, Unbounded, Bricolage Grotesque, Caveat and JetBrains Mono) and the settings window's font, Figtree, are bundled under the SIL Open Font License 1.1. **Settings › Licenses** shows the notices of every font and library Undertone includes, and `THIRD_PARTY_NOTICES.txt` next to the app holds the same text.

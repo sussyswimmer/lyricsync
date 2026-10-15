@@ -80,7 +80,7 @@ export interface Settings {
   font: { family: string; weight: number };
   size: number;        // 22–140 px at 1x scale
   curve: number;       // -100..100, used by "arc"
-  yPos: number;        // 0..100, % of display height
+  yPos: number;        // 0..100, % of the display's work area, without menu bar, Dock or taskbar
   glow: number;        // 0..100
   opacity: number;     // 20..100
   showWhen: "playing" | "always";

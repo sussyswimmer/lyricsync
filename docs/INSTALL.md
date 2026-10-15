@@ -52,7 +52,7 @@ The first time Undertone reads Spotify or Music, macOS asks whether **Undertone*
 
 ### Finding Undertone
 
-Undertone has no Dock icon and no window at launch. It shows up as an icon in the menu bar. Start a song in Spotify or Music and the lyrics appear on your desktop. To change how they look, choose **Settings…** from the menu bar icon.
+Undertone has no Dock icon. It shows up as an icon in the menu bar. The first time you open it (and if its saved settings couldn't be read), the settings window opens too; after that it starts without a window. Start a song in Spotify or Music and the lyrics appear on your desktop. To change how they look, choose **Settings…** from the menu bar icon.
 
 ## Windows
 
@@ -68,7 +68,7 @@ Undertone draws its lyrics and settings with Microsoft Edge WebView2. Windows 11
 
 ### Finding Undertone
 
-Start Undertone from the Start menu. It has no taskbar button; it shows up as an icon in the system tray, next to the clock. If you don't see it, click the **^** arrow to show hidden icons, and drag Undertone onto the taskbar to keep it in view. Start a song and the lyrics appear on your desktop.
+Start Undertone from the Start menu. The first time, the settings window opens. Undertone has no taskbar button (the settings window gets one while it's open); it shows up as an icon in the system tray, next to the clock. If you don't see it, click the **^** arrow to show hidden icons, and drag Undertone onto the taskbar to keep it in view. Start a song and the lyrics appear on your desktop.
 
 ## Updating
 
@@ -79,8 +79,8 @@ Install the new version over the old one. Your settings, sync nudges and cached 
 
 ## Uninstalling
 
-- **macOS:** first turn off **Launch at login** in Undertone's menu, so no login item is left behind. Quit Undertone, then drag it from Applications to the Trash. To remove your settings and cached lyrics too, delete the `~/Library/Application Support/com.undertone.desktop` folder (in Finder, choose **Go → Go to Folder…** and paste the path).
-- **Windows:** quit Undertone, then open **Settings → Apps → Installed apps** (**Apps & features** on Windows 10), find Undertone, and choose **Uninstall**. To remove your settings and cached lyrics too, tick **Delete the application data** in the uninstaller.
+- **macOS:** first turn off **Launch at login** in Undertone's menu, so no login item is left behind. Quit Undertone, then drag it from Applications to the Trash. To remove your settings and cached lyrics too, delete the `~/Library/Application Support/com.undertone.desktop` folder, and the log in `~/Library/Logs/com.undertone.desktop` (in Finder, choose **Go → Go to Folder…** and paste the path).
+- **Windows:** quit Undertone, then open **Settings → Apps → Installed apps** (**Apps & features** on Windows 10), find Undertone, and choose **Uninstall**. To remove your settings and cached lyrics too, tick **Delete the application data** in the uninstaller. The log is in `%LOCALAPPDATA%\com.undertone.desktop\logs`; delete that folder if the uninstaller leaves it.
 
 ## Building it yourself
 

@@ -2,7 +2,7 @@
 
 Undertone draws the lyrics of the song you're playing on your desktop, above the wallpaper and below your icons and windows. You can't click the lyrics: clicks go through to the desktop, and any window you open covers them.
 
-To turn them off, change how they look or set up the shortcuts, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. Every change applies right away and is saved.
+To turn them off, change how they look or set up the shortcuts, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. The settings window also opens by itself the first time you start Undertone. Every change applies right away and is saved.
 
 The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height and curve match what you'll see.
 
@@ -19,6 +19,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 - [Sync](#sync): All songs, This song
 - [Shortcuts](#shortcuts)
 - [Reset to defaults](#reset-to-defaults)
+- [Licenses](#licenses)
 - [Menu and shortcuts](#menu-and-shortcuts)
 - [Loading, missing and unsynced lyrics](#loading-missing-and-unsynced-lyrics)
 - [Song changes, pauses and breaks](#song-changes-pauses-and-breaks)
@@ -40,8 +41,8 @@ Off by default. Switch it on to start Undertone when you log in. It's the same s
 
 Undertone adds itself to the apps your system starts at login. If the system refuses the change, the switch flips back and a note under it says so.
 
-- On Windows it's listed in **Settings › Apps › Startup**. If you turn it off there, this switch follows the next time you open Settings or Undertone starts.
-- On a Mac it's listed under **Allow in the Background** in **System Settings › General › Login Items**. Undertone can't see that switch: turned off there, Undertone no longer starts at login but this switch still shows on. To stop it starting at login, turn off this switch (or **Launch at login** in the menu) instead.
+- On Windows it's listed in **Settings › Apps › Startup**. If you turn it off there, this switch follows the next time you open Settings, point at the tray icon, or start Undertone.
+- On a Mac it's listed under **Allow in the Background** in **System Settings › General › Login Items & Extensions** (just **Login Items** on macOS 14). This switch follows it: turned off there, the switch shows off the next time you open Settings or point at the menu bar icon. Turning the switch on while Undertone is off there doesn't work: the note appears and System Settings opens at Login Items. Allow Undertone there, and the switch turns on the next time you open Settings or point at the menu bar icon.
 
 ## Style
 
@@ -49,10 +50,10 @@ Four ways to lay out the lyrics. In every style the words of the current line ch
 
 - **Arc** (the default). The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. The [Curve](#curve) setting controls the bend.
 - **Lens.** One line at a time, straight across. The word being sung is magnified, and words further from it get smaller and fainter, as if a magnifying glass were sliding along the line with the voice. The next line waits underneath in small type.
-- **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum.
-- **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are smaller and fainter, with no tilt.
+- **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum. A jump of more than three lines, such as a seek, crossfades instead of scrolling.
+- **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are smaller and fainter, with no tilt. Long jumps crossfade, as in Drift.
 
-Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it too, but only to about half its size (further on a screen narrower than 16:9, such as a portrait one): at a large [Size](#size) on a narrow screen, a very long line runs off both edges. Lower Size if that happens.
+Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it until it fits its curve, so the whole line stays on screen at any [Size](#size).
 
 You can also switch styles from the menu: **Style ▸ Arc / Lens / Drift / Stack**.
 
@@ -97,9 +98,9 @@ Each font in the list is shown in its own face. All of them are built into Under
 | **JetBrains Mono** | Monospace |
 | **System** | Your computer's own interface font |
 
-Each font comes in one weight, which Undertone picks for you. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts.
+Each font comes in one weight, which Undertone picks for you. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match your font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
 
-For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. Instrument Serif, Syne and Caveat have no Vietnamese accented letters, so those letters come from a system font and look different from the rest of the word.
+For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. Instrument Serif, Syne and Caveat have no Vietnamese accented letters, so those letters come from a system font and look different from the rest of the word. Settings says so under the font tiles when you pick one of those three.
 
 ## Layout
 
@@ -107,7 +108,7 @@ For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. I
 
 How big the current line is, from 22 to 140 (default 58). Neighboring lines are drawn smaller in proportion.
 
-Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height.
+Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height. Size counts the whole screen, even though the lyrics keep clear of the menu bar, Dock and taskbar.
 
 ### Curve
 
@@ -121,9 +122,9 @@ The bend is split evenly around the [Height](#height): the middle moves one way 
 
 ### Height
 
-Where the current line sits on the screen, from 0% (top) to 100% (bottom). The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
+Where the current line sits on the screen, from 0% (top) to 100% (bottom). The lyrics keep clear of the menu bar, the Dock and the taskbar, so on a Mac 0% is just below the menu bar, and 100% is just above a Dock or taskbar at the bottom of the screen. The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
 
-At 0% and 100% the current line still stays whole on screen, a little way in from the edge. The lines around it can run off the edge there. In Arc, a strong [Curve](#curve) moves the current line a little further in.
+At 0% and 100% the current line still stays whole on screen, a little way in from the edge. In Lens, the current line moves up just enough to keep the next line on screen. In Arc, Drift and Stack, the lines around it can run off the edge there. In Arc, a strong [Curve](#curve) moves the current line a little further in.
 
 ### Glow
 
@@ -195,16 +196,16 @@ Show or hide lyrics flips [Lyrics on the desktop](#lyrics-on-the-desktop). The n
 In **Settings › Shortcuts**, click the shortcut next to an action, or Tab to it and press Space or Enter. It says **Press keys…**. Now press the new combination:
 
 - It needs ⌘, ⌥ or ⌃ on a Mac, or Ctrl, Alt or the Windows key on Windows. Shift can be added, but isn't enough on its own, so a shortcut never takes ordinary typing.
-- It ends with one key: a letter, a digit, F1 to F24, Space, an arrow, Home, End, Page Up, Page Down, Insert, Delete, Backspace, Tab, Enter, or one of `[` `]` `;` `'` `,` `.` `/` `\` `` ` `` `-` `=`.
-- Combinations every app relies on are turned down, such as ⌘C, ⌘Q and ⌘Space on a Mac, or Ctrl+V, Alt+Tab and Alt+F4 on Windows.
+- It ends with one key: a letter, a digit, F1 to F24 (F1 to F20 on a Mac), Space, an arrow, Home, End, Page Up, Page Down, Insert, Delete, Backspace, Tab, Enter, or one of `[` `]` `;` `'` `,` `.` `/` `\` `` ` `` `-` `=`.
+- Combinations every app relies on are turned down, such as ⌘C, ⌘F, ⌘P, ⌘H, ⌘M and ⌘Space on a Mac, or Ctrl+V, Ctrl+F, Ctrl+Y, Alt+Tab and Alt+F4 on Windows.
 - On a Mac, Undertone records where the key is, not what it types, so on a keyboard layout other than US English the key may carry a different label (on a French keyboard, the key labeled A shows as Q).
-- On Windows, a letter is recorded as the letter it types on your current keyboard layout, and a digit by its place on the number row. A punctuation key works only where it types the same character as on a US English keyboard; Settings turns the others down. On other layouts the default `[` and `]` shortcuts may sit on other keys (on a German keyboard, ß and ´); record new ones if that's awkward.
+- On Windows, a letter is recorded as the letter it types on your current keyboard layout, and a digit by its place on the number row. A punctuation key works only where it types the same character as on a US English keyboard; Settings turns the others down. On other layouts the default `[` and `]` shortcuts may sit on other keys (on a German keyboard, ß and ´). Settings then says **On this keyboard layout, this shortcut may use another key. Record a new one.** under each shortcut it affects, and checks again whenever you come back to the window. Layouts for other alphabets, such as Russian, keep the US keys and get no warning.
 
 While Settings listens, Undertone's own shortcuts are paused, so pressing the current one records it instead of hiding the lyrics. They come back as soon as you're done.
 
 - **Esc** stops listening and keeps the shortcut.
 - **Delete** (or Backspace) removes the shortcut. The action shows **None**; use the menu or Settings for it instead.
-- Clicking elsewhere, switching to another app, or 25 seconds without a key also stop listening.
+- Clicking elsewhere, switching to another app, or 25 seconds after it starts listening also stop it.
 - A combination another action already has is turned down, for example "⌥⇧⌘] is already used for Nudge earlier." Press another one, or change that action first.
 
 **Reset shortcuts** puts all three back to the defaults.
@@ -215,7 +216,7 @@ Switch off **Keyboard shortcuts** to leave all three combinations to other apps.
 
 ### When a shortcut doesn't work
 
-If another app or the system already uses a combination, Undertone can't have it, and Settings says **Another app is using this combination.** under it. Record a different one. **Not a usable combination.** means the saved shortcut is one Undertone can't register; record a new one.
+When the system refuses a combination, Settings says **Another app is using this combination.** under it. On Windows that happens when another app already has the combination as a global shortcut, or Windows keeps it for itself; on a Mac it's rare. Shortcuts that work only inside another app (JetBrains' Reformat File, for example) can't be detected on either system. If a shortcut does nothing, or another app reacts to it as well, record a different one. **Not a usable combination.** means the saved shortcut is one Undertone can't register; record a new one.
 
 ### Why you might change them
 
@@ -231,6 +232,10 @@ If either gets in your way, record another combination, or remove the shortcut y
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
 Reset puts the style, colors, font, layout, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+
+## Licenses
+
+The **Licenses** button at the very bottom of the settings window shows the licenses of the fonts and libraries built into Undertone. The same text is in `THIRD_PARTY_NOTICES.txt`, next to the app.
 
 ## Menu and shortcuts
 
@@ -258,9 +263,9 @@ Shortcuts that work from any app, by default (change or turn them off in [Settin
 
 - **Loading.** Nothing for the first 0.6 seconds (lyrics Undertone has seen before usually arrive sooner), then three faint pulsing dots until the lyrics arrive (steady, without the pulse, if you've asked your system to reduce motion).
 - **No lyrics found.** A small "No lyrics for this song" note fades in, stays for about 4 seconds, then fades out. Nothing else shows for the rest of the song. **Refetch lyrics** in the menu tries again.
-- **Couldn't load.** If the lookup fails (no connection, or LRCLIB doesn't answer), a "Couldn't load lyrics" note appears and fades out the same way. **Refetch lyrics** tries again.
+- **Couldn't load.** If the lookup fails (no connection, or LRCLIB doesn't answer), a "Couldn't load lyrics" note appears and fades out the same way. Undertone tries again by itself three times over the next minute and a half, and if one try works the lyrics appear without a loading pause. **Refetch lyrics** tries again right away.
 - **Instrumental.** For songs LRCLIB marks as instrumental, a ♪ slowly breathes in and out where the lyrics would be.
-- **Plain (unsynced) lyrics.** Some songs only have lyrics without timestamps. Undertone spreads the lines evenly over the length of the song, so a line is on screen roughly while it's sung, but not exactly. There's no word-by-word highlight, and lines change with slower, calmer transitions.
+- **Plain (unsynced) lyrics.** Some songs only have lyrics without timestamps. Undertone spreads the lines evenly over the length of the song, so a line is on screen roughly while it's sung, but not exactly. There's no word-by-word highlight, and lines change with slower, calmer transitions. When you play the song more than 30 days after Undertone saved its lyrics, it checks LRCLIB for synced lyrics again, and switches to them while the song plays if they're there. Synced lyrics whose timestamps would keep one line on screen for most of the song (most lines without a timestamp, or many lines on one or two) are shown the same way.
 - **Lyrics timed by line only.** Many songs have a timestamp for each line but not for each word. Undertone then estimates when each word is sung from its syllables, holds the last word of a line a little longer the way singers do, and never keeps one word lit for more than 1.6 seconds. Lyrics with a timestamp for every word are followed exactly.
 
 ## Song changes, pauses and breaks

@@ -158,6 +158,7 @@ pub struct Settings {
     pub font: Font,
     pub size: f64,
     pub curve: f64,
+    /// 0..100, % of the display's work area, without menu bar, Dock or taskbar
     pub y_pos: f64,
     pub glow: f64,
     pub opacity: f64,
