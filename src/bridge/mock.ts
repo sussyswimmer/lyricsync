@@ -566,6 +566,9 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
 
   // Like `?media`, `?loginItem=refuse` applies to this page only (and to a Settings page it opens).
   const refuseLoginItem = params.get("loginItem") === "refuse";
+  /** The settings window this page opened, and the address it was opened at. */
+  let settingsWindow: Window | null = null;
+  let settingsHref = "";
 
   const commands: { [C in Command]: (args: Commands[C]["args"]) => ResultOf<C> } = {
     get_settings: () => structuredClone(settings),
@@ -600,7 +603,14 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
       // The settings page opened from here starts with this page's media problem and login item refusal.
       if (problem !== null) url.searchParams.set("media", problem);
       if (refuseLoginItem) url.searchParams.set("loginItem", "refuse");
-      window.open(url, "undertone-settings", "width=380,height=640");
+      // Still open at that address: bring it forward, as the core shows the window. Opening it again
+      // would reload it (its scroll, a listening recorder and the preview would start over).
+      if (settingsWindow && !settingsWindow.closed && settingsHref === url.href) {
+        settingsWindow.focus();
+        return;
+      }
+      settingsWindow = window.open(url, "undertone-settings", "width=380,height=640");
+      settingsHref = url.href;
     },
     quit: () => {},
   };

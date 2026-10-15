@@ -1116,10 +1116,18 @@ describe("mock bridge: keyboard and window", () => {
     }
   }
 
-  function stubWindow(search = "?mock"): { added: Map<string, KeyListener>; removed: string[]; opened: unknown[][] } {
+  /** A window `window.open` handed back: whether it was closed since, and how often it was brought forward. */
+  interface OpenedWindow {
+    closed: boolean;
+    focused: number;
+    focus(): void;
+  }
+
+  function stubWindow(search = "?mock"): { added: Map<string, KeyListener>; removed: string[]; opened: unknown[][]; windows: OpenedWindow[] } {
     const added = new Map<string, KeyListener>();
     const removed: string[] = [];
     const opened: unknown[][] = [];
+    const windows: OpenedWindow[] = [];
     const href = `http://localhost:1420/${search}`;
     vi.stubGlobal("Element", FakeElement);
     vi.stubGlobal("location", { search, href });
@@ -1127,9 +1135,20 @@ describe("mock bridge: keyboard and window", () => {
       location: { search, href },
       addEventListener: (type: string, fn: KeyListener) => added.set(type, fn),
       removeEventListener: (type: string) => removed.push(type),
-      open: (...args: unknown[]) => opened.push(args),
+      open: (...args: unknown[]): OpenedWindow => {
+        opened.push(args);
+        const opener: OpenedWindow = {
+          closed: false,
+          focused: 0,
+          focus() {
+            this.focused++;
+          },
+        };
+        windows.push(opener);
+        return opener;
+      },
     });
-    return { added, removed, opened };
+    return { added, removed, opened, windows };
   }
 
   function press(
@@ -1287,6 +1306,26 @@ describe("mock bridge: keyboard and window", () => {
     press(onKey, { key: "s", code: "KeyS", ctrlKey: true });
     press(onKey, { key: "s", code: "KeyS", target: new FakeElement(true) });
     expect(win.opened).toHaveLength(1);
+  });
+
+  it("brings an open settings window forward instead of reloading it, as the core does", async () => {
+    const win = stubWindow();
+    const { bridge } = await mock("?mock", { keys: true });
+    const onKey = win.added.get("keydown");
+    press(onKey, { key: "s", code: "KeyS" });
+    press(onKey, { key: "s", code: "KeyS" });
+    await bridge.invoke("open_settings");
+    expect(win.opened).toHaveLength(1);
+    expect(win.windows[0]?.focused).toBe(2);
+    // closed meanwhile: open it again
+    if (win.windows[0]) win.windows[0].closed = true;
+    press(onKey, { key: "s", code: "KeyS" });
+    expect(win.opened).toHaveLength(2);
+    // another address (the media problem changed): open it there
+    bridge.setMedia("no-player");
+    await bridge.invoke("open_settings");
+    expect(win.opened).toHaveLength(3);
+    expect(String(win.opened[2]?.[0])).toBe("http://localhost:1420/settings.html?mock=&media=no-player");
   });
 
   it("on the settings page itself, open_settings opens no second one", async () => {
