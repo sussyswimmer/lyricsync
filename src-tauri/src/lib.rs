@@ -33,6 +33,12 @@ fn start_log() {
         Ok(dir) => applog::init(dir),
         Err(error) => applog!("log file unavailable: {error}"),
     }
+}
+
+/// Logs the start once `build` has returned. A second launch never gets that far: single-instance
+/// hands it to the running instance and exits inside `build`, so it adds no start of its own.
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
+fn log_started() {
     applog!(
         "Undertone {} started ({} {}, {} build)",
         env!("CARGO_PKG_VERSION"),
@@ -49,7 +55,7 @@ fn start_log() {
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
     start_log();
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // First, so a second launch hands over before anything else starts: it opens Settings.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Err(error) = commands::show_settings(app) {
@@ -180,20 +186,21 @@ pub fn run() {
             // (The setup above runs later, inside `run`.)
             applog!("Undertone couldn't start: {error}");
             panic!("error while building Undertone");
-        })
-        .run(|_app, event| match event {
-            // A tray app keeps running with no window open; only Quit (an explicit exit code) ends it.
-            tauri::RunEvent::ExitRequested {
-                code: None, api, ..
-            } => api.prevent_exit(),
-            // macOS: opening Undertone again while it runs reaches this instance as a reopen, not a
-            // second launch, so single-instance never sees it. Same answer: show Settings.
-            #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen { .. } => {
-                if let Err(error) = commands::show_settings(_app) {
-                    applog!("reopen: {error}");
-                }
-            }
-            _ => {}
         });
+    log_started();
+    app.run(|_app, event| match event {
+        // A tray app keeps running with no window open; only Quit (an explicit exit code) ends it.
+        tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } => api.prevent_exit(),
+        // macOS: opening Undertone again while it runs reaches this instance as a reopen, not a
+        // second launch, so single-instance never sees it. Same answer: show Settings.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            if let Err(error) = commands::show_settings(_app) {
+                applog!("reopen: {error}");
+            }
+        }
+        _ => {}
+    });
 }
