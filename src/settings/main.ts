@@ -107,11 +107,11 @@ async function boot(host: HTMLElement): Promise<void> {
       console.warn("Undertone: couldn't save settings", error);
       // The core keeps Launch at login as it was when the OS refuses the login item; the switch has
       // already snapped back to it, and the note under it says why.
+      // The note is a status region of its own, so it is announced once, in full, without help.
       if (write.kind === "patch" && write.patch.launchAtLogin !== undefined) {
         loginError = true;
         loginErrorFor = write.patch.launchAtLogin;
         render();
-        panel?.announce("Couldn't change Launch at login");
         return;
       }
       panel?.announce("Couldn't save that change");

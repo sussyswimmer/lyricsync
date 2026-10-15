@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings, type ShortcutsStatus } from "../contract/contract";
 import type { Bridge } from "../src/bridge/types";
-import { activeElement, resetDom, stubDom, type FakeElement } from "./fake-dom";
+import { activeElement, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
 
 /*
  * The settings window as main.ts boots it, on a scripted bridge: shortcut status (subscribe, then
@@ -259,6 +259,10 @@ describe("settings window: Launch at login", () => {
     await settle();
     expect(login.checked).toBe(false);
     expect(note.textContent).toContain("Couldn't change Undertone's login item.");
+    // the note is a status region itself: the panel's announcer doesn't say it a second time
+    runFrames();
+    expect(note.getAttribute("role")).toBe("status");
+    expect(root.children.find((c) => c.getAttribute("role") === "status" && c.classList.contains("sr-only"))?.textContent).toBe("");
     refuse = false;
     login.checked = true;
     login.dispatch("change");
