@@ -166,7 +166,8 @@ pub trait DesktopLayer {
     /// False once the desktop the overlays hang from is gone (Explorer restarted).
     fn is_valid(target: Self::Target) -> bool;
     /// Where `monitor` sits, in units all displays share, for `plan`: physical pixels on Windows,
-    /// points on macOS (tao scales each display by its own backing factor).
+    /// points on macOS (tao scales each display by its own backing factor). The whole display;
+    /// `attach` frames its overlay to the work area, without the menu bar, Dock or taskbar.
     fn area(monitor: &tauri::Monitor) -> Bounds;
     /// Native window operations run on the UI thread.
     fn attach(
@@ -541,6 +542,27 @@ mod tests {
         ] {
             assert!(notifications.contains(name), "{name} is not observed");
         }
+    }
+
+    #[test]
+    fn overlays_are_placed_and_checked_on_the_same_work_area() {
+        // attach and attachment must agree, or every pass would find a placed overlay misplaced
+        // and attach it again. Both use the work area; `area` keeps whole displays for `plan`.
+        let windows = include_str!("windows.rs");
+        let macos = include_str!("macos.rs");
+        for (source, frame) in [
+            (windows, "frame(monitor)"),
+            (macos, "overlay_frame(mtm, monitor)"),
+        ] {
+            for name in ["attach", "attachment"] {
+                let body = method(source, name);
+                assert!(body.contains(frame), "{name}: {frame}");
+                assert!(!body.contains("monitor.position()"), "{name}");
+                assert!(!body.contains("monitor.size()"), "{name}");
+            }
+        }
+        assert!(windows.contains("let work = monitor.work_area();"));
+        assert!(macos.contains("visible: rect(screen.visibleFrame()),"));
     }
 
     #[test]
