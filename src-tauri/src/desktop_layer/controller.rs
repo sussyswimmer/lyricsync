@@ -2,13 +2,10 @@
 //! displays and settings, and the native adapter (`Native`) does the OS-specific work. Changes the
 //! user makes (play/pause, "hide lyrics", showWhen/displays) wake it at once.
 use super::{
-    geometry::Bounds, is_overlay, pass, plan, shown, steps, DesktopLayer, Pass,
+    debug_overrides, geometry::Bounds, is_overlay, pass, plan, shown, steps, DesktopLayer, Pass,
     WEBVIEW2_BROWSER_ARGS,
 };
-use crate::{
-    contract::{Displays, Settings, ShowWhen},
-    state::AppState,
-};
+use crate::{contract::Settings, state::AppState};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -202,17 +199,10 @@ fn build_overlay(app: &AppHandle, label: &str) -> Result<WebviewWindow, String> 
 /// state (see `steps`).
 fn reconcile(app: &AppHandle, target: Target) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let mut settings: Settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
-    let test_page =
-        cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--desktop-layer-test");
-    if test_page {
-        // The test page is shown whatever the saved settings say, lyrics switched off included.
-        settings.show_when = ShowWhen::Always;
-        settings.enabled = true;
-    }
-    if cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--desktop-layer-all") {
-        settings.displays = Displays::All;
-    }
+    let flag = |name: &str| cfg!(debug_assertions) && std::env::args().any(|arg| arg == name);
+    let test_page = flag("--desktop-layer-test");
+    let saved: Settings = state.settings.lock().map_err(|e| e.to_string())?.clone();
+    let settings = debug_overrides(saved, test_page, flag("--desktop-layer-all"));
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     let all: Vec<Bounds> = monitors.iter().map(Native::area).collect();
     let primary = app.primary_monitor().map_err(|e| e.to_string())?;
@@ -253,10 +243,7 @@ fn reconcile(app: &AppHandle, target: Target) -> Result<(), String> {
                 eprintln!("desktop layer: {label} shown, {}", Native::report(&window));
             }
         }
-        if todo.attach
-            && cfg!(debug_assertions)
-            && std::env::args().any(|arg| arg == "--overlay-probe")
-        {
+        if todo.attach && flag("--overlay-probe") {
             eprintln!(
                 "probe[{label}]: attached show={show} visible={:?} {}",
                 window.is_visible(),

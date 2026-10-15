@@ -1,6 +1,6 @@
 //! Portable policy plus one controller that drives the native adapters (Windows, macOS) through
 //! the `DesktopLayer` trait. See docs/DESKTOP_LAYER.md.
-use crate::contract::{Displays, ShowWhen};
+use crate::contract::{Displays, Settings, ShowWhen};
 
 pub mod geometry;
 pub mod styles;
@@ -27,6 +27,19 @@ pub fn visible(show_when: &ShowWhen, is_playing: bool) -> bool {
 /// (`Settings.enabled`: the Settings switch, the tray's Hide/Show lyrics, the toggle shortcut).
 pub fn shown(show_when: &ShowWhen, is_playing: bool, enabled: bool) -> bool {
     visible(show_when, is_playing) && enabled
+}
+
+/// The debug flags' changes to the saved settings, made on every pass. `--desktop-layer-test`
+/// shows its test page whatever `showWhen` says but follows the lyrics switch, so Hide lyrics
+/// still hides it, as the acceptance steps check. `--desktop-layer-all` covers every display.
+pub fn debug_overrides(mut settings: Settings, test_page: bool, all_displays: bool) -> Settings {
+    if test_page {
+        settings.show_when = ShowWhen::Always;
+    }
+    if all_displays {
+        settings.displays = Displays::All;
+    }
+    settings
 }
 
 pub fn monitor_indices(displays: &Displays, count: usize, primary: Option<usize>) -> Vec<usize> {
@@ -199,6 +212,35 @@ mod tests {
         assert!(!shown(&ShowWhen::Playing, true, false));
         assert!(!shown(&ShowWhen::Always, false, false));
         assert!(!shown(&ShowWhen::Always, true, false));
+    }
+    #[test]
+    fn the_test_page_overrides_show_when_but_follows_the_lyrics_switch() {
+        let saved = Settings {
+            show_when: ShowWhen::Playing,
+            displays: Displays::Primary,
+            enabled: false,
+            ..Settings::default()
+        };
+        assert_eq!(debug_overrides(saved.clone(), false, false), saved);
+        let test = debug_overrides(saved.clone(), true, false);
+        assert_eq!(test.show_when, ShowWhen::Always);
+        assert_eq!(test.displays, Displays::Primary);
+        // Lyrics off: the test page hides like the lyrics would, idle or playing.
+        assert!(!test.enabled);
+        assert!(!shown(&test.show_when, false, test.enabled));
+        assert!(!shown(&test.show_when, true, test.enabled));
+        let on = debug_overrides(
+            Settings {
+                enabled: true,
+                ..saved.clone()
+            },
+            true,
+            false,
+        );
+        assert!(shown(&on.show_when, false, on.enabled));
+        let all = debug_overrides(saved.clone(), false, true);
+        assert_eq!(all.displays, Displays::All);
+        assert_eq!(all.show_when, ShowWhen::Playing);
     }
     #[test]
     fn primary_is_not_assumed_to_be_first() {
