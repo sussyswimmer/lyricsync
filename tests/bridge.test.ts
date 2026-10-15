@@ -354,6 +354,24 @@ describe("mock bridge: lyrics", () => {
 });
 
 describe("mock bridge: settings", () => {
+  it("?loginItem=refuse: a Launch at login change fails, the rest applies, and every page hears the settings", async () => {
+    const { bridge, seen } = await mock("?loginItem=refuse");
+    await expect(bridge.invoke("update_settings", { patch: { launchAtLogin: true, size: 70 } })).rejects.toThrow(/login item/);
+    await tick();
+    expect(await bridge.invoke("get_settings")).toMatchObject({ launchAtLogin: false, size: 70 });
+    expect(seen.settings.map((s) => [s.launchAtLogin, s.size])).toEqual([[false, 70]]);
+    // nothing else changing: still one settings-changed, so a switch that moved goes back
+    seen.clear();
+    await expect(bridge.invoke("update_settings", { patch: { launchAtLogin: true } })).rejects.toThrow();
+    await tick();
+    expect(seen.settings.map((s) => s.launchAtLogin)).toEqual([false]);
+    // other changes, and a patch that leaves it as it is, go through as usual
+    await expect(bridge.invoke("update_settings", { patch: { size: 80, launchAtLogin: false } })).resolves.toMatchObject({ size: 80, launchAtLogin: false });
+    // without the parameter, the login item always changes
+    const plain = await mock();
+    await expect(plain.bridge.invoke("update_settings", { patch: { launchAtLogin: true } })).resolves.toMatchObject({ launchAtLogin: true });
+  });
+
   it("returns copies, so callers can't mutate the store", async () => {
     const { bridge } = await mock();
     const s = await bridge.invoke("get_settings");
@@ -1254,6 +1272,31 @@ describe("mock bridge: keyboard and window", () => {
     expect(String(url)).toBe("http://localhost:1420/settings.html?mock=");
     expect(name).toBe("undertone-settings");
     expect(features).toBe("width=380,height=640");
+  });
+
+  it("S opens the settings page, as the tray's Settings… does", async () => {
+    const win = stubWindow("?mock&media=no-player&loginItem=refuse");
+    await mock("?mock&media=no-player&loginItem=refuse", { keys: true });
+    const onKey = win.added.get("keydown");
+    expect(press(onKey, { key: "s", code: "KeyS" })).toBe(true);
+    expect(win.opened).toHaveLength(1);
+    expect(String(win.opened[0]?.[0])).toBe("http://localhost:1420/settings.html?mock=&media=no-player&loginItem=refuse");
+    expect(win.opened[0]?.[1]).toBe("undertone-settings");
+    // not with a modifier (⌘S, Ctrl+S), nor typed into a control
+    press(onKey, { key: "s", code: "KeyS", metaKey: true });
+    press(onKey, { key: "s", code: "KeyS", ctrlKey: true });
+    press(onKey, { key: "s", code: "KeyS", target: new FakeElement(true) });
+    expect(win.opened).toHaveLength(1);
+  });
+
+  it("on the settings page itself, open_settings opens no second one", async () => {
+    vi.stubGlobal("Element", FakeElement);
+    const opened: unknown[][] = [];
+    const href = "http://localhost:1420/settings.html?mock";
+    vi.stubGlobal("window", { location: { href }, open: (...args: unknown[]) => opened.push(args) });
+    const { bridge } = await mock("?mock");
+    await bridge.invoke("open_settings");
+    expect(opened).toEqual([]);
   });
 
   it("opens the settings page with this page's media problem", async () => {

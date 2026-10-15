@@ -400,17 +400,18 @@ export interface MockOptions {
   /** Share player and settings with other tabs (overlay + settings side by side). Default true. */
   shared?: boolean;
   /**
-   * Space play/pause, ←/→ seek ±5 s, N / Shift+N next/previous track, and the global shortcuts
-   * (while this page has focus). Default true.
+   * Space play/pause, ←/→ seek ±5 s, N / Shift+N next/previous track, S opens Settings (as the
+   * tray's Settings… does), and the global shortcuts (while this page has focus). Default true.
    */
   keys?: boolean;
   /** Persist across reloads. Default: localStorage when available. */
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
   /**
    * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state,
-   * `?media=automation-denied|no-player` starts with that media problem, and
+   * `?media=automation-denied|no-player` starts with that media problem,
    * `?shortcutConflict=toggleLyrics,nudgeLater` makes those actions' starting combinations
-   * "unavailable", as if another app held them. Default: the page URL.
+   * "unavailable", as if another app held them, and `?loginItem=refuse` refuses every Launch at
+   * login change, as the core does when the OS won't change the login item. Default: the page URL.
    */
   params?: URLSearchParams;
 }
@@ -563,9 +564,22 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     };
   }
 
+  // Like `?media`, `?loginItem=refuse` applies to this page only (and to a Settings page it opens).
+  const refuseLoginItem = params.get("loginItem") === "refuse";
+
   const commands: { [C in Command]: (args: Commands[C]["args"]) => ResultOf<C> } = {
     get_settings: () => structuredClone(settings),
-    update_settings: ({ patch }) => setSettings(mergeSettings(settings, patch), true),
+    update_settings: ({ patch }) => {
+      const next = mergeSettings(settings, patch);
+      if (!refuseLoginItem || next.launchAtLogin === settings.launchAtLogin) return setSettings(next, true);
+      // As the core does when the OS refuses the login item (`settings::runtime::modify_with_login_item`):
+      // launchAtLogin keeps its value, the rest of the patch applies, every page hears settings-changed
+      // even if nothing else changed (so a switch that moved goes back), and the command fails.
+      const before = settings;
+      setSettings({ ...next, launchAtLogin: settings.launchAtLogin }, true);
+      if (settings === before) emit("settings-changed", structuredClone(settings));
+      throw new Error("Couldn't change the login item (?loginItem=refuse)");
+    },
     get_now_playing: () => (problem === null ? player.nowPlaying() : null),
     get_media_status: () => mediaStatus(),
     get_shortcuts_status: () => ({ ...shortcutsStatus }),
@@ -580,9 +594,12 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     open_settings: () => {
       if (typeof window === "undefined") return;
       const url = new URL("settings.html", window.location.href);
+      // Already the settings page: the core shows the window that is open, never a second one.
+      if (url.pathname === new URL(window.location.href).pathname) return;
       url.searchParams.set("mock", "");
-      // The settings page opened from here starts with this page's media problem.
+      // The settings page opened from here starts with this page's media problem and login item refusal.
       if (problem !== null) url.searchParams.set("media", problem);
+      if (refuseLoginItem) url.searchParams.set("loginItem", "refuse");
       window.open(url, "undertone-settings", "width=380,height=640");
     },
     quit: () => {},
@@ -629,6 +646,8 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
     else if (e.key === "ArrowLeft") player.seekBy(-SEEK_STEP_MS);
     else if (e.key === "ArrowRight") player.seekBy(SEEK_STEP_MS);
     else if (e.key.toLowerCase() === "n") player.next(e.shiftKey ? -1 : 1);
+    // There's no tray in a browser: S stands in for its Settings… item.
+    else if (e.key.toLowerCase() === "s") commands.open_settings({});
     else return;
     e.preventDefault();
   };
