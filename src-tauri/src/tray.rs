@@ -381,7 +381,7 @@ mod runtime {
                 tray.update(&handle, force);
             }
         }) {
-            eprintln!("tray refresh: {error}");
+            applog!("tray refresh: {error}");
         }
     }
 
@@ -413,7 +413,7 @@ mod runtime {
             let errors: Vec<_> = results.into_iter().filter_map(Result::err).collect();
             if shown.is_some() {
                 for error in &errors {
-                    eprintln!("tray update: {error}");
+                    applog!("tray update: {error}");
                 }
             }
             *shown = errors.is_empty().then_some(next);
@@ -445,7 +445,7 @@ mod runtime {
             }
         };
         if let Err(error) = result {
-            eprintln!("tray: {error}");
+            applog!("tray: {error}");
         }
         refresh(app, true);
     }
@@ -476,7 +476,7 @@ mod runtime {
             .clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = service.refetch(&key) {
-                eprintln!("refetch lyrics: {error}");
+                applog!("refetch lyrics: {error}");
             }
         });
         Ok(())

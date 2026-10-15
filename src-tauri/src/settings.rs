@@ -342,7 +342,7 @@ pub mod runtime {
             store.save().map_err(|e| e.to_string())
         });
         if let Err(error) = saved {
-            eprintln!("settings save failed: {error}");
+            applog!("settings save failed: {error}");
         }
     }
 
@@ -351,7 +351,7 @@ pub mod runtime {
         match app.try_state::<AutoLaunchManager>()?.is_enabled() {
             Ok(enabled) => Some(enabled),
             Err(error) => {
-                eprintln!("launch at login: {error}");
+                applog!("launch at login: {error}");
                 None
             }
         }
@@ -384,12 +384,12 @@ pub mod runtime {
                     && tauri_plugin_store::resolve_store_path(app, STORE_FILE)
                         .is_ok_and(|path| path.exists())
                 {
-                    eprintln!("settings file unreadable or without settings; using defaults");
+                    applog!("settings file unreadable or without settings; using defaults");
                 }
                 stored
             }
             Err(error) => {
-                eprintln!("settings store unavailable; using defaults: {error}");
+                applog!("settings store unavailable; using defaults: {error}");
                 None
             }
         };
@@ -489,11 +489,11 @@ pub mod runtime {
                     .map_err(|e| e.to_string())
             });
             if let Err(error) = sent {
-                eprintln!("settings-changed broadcast failed: {error}");
+                applog!("settings-changed broadcast failed: {error}");
             }
         });
         if let Err(error) = queued {
-            eprintln!("settings-changed broadcast failed: {error}");
+            applog!("settings-changed broadcast failed: {error}");
         }
     }
 
@@ -548,7 +548,7 @@ pub mod runtime {
             Ok(next)
         });
         if let Err(error) = adopted {
-            eprintln!("launch at login: {error}");
+            applog!("launch at login: {error}");
         }
     }
 

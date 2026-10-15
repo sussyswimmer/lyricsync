@@ -1,13 +1,16 @@
 //! X7 `undertone --diagnose`: the first thing to run when something breaks. It prints what
 //! Undertone sees right now (version and OS, media sources, the current track and its LRCLIB
 //! match, settings, the lyrics cache, displays and the desktop layer) without starting the app,
-//! and saves the same text to `undertone-diagnose-<timestamp>.txt` in the temp dir.
+//! then the running app's recent log, and saves the same text to
+//! `undertone-diagnose-<timestamp>.txt` in the temp dir.
 //!
 //! Each section is gathered on its own and degrades to "unavailable: <reason>". Nothing here may
 //! panic: release builds abort on panic, so the file is written section by section as a backstop.
-//! The report holds no lyrics (line counts only), no artwork and no secrets. The formatting takes
-//! plain data and is tested on every OS; `native` gathers that data on Windows and macOS.
+//! The report holds no lyrics (line counts only; the log never has any), no artwork and no
+//! secrets. The formatting takes plain data and is tested on every OS; `native` gathers that data
+//! on Windows and macOS.
 use crate::{
+    applog,
     contract::{
         Lyrics, LyricsStatus, NowPlaying, Settings, ShortcutAction, Shortcuts, Source,
         CONTRACT_VERSION,
@@ -78,6 +81,8 @@ const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const SETTINGS_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
 const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
+/// How much of the running app's log the report shows.
+const LOG_LINES: usize = 60;
 
 /// Gathers every section into `dir`'s report file and `echo`, in order, and returns the exit code
 /// with the saved file's path.
@@ -136,6 +141,14 @@ fn write_report(dir: &Path, env: Env<'_>, echo: &mut dyn FnMut(&str)) -> (i32, O
     })));
     out.emit(&displays_section(&native::displays()));
     out.emit(&desktop_section(&native::desktop_layer()));
+    out.emit(&log_section(
+        &identifier()
+            .and_then(|id| app_log_dir(std::env::consts::OS, &id, env))
+            .map(|dir| RecentLog {
+                lines: applog::tail(&dir, LOG_LINES).map_err(|error| error.to_string()),
+                dir,
+            }),
+    ));
     if let Ok(runtime) = runtime {
         // A request still running on a worker must not hold the process open.
         runtime.shutdown_timeout(Duration::from_secs(1));
@@ -927,6 +940,31 @@ pub fn desktop_section(lines: &Result<Vec<String>, String>) -> Section {
     Section::new("Desktop layer", lines.clone())
 }
 
+/// The running app's log (`crate::applog`), which says what it hit that this report can't see:
+/// an overlay that failed to attach, a save or a shortcut that failed.
+pub struct RecentLog {
+    pub dir: PathBuf,
+    /// The last `LOG_LINES` lines, oldest first; `None` when there is no log yet.
+    pub lines: Result<Option<Vec<String>>, String>,
+}
+pub fn log_section(log: &Result<RecentLog, String>) -> Section {
+    Section::new(
+        "Recent log",
+        log.as_ref().map_err(Clone::clone).map(|log| {
+            let mut lines = vec![field("file", log.dir.join(applog::FILE).display())];
+            match &log.lines {
+                Ok(Some(tail)) if !tail.is_empty() => {
+                    lines.push(format!("last {}:", count(tail.len(), "line")));
+                    lines.extend(tail.iter().map(|line| format!("  {line}")));
+                }
+                Ok(_) => lines.push(field("lines", "none yet")),
+                Err(error) => lines.push(field("lines", format!("unreadable: {error}"))),
+            }
+            lines
+        }),
+    )
+}
+
 /// Windows' marketing name for a build: the desktop layer changed shape in 24H2.
 pub fn windows_version(major: u32, minor: u32, build: u32) -> String {
     let release = match build {
@@ -1051,7 +1089,7 @@ fn civil(days: i64) -> (i64, u32, u32) {
     let year = year_of_era + era * 400 + i64::from(month <= 2);
     (year, month as u32, day as u32)
 }
-fn utc_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
+pub(crate) fn utc_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
     let (year, month, day) = civil((secs / 86_400) as i64);
     let rest = secs % 86_400;
     (year, month, day, rest / 3600, rest / 60 % 60, rest % 60)
@@ -1081,11 +1119,7 @@ pub fn identifier() -> Result<String, String> {
 /// Tauri's `app_data_dir` without an app: the OS data dir (`dirs::data_dir`) joined with the
 /// bundle identifier. Windows: the roaming AppData; macOS: `~/Library/Application Support`.
 pub fn app_data_dir(os: &str, identifier: &str, env: Env<'_>) -> Result<PathBuf, String> {
-    let var = |name: &str| {
-        env(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
+    let var = |name: &str| env_dir(env, name);
     let base = match os {
         "windows" => var("APPDATA").ok_or("APPDATA is not set")?,
         "macos" => var("HOME")
@@ -1097,6 +1131,34 @@ pub fn app_data_dir(os: &str, identifier: &str, env: Env<'_>) -> Result<PathBuf,
             .ok_or("neither XDG_DATA_HOME nor HOME is set")?,
     };
     Ok(base.join(identifier))
+}
+/// Tauri's `app_log_dir` without an app, where `crate::applog` writes: macOS
+/// `~/Library/Logs/<identifier>`; elsewhere the local data dir (`dirs::data_local_dir`, on Windows
+/// the non-roaming AppData) joined with the identifier and `logs`.
+pub fn app_log_dir(os: &str, identifier: &str, env: Env<'_>) -> Result<PathBuf, String> {
+    let var = |name: &str| env_dir(env, name);
+    Ok(match os {
+        "windows" => var("LOCALAPPDATA")
+            .ok_or("LOCALAPPDATA is not set")?
+            .join(identifier)
+            .join("logs"),
+        "macos" => var("HOME")
+            .ok_or("HOME is not set")?
+            .join("Library")
+            .join("Logs")
+            .join(identifier),
+        _ => var("XDG_DATA_HOME")
+            .or_else(|| var("HOME").map(|home| home.join(".local").join("share")))
+            .ok_or("neither XDG_DATA_HOME nor HOME is set")?
+            .join(identifier)
+            .join("logs"),
+    })
+}
+/// A directory from an environment variable; unset and empty are both `None`.
+fn env_dir(env: Env<'_>, name: &str) -> Option<PathBuf> {
+    env(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2817,6 +2879,69 @@ mod tests {
     }
 
     #[test]
+    fn the_app_log_dir_matches_tauris_on_each_os() {
+        let id = identifier().unwrap();
+        let env = |name: &str| match name {
+            "APPDATA" => Some(OsString::from(r"C:\Users\Demo\AppData\Roaming")),
+            "LOCALAPPDATA" => Some(OsString::from(r"C:\Users\Demo\AppData\Local")),
+            "HOME" => Some(OsString::from("/Users/demo")),
+            _ => None,
+        };
+        assert_eq!(
+            app_log_dir("windows", &id, &env),
+            Ok(PathBuf::from(r"C:\Users\Demo\AppData\Local")
+                .join(&id)
+                .join("logs"))
+        );
+        assert_eq!(
+            app_log_dir("macos", &id, &env),
+            Ok(PathBuf::from("/Users/demo/Library/Logs").join(&id))
+        );
+        assert_eq!(
+            app_log_dir("linux", &id, &env),
+            Ok(PathBuf::from("/Users/demo/.local/share")
+                .join(&id)
+                .join("logs"))
+        );
+        // Windows logs are local, never roaming.
+        let roaming_only = |name: &str| (name == "APPDATA").then(|| OsString::from(r"C:\R"));
+        assert!(app_log_dir("windows", &id, &roaming_only).is_err());
+        assert!(app_log_dir("macos", &id, &|_: &str| Some(OsString::new())).is_err());
+    }
+
+    #[test]
+    fn the_log_section_shows_the_file_and_its_last_lines() {
+        let dir = PathBuf::from("/logs");
+        let section = |lines| {
+            log_section(&Ok(RecentLog {
+                dir: dir.clone(),
+                lines,
+            }))
+            .render()
+        };
+        let text = section(Ok(Some(vec![
+            "2026-10-06T09:05:00.000Z Undertone 0.1.0 started".into(),
+            "2026-10-06T09:05:01.000Z desktop layer: attach failed".into(),
+        ])));
+        assert_eq!(
+            text,
+            format!(
+                "\n== Recent log ==\n  file:        {}\n  last 2 lines:\n    \
+                 2026-10-06T09:05:00.000Z Undertone 0.1.0 started\n    \
+                 2026-10-06T09:05:01.000Z desktop layer: attach failed\n",
+                dir.join(applog::FILE).display()
+            )
+        );
+        assert!(section(Ok(None)).contains("lines:       none yet\n"));
+        assert!(section(Ok(Some(Vec::new()))).contains("lines:       none yet\n"));
+        assert!(section(Err("denied".into())).contains("lines:       unreadable: denied\n"));
+        assert_eq!(
+            log_section(&Err("HOME is not set".into())).render(),
+            "\n== Recent log ==\n  unavailable: HOME is not set\n"
+        );
+    }
+
+    #[test]
     fn utc_dates_and_file_stamps() {
         assert_eq!(utc(0), "1970-01-01 00:00:00 UTC");
         assert_eq!(utc(1_700_000_000), "2023-11-14 22:13:20 UTC");
@@ -3089,13 +3214,21 @@ mod tests {
     fn the_whole_report_is_printed_saved_and_degrades_section_by_section() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
-        let env =
-            |name: &str| matches!(name, "HOME" | "APPDATA").then(|| home.clone().into_os_string());
+        let env = |name: &str| {
+            matches!(name, "HOME" | "APPDATA" | "LOCALAPPDATA")
+                .then(|| home.clone().into_os_string())
+        };
         let data = app_data_dir(std::env::consts::OS, &identifier().unwrap(), &env).unwrap();
         std::fs::create_dir_all(&data).unwrap();
         std::fs::write(
             data.join("settings.json"),
             r#"{"settings": {"mode": "drift", "globalOffsetMs": 120}}"#,
+        )
+        .unwrap();
+        let logs = app_log_dir(std::env::consts::OS, &identifier().unwrap(), &env).unwrap();
+        applog::append(
+            &logs,
+            "2026-10-06T09:05:00.000Z shortcut: nothing is playing\n",
         )
         .unwrap();
         let reports = temp.path().join("reports");
@@ -3121,6 +3254,11 @@ mod tests {
             &format!("file:        {}", data.join("settings.json").display()),
             &format!("dir:         {}", data.join("lyrics").display()),
             "entries:     none yet",
+            &format!(
+                "== Recent log ==\n  file:        {}",
+                logs.join("undertone.log").display()
+            ),
+            "last 1 line:\n    2026-10-06T09:05:00.000Z shortcut: nothing is playing\n",
         ] {
             assert!(printed.contains(expected), "{expected}\n{printed}");
         }

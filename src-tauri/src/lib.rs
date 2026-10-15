@@ -1,3 +1,7 @@
+// First: `applog!` is in scope in every module declared after it.
+#[macro_use]
+pub mod applog;
+
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 mod commands;
 pub mod contract;
@@ -18,13 +22,37 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 const draw=()=>{frames++;app.textContent='Undertone desktop layer — drag a folder over this text\\n'\
 +'frame '+frames+' · hidden '+hidden+' times';requestAnimationFrame(draw);};requestAnimationFrame(draw);})();";
 
+/// Starts the runtime log (`applog`) in the dir `--diagnose` reads, before anything can fail.
+#[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
+fn start_log() {
+    let var = |name: &str| std::env::var_os(name);
+    match diagnose::identifier()
+        .and_then(|id| diagnose::app_log_dir(std::env::consts::OS, &id, &var))
+    {
+        Ok(dir) => applog::init(dir),
+        Err(error) => applog!("log file unavailable: {error}"),
+    }
+    applog!(
+        "Undertone {} started ({} {}, {} build)",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+    );
+}
+
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
+    start_log();
     tauri::Builder::default()
         // First, so a second launch hands over before anything else starts: it opens Settings.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Err(error) = commands::show_settings(app) {
-                eprintln!("second launch: {error}");
+                applog!("second launch: {error}");
             }
         }))
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -43,7 +71,7 @@ pub fn run() {
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
                 if let Err(error) = webview.eval("(()=>{let f=0;const t=()=>{f++;requestAnimationFrame(t)};requestAnimationFrame(t);setInterval(()=>{window.__TAURI_INTERNALS__.invoke('debug_probe',{message:`visibility=${document.visibilityState} frames/2s=${f} nodes=${document.querySelectorAll('#app *').length} text=${(document.getElementById('app')?.textContent||'').trim().slice(0,60)}`});f=0},2000)})();") {
-                    eprintln!("overlay probe: {error}");
+                    applog!("overlay probe: {error}");
                 }
             }
             // Debug `--desktop-layer-test`: a fixed line on every overlay, to check the layer by hand.
@@ -55,7 +83,7 @@ pub fn run() {
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
                 if let Err(error) = webview.eval(DESKTOP_TEST_PAGE) {
-                    eprintln!("desktop test page: {error}");
+                    applog!("desktop test page: {error}");
                 }
             }
         })
@@ -92,7 +120,7 @@ pub fn run() {
                 _ => None,
             };
             if let Some(Err(error)) = result {
-                eprintln!("settings window: {error}");
+                applog!("settings window: {error}");
             }
         })
         .setup(|app| {
@@ -105,16 +133,23 @@ pub fn run() {
             // see desktop_layer::WEBVIEW2_BROWSER_ARGS): hide its page until it is shown.
             if let Some(settings) = app.get_webview_window("settings") {
                 if let Err(error) = desktop_layer::set_shown(&settings, false) {
-                    eprintln!("settings page: {error}");
+                    applog!("settings page: {error}");
                 }
             }
+            // A step that fails ends the app (tauri panics with the error): log which one and why.
+            let failed = |step: &'static str| {
+                move |error: String| {
+                    applog!("Undertone couldn't start: {step}: {error}");
+                    std::io::Error::other(format!("{step}: {error}"))
+                }
+            };
             // Settings first: every service and window below reads them (and the shortcuts).
-            settings::runtime::install(handle).map_err(std::io::Error::other)?;
-            lyrics::runtime::install(handle).map_err(std::io::Error::other)?;
-            desktop_layer::start(handle).map_err(std::io::Error::other)?;
+            settings::runtime::install(handle).map_err(failed("settings"))?;
+            lyrics::runtime::install(handle).map_err(failed("lyrics"))?;
+            desktop_layer::start(handle).map_err(failed("desktop layer"))?;
             media::start(handle);
-            tray::install(handle).map_err(std::io::Error::other)?;
-            shortcuts::install(handle).map_err(std::io::Error::other)?;
+            tray::install(handle).map_err(failed("tray"))?;
+            shortcuts::install(handle).map_err(failed("shortcuts"))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -132,7 +167,12 @@ pub fn run() {
             commands::debug_probe,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Undertone")
+        .unwrap_or_else(|error| {
+            // Release builds abort here with no window and no console: the log keeps the reason.
+            // (The setup above runs later, inside `run`.)
+            applog!("Undertone couldn't start: {error}");
+            panic!("error while building Undertone");
+        })
         .run(|_app, event| match event {
             // A tray app keeps running with no window open; only Quit (an explicit exit code) ends it.
             tauri::RunEvent::ExitRequested {
@@ -143,7 +183,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 if let Err(error) = commands::show_settings(_app) {
-                    eprintln!("reopen: {error}");
+                    applog!("reopen: {error}");
                 }
             }
             _ => {}

@@ -287,7 +287,7 @@ mod runtime {
 
     pub fn install(app: &AppHandle) -> Result<(), String> {
         if app.try_state::<GlobalShortcut<Wry>>().is_none() {
-            eprintln!("global shortcuts unavailable");
+            applog!("global shortcuts unavailable");
         }
         app.manage(Registrar {
             registered: Mutex::new(Vec::new()),
@@ -332,7 +332,7 @@ mod runtime {
                         .expire(ticket)
                 });
                 if expired {
-                    eprintln!("shortcuts: suspended for too long; registering them again");
+                    applog!("shortcuts: suspended for too long; registering them again");
                     spawn_pass(&handle);
                 }
             });
@@ -379,7 +379,7 @@ mod runtime {
         if let Some(plugin) = &plugin {
             for shortcut in registered.drain(..) {
                 if let Err(error) = plugin.unregister(shortcut) {
-                    eprintln!("shortcut {shortcut} not unregistered: {error}");
+                    applog!("shortcut {shortcut} not unregistered: {error}");
                 }
             }
         }
@@ -436,9 +436,7 @@ mod runtime {
                 ShortcutState::Ok
             }
             Err(error) => {
-                eprintln!(
-                    "shortcut {accelerator} not registered (another app may own it): {error}"
-                );
+                applog!("shortcut {accelerator} not registered (another app may own it): {error}");
                 ShortcutState::Unavailable
             }
         }
@@ -458,7 +456,7 @@ mod runtime {
             }
         }
         if let Err(error) = app.emit(SHORTCUTS_STATUS_EVENT, &status) {
-            eprintln!("shortcuts-status: {error}");
+            applog!("shortcuts-status: {error}");
         }
     }
 
@@ -470,7 +468,7 @@ mod runtime {
             Some(delta_ms) => crate::tray::nudge(app, delta_ms),
         };
         if let Err(error) = result {
-            eprintln!("shortcut: {error}");
+            applog!("shortcut: {error}");
         }
     }
 }
