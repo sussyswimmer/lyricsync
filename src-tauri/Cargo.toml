@@ -37,7 +37,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["time", "sync", "macros", "rt-multi-thread", "fs", "io-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "system-proxy"] }
 regex = "1"
 unicode-normalization = "0.1"
 sha1 = "0.10"
