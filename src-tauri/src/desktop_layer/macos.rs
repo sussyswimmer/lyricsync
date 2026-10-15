@@ -7,8 +7,9 @@ use super::{
 use block2::RcBlock;
 use objc2::{msg_send, runtime::AnyObject, sel, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplicationDidChangeScreenParametersNotification, NSColor, NSNormalWindowLevel, NSScreen,
-    NSWindow, NSWindowCollectionBehavior, NSWindowLevel, NSWindowOcclusionState, NSWorkspace,
+    NSApplicationDidChangeScreenParametersNotification, NSApplicationDidHideNotification,
+    NSApplicationDidUnhideNotification, NSColor, NSNormalWindowLevel, NSScreen, NSWindow,
+    NSWindowCollectionBehavior, NSWindowLevel, NSWindowOcclusionState, NSWorkspace,
     NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidWakeNotification,
     NSWorkspaceScreensDidWakeNotification,
 };
@@ -110,16 +111,24 @@ impl DesktopLayer for MacDesktop {
         static ONCE: Once = Once::new();
         ONCE.call_once(|| {
             // SAFETY: AppKit's notification names are immutable NSString constants.
-            let (screens, wake, screens_wake, space) = unsafe {
+            let (screens, hide, unhide, wake, screens_wake, space) = unsafe {
                 (
                     NSApplicationDidChangeScreenParametersNotification,
+                    NSApplicationDidHideNotification,
+                    NSApplicationDidUnhideNotification,
                     NSWorkspaceDidWakeNotification,
                     NSWorkspaceScreensDidWakeNotification,
                     NSWorkspaceActiveSpaceDidChangeNotification,
                 )
             };
+            let center = NSNotificationCenter::defaultCenter();
             // Displays added, removed, rearranged or rescaled.
-            observe(&NSNotificationCenter::defaultCenter(), screens);
+            observe(&center, screens);
+            // Undertone hidden (⌘H in Settings, Hide Others in another app) or shown again. The
+            // overlays opt out of hiding (`attach`), so neither should touch them; a pass checks
+            // that each one still does and is still shown.
+            observe(&center, hide);
+            observe(&center, unhide);
             // Workspace notifications only arrive on NSWorkspace's own center. Re-applying after
             // sleep and on a Space switch is cheap insurance against a dropped desktop-level window.
             let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
@@ -156,6 +165,9 @@ impl DesktopLayer for MacDesktop {
             window.set_focusable(false).map_err(|e| e.to_string())?;
         }
         ns_window.setLevel(desktop_level());
+        // Hiding Undertone (⌘H in Settings, which tauri's default menu binds, or Hide Others in
+        // any app) hides Settings only. The lyrics stay, like the Finder's desktop.
+        ns_window.setCanHide(false);
         ns_window.setIgnoresMouseEvents(true);
         ns_window.setOpaque(false);
         ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -181,6 +193,7 @@ impl DesktopLayer for MacDesktop {
         match screen_frame(mtm, monitor) {
             Ok(frame)
                 if ns_window.ignoresMouseEvents()
+                    && !ns_window.canHide()
                     && geometry::same_rect(rect(ns_window.frame()), rect(frame)) =>
             {
                 Attachment::Placed
@@ -192,6 +205,7 @@ impl DesktopLayer for MacDesktop {
     fn detach(window: &WebviewWindow) -> Result<(), String> {
         let (_, ns_window) = ns_window(window)?;
         ns_window.setLevel(NSNormalWindowLevel);
+        ns_window.setCanHide(true);
         ns_window.setIgnoresMouseEvents(false);
         ns_window.setCollectionBehavior(NSWindowCollectionBehavior::Default);
         Ok(())

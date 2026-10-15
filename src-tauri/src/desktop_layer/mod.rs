@@ -424,6 +424,33 @@ mod tests {
         );
     }
 
+    /// The body of `fn <name>(` in a native adapter, checked as source because the adapters only
+    /// compile on their own OS: up to the end of the method.
+    fn method<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("no fn {name}"));
+        let body = &source[start..];
+        &body[..body.find("\n    }\n").unwrap()]
+    }
+
+    #[test]
+    fn macos_overlays_stay_when_undertone_is_hidden() {
+        // ⌘H in Settings (tauri's default menu) or Hide Others in another app hides Undertone.
+        // Overlays opt out, a pass re-attaches one that lost that, and hiding or showing the app
+        // again starts a pass.
+        let macos = include_str!("macos.rs");
+        assert!(method(macos, "attach").contains("ns_window.setCanHide(false);"));
+        assert!(method(macos, "attachment").contains("&& !ns_window.canHide()"));
+        let notifications = method(macos, "install_notifications");
+        for name in [
+            "NSApplicationDidHideNotification",
+            "NSApplicationDidUnhideNotification",
+        ] {
+            assert!(notifications.contains(name), "{name} is not observed");
+        }
+    }
+
     #[test]
     fn the_manifest_lets_the_overlay_be_a_layered_child_window() {
         // An attached overlay is a layered child of Progman or WorkerW. Windows allows layered
