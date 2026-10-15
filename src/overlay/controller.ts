@@ -53,6 +53,8 @@ export class OverlayController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** After a busy frame: the earliest the next frame may begin (performance.now() clock), else null. */
   private paceUntil: number | null = null;
+  /** A frame has been passed over since the last kick(): this display refreshes faster than BUSY_FRAME_MS. */
+  private fastDisplay = false;
   private artworkTimer: ReturnType<typeof setTimeout> | null = null;
   private visible = false;
   private stopped = false;
@@ -120,6 +122,8 @@ export class OverlayController {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.paceUntil = null;
+    // the window may be on another display by now
+    this.fastDisplay = false;
     if (!this.raf && typeof requestAnimationFrame === "function") this.raf = requestAnimationFrame(this.tick);
   }
 
@@ -234,10 +238,12 @@ export class OverlayController {
 
   /**
    * One frame. `time` is when the frame began (its vsync), on performance.now()'s clock. After a busy
-   * frame, the next may begin BUSY_FRAME_MS later at the earliest; the loop waits for that on a timer
-   * rather than requesting frames and skipping them, so the page doesn't wake at the display's rate.
-   * A frame that began before then anyway (the timer ran ahead of a frame already under way) is passed
-   * over. kick() paints at the next frame regardless: something changed.
+   * frame, the next may begin BUSY_FRAME_MS later at the earliest. A frame that began before then is
+   * passed over, which marks a display faster than that (fastDisplay); from then on the loop waits on a
+   * timer rather than requesting frames and skipping them, so the page doesn't wake at the display's
+   * rate. A slower display (up to about 116 Hz) asks for the next frame directly: a timer there would
+   * only make each frame hang on timer precision, which Windows coarsens to 8 ms on battery. kick()
+   * paints at the next frame regardless (something changed) and checks the display's rate again.
    */
   private readonly tick = (time: number): void => {
     this.raf = 0;
@@ -246,6 +252,7 @@ export class OverlayController {
     // an engine whose timestamp isn't on that clock: count from now
     const frame = time <= start && start - time < 100 ? time : start;
     if (this.paceUntil !== null && frame < this.paceUntil) {
+      this.fastDisplay = true;
       this.raf = requestAnimationFrame(this.tick);
       return;
     }
@@ -256,7 +263,7 @@ export class OverlayController {
     if (busy) {
       this.paceUntil = frame + BUSY_FRAME_MS;
       const due = Math.ceil(this.paceUntil - now());
-      if (due > 0) this.wake(due);
+      if (this.fastDisplay && due > 0) this.wake(due);
       else this.raf = requestAnimationFrame(this.tick);
       return;
     }

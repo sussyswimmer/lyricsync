@@ -339,7 +339,7 @@ class FakeDisplay {
   vsyncs = 0;
   /** Frame callbacks run so far: how often the page woke for a frame. */
   callbacks = 0;
-  private readonly frameMs: number;
+  private frameMs: number;
   private readonly latency: number;
   /** fake ms run so far, and when the next vsync is */
   private elapsed = 0;
@@ -375,6 +375,11 @@ class FakeDisplay {
         if (type === "visibilitychange") listeners.delete(fn);
       },
     });
+  }
+
+  /** The window moves to a display with a vsync every `frameMs`, from the next vsync on. */
+  moveTo(frameMs: number): void {
+    this.frameMs = frameMs;
   }
 
   /** Hides or shows the page (the tray's Hide lyrics, a minimized settings window), as browsers announce it. */
@@ -502,6 +507,62 @@ describe("the frame loop", () => {
     const times = paintsIn(stage, 1000);
     expect(times.length).toBeLessThanOrEqual(63);
     for (const gap of gaps(times)) expect(gap).toBe(16);
+    controller.destroy();
+  });
+
+  /**
+   * Timers that end at the first tick of a `tick` ms grid at or after they're due, off the vsync grid,
+   * like Windows' timer interrupt: WebView2 runs it every 8 ms on battery.
+   */
+  const coarseTimers = (tick: number): void => {
+    const fine = globalThis.setTimeout;
+    const origin = performance.now() + 3;
+    vi.stubGlobal("setTimeout", ((cb: () => void, ms = 0) => {
+      const at = performance.now() + ms;
+      return fine(cb, origin + Math.ceil((at - origin) / tick) * tick - performance.now());
+    }) as unknown as typeof setTimeout);
+  };
+
+  // Regression (busy-frame-timer): after every busy frame the loop waited on a timer for the cap, even
+  // on a display too slow to need it, so a frame came only if the timer fired in time to ask for the
+  // next vsync. With an 8 ms timer a 77 Hz display drew a busy stage 48 times a second, a 91 Hz one 57.
+  it.each([17, 13, 11])("with a coarse timer, draws a busy stage at every frame of a display that needs no cap (a vsync every %s ms)", async (frameMs) => {
+    display = new FakeDisplay(frameMs);
+    display.install();
+    coarseTimers(8);
+    const { stage, controller } = await playing();
+    const times = paintsIn(stage, 1000);
+    expect(times.length).toBeGreaterThanOrEqual(Math.floor(1000 / frameMs) - 1);
+    for (const gap of gaps(times)) expect(gap).toBe(frameMs);
+    controller.destroy();
+  });
+
+  it("with a coarse timer, still caps a busy stage on a fast display, on a timer", async () => {
+    display = new FakeDisplay(8);
+    display.install();
+    coarseTimers(8);
+    const { stage, controller } = await playing();
+    const woke = display.callbacks;
+    const times = paintsIn(stage, 1000);
+    expect(times.length).toBeLessThanOrEqual(63);
+    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(9);
+    expect(display.callbacks - woke).toBeLessThanOrEqual(times.length + 1);
+    controller.destroy();
+  });
+
+  it("checks the display's rate again on a kick, for a window moved from a fast display to a slower one", async () => {
+    display = new FakeDisplay(8);
+    display.install();
+    coarseTimers(8);
+    const { bridge, stage, controller } = await playing();
+    display.moveTo(13);
+    paintsIn(stage, 100);
+    // the core's resync, every second while playing
+    bridge.emit("now-playing", track("a", { positionMs: 1000 }));
+    paintsIn(stage, 100);
+    const times = paintsIn(stage, 1000);
+    expect(times.length).toBeGreaterThanOrEqual(75);
+    for (const gap of gaps(times)) expect(gap).toBe(13);
     controller.destroy();
   });
 
