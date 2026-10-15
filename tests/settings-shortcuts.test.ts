@@ -630,6 +630,18 @@ describe("Shortcuts: recording a new one", () => {
     expect(asked).toHaveLength(3);
   });
 
+  it("on a Japanese (JIS) keyboard, the default [ and ] are where they type: no warning", async () => {
+    const jis: KeyLayout = new Map([
+      ["BracketLeft", "@"],
+      ["BracketRight", "["],
+      ["Backslash", "]"],
+      ["KeyL", "l"],
+    ]);
+    const win = mount("windows", {}, OK, () => Promise.resolve(jis));
+    await Promise.resolve();
+    expect([0, 1, 2].map((i) => win.message(i).textContent)).toEqual(["", "", ""]);
+  });
+
   it("on Windows, warns under a saved [ or ] that this keyboard layout may put on another key", async () => {
     // German: ü where US has [, + where US has ]
     let layout: KeyLayout | null = new Map([

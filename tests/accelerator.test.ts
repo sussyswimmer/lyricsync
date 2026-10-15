@@ -223,6 +223,37 @@ describe("recordKey: a key press to an accelerator", () => {
     expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", null)).toBe(false);
   });
 
+  it("Japanese (JIS) keyboards: [ and ] are where they type, one key right of the US positions", () => {
+    // kbd106: the US [ position types @ (VK_OEM_3), [ is VK_OEM_4 one key right, ] is VK_OEM_6 where US has \
+    const jis = new Map([
+      ["BracketLeft", "@"],
+      ["BracketRight", "["],
+      ["Backslash", "]"],
+      ["Semicolon", ";"],
+      ["Quote", ":"],
+      ["Equal", "^"],
+      ["Minus", "-"],
+      ["Comma", ","],
+      ["KeyL", "l"],
+    ]);
+    // the defaults fire on the keys labeled [ and ]: no warning
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", jis)).toBe(false);
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+]", "windows", jis)).toBe(false);
+    // VK_OEM_1 (;) is the : key there, and VK_OEM_PLUS (=) the ; key
+    expect(movedOnLayout("CmdOrCtrl+Alt+;", "windows", jis)).toBe(true);
+    expect(movedOnLayout("CmdOrCtrl+Alt+=", "windows", jis)).toBe(true);
+    expect(movedOnLayout("CmdOrCtrl+Alt+-", "windows", jis)).toBe(false);
+    // recording: the [ and ] keys record [ and ], which register on those same keys
+    const win = (code: string) => recordKey(press(code, { ctrlKey: true, altKey: true, shiftKey: true }), "windows", jis);
+    expect(win("BracketRight")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+Alt+Shift+[" });
+    expect(win("Backslash")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+Alt+Shift+]" });
+    expect(win("Minus")).toEqual({ kind: "combo", accelerator: "CmdOrCtrl+Alt+Shift+-" });
+    // the @ key would register as ` and the ; key as =: turned down, as on any layout
+    for (const code of ["BracketLeft", "Semicolon", "Quote", "Equal"]) expect(win(code), code).toEqual({ kind: "layout" });
+    // a layout that only shares @ at the US [ position (no [ beside it) is not JIS
+    expect(movedOnLayout("CmdOrCtrl+Alt+Shift+[", "windows", new Map([["BracketLeft", "@"]]))).toBe(true);
+  });
+
   it("movedOnLayout: a non-Latin layout keeps the US virtual keys, so its own letters there don't count", () => {
     const russian = new Map([
       ["BracketLeft", "х"],

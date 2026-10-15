@@ -240,7 +240,9 @@ function keyAt(code: string, platform: Platform, layout: KeyLayout | null): stri
   if (/^[a-z]$/i.test(typed)) return typed.toUpperCase();
   if (code.startsWith("Digit")) return key;
   if (code.startsWith("Key") && !/^[\x20-\x7e]$/.test(typed)) return key;
-  return typed === key ? key : null;
+  // The virtual key this position has: Japanese keyboards move them (JIS_KEY_AT).
+  const registered = isJis(layout) ? (JIS_KEY_AT.get(code) ?? key) : key;
+  return typed === registered ? registered : null;
 }
 
 /** What a key press records: on a Mac the key's position, on Windows the key Windows will register (`keyAt`). */
@@ -259,6 +261,28 @@ const US_CODE_OF: ReadonlyMap<string, string> = new Map(
   [...CODE_KEYS].filter(([, key]) => PUNCTUATION.includes(key)).map(([code, key]): [string, string] => [key, code]),
 );
 
+/**
+ * Where a Japanese (JIS 106/109) keyboard has the virtual key Windows registers each of these by
+ * (kbd106): `[` (VK_OEM_4) is the key that types [, one right of the US [ position, which types @
+ * there (VK_OEM_3, the US ` key); `]` is where US has \, and so on. Everywhere else the US position
+ * holds.
+ */
+const JIS_CODE_OF: ReadonlyMap<string, string> = new Map([
+  ["[", "BracketRight"],
+  ["]", "Backslash"],
+  [";", "Quote"],
+  ["'", "Equal"],
+  ["`", "BracketLeft"],
+  ["=", "Semicolon"],
+  ["\\", "IntlYen"],
+]);
+const JIS_KEY_AT: ReadonlyMap<string, string> = new Map([...JIS_CODE_OF].map(([key, code]): [string, string] => [code, key]));
+
+/** A JIS layout: @ where US has [, and [ one key to its right. */
+function isJis(layout: KeyLayout | null): boolean {
+  return layout?.get("BracketLeft") === "@" && layout.get("BracketRight") === "[";
+}
+
 /** A letter of a script other than Latin: Russian х, Greek ς, Arabic ج. */
 const NON_LATIN_LETTER = /^(?!\p{Script=Latin})\p{L}$/u;
 
@@ -273,7 +297,7 @@ const NON_LATIN_LETTER = /^(?!\p{Script=Latin})\p{L}$/u;
 export function movedOnLayout(binding: string, platform: Platform, layout: KeyLayout | null): boolean {
   if (platform !== "windows" || !layout) return false;
   const key = parseAccelerator(binding)?.key;
-  const code = key === undefined ? undefined : US_CODE_OF.get(key);
+  const code = key === undefined ? undefined : ((isJis(layout) ? JIS_CODE_OF.get(key) : undefined) ?? US_CODE_OF.get(key));
   const typed = code === undefined ? undefined : layout.get(code);
   return typed !== undefined && typed !== key && !NON_LATIN_LETTER.test(typed);
 }
