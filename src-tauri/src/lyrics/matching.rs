@@ -5,7 +5,7 @@ use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
 pub fn retry_title(title: &str) -> String {
     static BRACKETS: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\s*[\(\[]\s*(?:(?:feat\.?|ft\.?|featuring)\s|(?:\d{4}\s+)?remaster(?:ed)?\b|live\b|radio\s+edit\b|(?:album|single)\s+version\b|(?:original|extended)\s+mix\b|mono\b|stereo\b)[^\)\]]*[\)\]]").unwrap()
+        Regex::new(r"(?i)\s*[\(\[]\s*(?:(?:feat\.?|ft\.?|featuring|with)\s|(?:\d{4}\s+)?remaster(?:ed)?\b|live\b|radio\s+edit\b|(?:album|single)\s+version\b|(?:original|extended)\s+mix\b|mono\b|stereo\b)[^\)\]]*[\)\]]").unwrap()
     });
     static SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\s+[-–—]\s*(?:(?:\d{4}\s+)?remaster(?:ed)?\b|live\b|radio\s+edit\b|(?:album|single)\s+version\b|(?:original|extended)\s+mix\b|mono\b|stereo\b).*$").unwrap()
@@ -31,7 +31,32 @@ pub fn comparison(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-fn score(track: &Track, candidate: &Record) -> Option<(u8, bool, bool)> {
+/// The names in an artist credit, normalized for comparison. Players and LRCLIB records each join
+/// collaborators their own way: "A & B", "A, B", "A; B", "A / B", "A x B", "A and B", "A with B" and
+/// "A (feat. B)" all give ["a", "b"].
+fn credits(artist: &str) -> Vec<String> {
+    static JOINERS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\s*[,;&/+×、]\s*|\s(?:x|and|with|vs\.?|feat\.?|ft\.?|featuring)\s").unwrap()
+    });
+    let names = comparison(&artist.replace(['(', ')', '[', ']'], " "));
+    JOINERS
+        .split(&names)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+/// One side's primary (first) artist is credited on the other side, so a player that reports only
+/// the primary artist still finds a fully credited record. Sharing only a featured artist is not
+/// enough.
+fn same_artist(a: &str, b: &str) -> bool {
+    let (a, b) = (credits(a), credits(b));
+    a.first().is_some_and(|primary| b.contains(primary))
+        || b.first().is_some_and(|primary| a.contains(primary))
+}
+/// Lower is better: the duration band, then missing synced lyrics, a title or an artist credit that
+/// only matches once normalized, and another album.
+fn score(track: &Track, candidate: &Record) -> Option<(u8, bool, bool, bool, bool)> {
     if !candidate.duration.is_finite()
         || candidate.duration < 0.0
         || !track.duration_ms.is_finite()
@@ -39,9 +64,12 @@ fn score(track: &Track, candidate: &Record) -> Option<(u8, bool, bool)> {
     {
         return None;
     }
-    if comparison(&retry_title(&candidate.track_name)) != comparison(&retry_title(&track.title))
-        || comparison(&retry_title(&candidate.artist_name))
-            != comparison(&retry_title(&track.artist))
+    let title_exact = comparison(&candidate.track_name) == comparison(&track.title);
+    let artist_exact = comparison(&candidate.artist_name) == comparison(&track.artist);
+    if !(title_exact
+        || comparison(&retry_title(&candidate.track_name))
+            == comparison(&retry_title(&track.title)))
+        || !(artist_exact || same_artist(&candidate.artist_name, &track.artist))
     {
         return None;
     }
@@ -61,6 +89,8 @@ fn score(track: &Track, candidate: &Record) -> Option<(u8, bool, bool)> {
             .synced_lyrics
             .as_ref()
             .is_none_or(|s| s.trim().is_empty()),
+        !title_exact,
+        !artist_exact,
         comparison(&candidate.album_name) != comparison(&track.album),
     ))
 }
@@ -141,5 +171,91 @@ mod tests {
             }
             assert!(best(&track(), &[candidate]).is_none());
         }
+    }
+    #[test]
+    fn collaborations_match_whichever_way_each_side_joins_the_credits() {
+        for credit in [
+            "Demo Artist & Guest Singer",
+            "Demo Artist, Guest Singer",
+            "Demo Artist,Guest Singer",
+            "Demo Artist; Guest Singer",
+            "Demo Artist / Guest Singer",
+            "Demo Artist x Guest Singer",
+            "Demo Artist × Guest Singer",
+            "Demo Artist and Guest Singer",
+            "Demo Artist with Guest Singer",
+            "Demo Artist feat. Guest Singer",
+            "Demo Artist ft Guest Singer",
+            "Demo Artist (featuring Guest Singer)",
+            "Guest Singer & Demo Artist",
+        ] {
+            // The player reports only the primary artist, and LRCLIB has the full credit...
+            let mut candidate = record();
+            candidate.artist_name = credit.into();
+            assert!(best(&track(), &[candidate]).is_some(), "record {credit}");
+            // ...or the other way round, or both credit everyone, each in their own way.
+            let mut credited = track();
+            credited.artist = credit.into();
+            assert!(best(&credited, &[record()]).is_some(), "track {credit}");
+            let mut candidate = record();
+            candidate.artist_name = "Demo Artist; Guest Singer".into();
+            assert!(best(&credited, &[candidate]).is_some(), "both {credit}");
+        }
+        let mut duo = track();
+        duo.artist = "Paper & Wire".into();
+        for name in ["Paper & Wire", "Paper and Wire", "PAPER & WIRE"] {
+            let mut candidate = record();
+            candidate.artist_name = name.into();
+            assert!(best(&duo, &[candidate]).is_some(), "{name}");
+        }
+    }
+    #[test]
+    fn other_acts_are_still_rejected() {
+        let mut credited = track();
+        credited.artist = "Demo Artist & Guest Singer".into();
+        for (track, artist) in [
+            (track(), "Someone Else & Another Act"),
+            (track(), "Demo Artistx Guest Singer"),
+            (track(), "Demo Artists"),
+            // Only a featured artist in common.
+            (credited.clone(), "Third Voice, Guest Singer"),
+            (credited, "Someone Else"),
+        ] {
+            let mut candidate = record();
+            candidate.artist_name = artist.into();
+            assert!(best(&track, &[candidate]).is_none(), "{artist}");
+        }
+    }
+    #[test]
+    fn with_credits_in_a_title_are_stripped_like_features() {
+        assert_eq!(retry_title("Paper Sun (with Guest Singer)"), "Paper Sun");
+        assert_eq!(retry_title("Paper Sun [With Guest Singer]"), "Paper Sun");
+        assert_eq!(
+            retry_title("Paper Sun With Guest Singer"),
+            "Paper Sun With Guest Singer"
+        );
+        let mut credited = track();
+        credited.title = "Paper Sun (with Guest Singer)".into();
+        assert!(best(&credited, &[record()]).is_some());
+    }
+    #[test]
+    fn an_exact_credit_or_title_outranks_one_that_matches_only_normalized() {
+        let mut shared = record();
+        shared.artist_name = "Demo Artist & Guest Singer".into();
+        let mut exact = record();
+        exact.id = 2;
+        assert_eq!(
+            best(&track(), &[shared.clone(), exact.clone()]).unwrap().id,
+            2
+        );
+        // Synced lyrics still come first.
+        exact.synced_lyrics = None;
+        assert_eq!(best(&track(), &[shared, exact]).unwrap().id, 1);
+        let mut live = track();
+        live.title = "Paper Sun - Live".into();
+        let mut live_record = record();
+        live_record.id = 2;
+        live_record.track_name = "Paper Sun - Live".into();
+        assert_eq!(best(&live, &[record(), live_record]).unwrap().id, 2);
     }
 }
