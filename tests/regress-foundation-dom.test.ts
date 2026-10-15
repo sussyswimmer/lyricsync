@@ -546,6 +546,21 @@ describe("the stage on a device pixel ratio change", () => {
   });
 });
 
+describe("the stage's reference height", () => {
+  it("asks for one given as a function on every layout (the overlay's follows its screen)", () => {
+    let reference = 720;
+    const host = new FakeElement("main");
+    const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
+    s.setSettings(settings({ mode: "stack" }));
+    s.show(lyricsView, "a");
+    const drift = (): FakeElement | undefined => host.find("drift")[0];
+    expect(drift()?.style["fontSize"]).toBe("58px");
+    reference = 360;
+    s.setSettings(settings({ mode: "stack", glow: 41 }));
+    expect(drift()?.style["fontSize"]).toBe("116px");
+  });
+});
+
 describe("the stage while paused", () => {
   it("tells the mode the clock isn't running", () => {
     const { stage: s } = stage();

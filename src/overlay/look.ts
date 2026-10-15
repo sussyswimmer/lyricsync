@@ -41,6 +41,16 @@ export interface Frame {
   referenceHeight?: number;
 }
 
+/**
+ * The 1× stage height for an overlay framed to its display's work area (menu bar, Dock or taskbar left
+ * out), so that Size stays relative to the whole screen: 1× is still 1080 px of screen height. The
+ * share of the screen the stage covers is clamped to 0.8–1, which bounds a wrong screen report.
+ */
+export function workAreaReference(stageHeight: number, screenHeight: number): number {
+  const share = stageHeight / screenHeight;
+  return REFERENCE_HEIGHT * (Number.isFinite(share) && share > 0 ? Math.min(1, Math.max(0.8, share)) : 1);
+}
+
 export function resolveLook(settings: Settings, palette: Palette | null, frame: Frame): Look {
   const font = fontFor(settings.font.family);
   const scale = frame.height / (frame.referenceHeight ?? REFERENCE_HEIGHT);

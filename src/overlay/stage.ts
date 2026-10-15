@@ -126,8 +126,11 @@ interface Scene {
 }
 
 export interface StageOptions {
-  /** Stage height that counts as 1× for `Settings.size`. Default 1080; the settings preview can zoom in. */
-  referenceHeight?: number;
+  /**
+   * Stage height that counts as 1× for `Settings.size`. Default 1080; the settings preview can zoom in.
+   * A function is asked on every layout (the overlay's follows its screen).
+   */
+  referenceHeight?: number | (() => number);
   /** Called when the stage needs a fresh frame on its own (fonts loaded, resized, motion preference flipped). */
   onInvalidate?: () => void;
 }
@@ -341,13 +344,15 @@ export class LyricStage {
   }
 
   private look(scene: Scene): Look {
+    const option = this.options.referenceHeight;
+    const reference = typeof option === "function" ? option() : option;
     return resolveLook(this.settings, this.palette, {
       width: this.host.clientWidth,
       height: this.host.clientHeight,
       dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
       motion: !reducedMotion(),
       unsynced: scene.cues?.unsynced ?? false,
-      ...(this.options.referenceHeight ? { referenceHeight: this.options.referenceHeight } : {}),
+      ...(reference ? { referenceHeight: reference } : {}),
     });
   }
 
