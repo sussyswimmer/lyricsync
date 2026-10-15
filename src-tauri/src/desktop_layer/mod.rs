@@ -407,6 +407,21 @@ mod tests {
     }
 
     #[test]
+    fn settings_is_a_panel_that_never_fills_the_screen() {
+        let windows = configured_windows();
+        let settings = windows.iter().find(|w| w["label"] == "settings").unwrap();
+        // No maximize box on Windows, no zoom or full-screen Space on macOS.
+        assert_eq!(settings["maximizable"], false);
+        // As wide as its column can get (settings.css), so widening it adds no empty margins.
+        let css = include_str!("../../../src/styles/settings.css");
+        let column = regex::Regex::new(r"\.ut-settings #app \{\s*max-width: (\d+)px;").unwrap();
+        let cap = &column.captures(css).expect("no column cap")[1];
+        let width = |key: &str| settings[key].as_u64().unwrap();
+        assert_eq!(width("maxWidth"), cap.parse::<u64>().unwrap());
+        assert!(width("minWidth") <= width("width") && width("width") <= width("maxWidth"));
+    }
+
+    #[test]
     fn every_runtime_webview_uses_the_shared_webview2_args() {
         // The controller only compiles for Windows and macOS, so its builders are checked as
         // source. Needles are joined here so this test's own text never matches.
