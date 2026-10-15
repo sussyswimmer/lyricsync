@@ -334,19 +334,26 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
     let directory = tempfile::tempdir().unwrap();
     let provider = fake(None, false);
     let service = Service::new(provider.clone(), cache::Cache::new(directory.path()));
-    // Every slot is busy, so both lookups queue; by the time one frees, the first song is over.
+    let third = Track {
+        key: "demo artist|still water|demo album|190".into(),
+        title: "Still Water".into(),
+        ..track()
+    };
+    // Every slot is busy. The first song's lookup (a refetch: straight to the network) queues for
+    // one while that song still plays...
     let busy = service.slots.acquire_many(4).await.unwrap();
-    let skipped = service.start(track(), false);
-    let playing = service.start(other(), false);
+    let queued = service.start(track(), true);
+    tokio::task::yield_now().await;
+    // ...then the user skips twice, the second time before the next song's lookup even starts.
+    let passed = service.start(other(), false);
+    let playing = service.start(third.clone(), false);
+    // The song passed over doesn't even wait for a slot (well within its six seconds)...
+    let passed = tokio::time::timeout(Duration::from_secs(5), wait(passed, &other().key)).await;
+    assert_eq!(passed.unwrap().status, LyricsStatus::Error);
+    // ...and the queued one gives its slot up without a request.
     drop(busy);
-    assert_eq!(
-        wait(skipped, &track().key).await.status,
-        LyricsStatus::Error
-    );
-    assert_eq!(
-        wait(playing, &other().key).await.status,
-        LyricsStatus::Found
-    );
+    assert_eq!(wait(queued, &track().key).await.status, LyricsStatus::Error);
+    assert_eq!(wait(playing, &third.key).await.status, LyricsStatus::Found);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     // Nothing was cached for it: playing it again looks it up.
     assert_eq!(
