@@ -212,7 +212,7 @@ Done: an audit of the code and docs in 8 areas (known gaps, docs drift, overlay,
   - macOS: overlays can't be hidden, so ⌘H in Settings or Hide Others in another app no longer takes the lyrics away.
   - Overlays cover each display's work area, clear of the menu bar, notch, Dock and taskbar, so Height 0% and 100% stay readable. Size still counts the whole screen.
   - `--desktop-layer-test` follows the lyrics switch again. Settings can't be maximized or go full screen, and stops at 560 px wide.
-  - Webviews may only listen to events (no more `core:default`), so a page can't forge `settings-changed` or `now-playing` for the others. Rust tests check command, argument and event names against `src/bridge/types.ts`.
+  - Webviews may only listen to events (no more `core:default`), so a page can't forge `settings-changed` or `now-playing` for the others. The one other permission is Tauri's debug-only devtools hotkey (`core:webview:allow-internal-toggle-devtools`); release builds have no such command. Rust tests check command, argument and event names against `src/bridge/types.ts`.
 - **App shell:**
   - A runtime log, `undertone.log` (macOS `~/Library/Logs/com.undertone.desktop`, Windows `%LOCALAPPDATA%\com.undertone.desktop\logs`), never with lyric text. Setup failures, panics and every failure message go there (the debug flags' output stays on stderr), and `--diagnose` ends with its last 60 lines.
   - `settings.rs` writes `settings.json` itself (temp file, fsync, rename) in the format tauri-plugin-store used, which is gone. An unreadable file is moved to `settings.corrupt-<secs>.json` instead of overwritten.
@@ -223,7 +223,7 @@ Done: an audit of the code and docs in 8 areas (known gaps, docs drift, overlay,
 - **Overlay:**
   - Arc shrinks a long line until it fits its curve: no more words off the screen edges.
   - Lens keeps the next line on screen at Height 95% and up.
-  - Busy frames (Lens following a word, Drift glides) start at least 8.6 ms apart: every frame up to 100 Hz, about 60 fps at 120 Hz, 72 at 144 Hz.
+  - Busy frames (Lens following a word, Drift glides) start at least 8.6 ms apart: every frame, with no timer, on displays up to about 116 Hz; about 60 fps at 120 Hz and 72 at 144 Hz, where a frame is passed over.
   - Synced LRC whose timing would hold one line all song is paced like plain lyrics. One stray word tag no longer discards a line's word timing.
   - Chinese, Japanese and Korean lyrics are set in their own language's system faces, chosen once per song.
   - Drift and Stack crossfade a jump of more than three lines. The stage re-snaps when the pixel ratio changes. The not-found chip is at least 5.4:1 over white. Drift rows balance their wraps.
@@ -249,7 +249,18 @@ Done: an audit of the code and docs in 8 areas (known gaps, docs drift, overlay,
   - SPEC's ownership section records that Claude Code owns the whole repo since 2026-10-06.
   - `tests/regress-docs.test.ts` now checks every Markdown file at the root and in docs/, that a present-tense "contract is vN" names `CONTRACT_VERSION`, that every command-line flag is documented outside this log, and that SPEC names every command and event.
   - The `yPos` comment in both contract files now says work area.
-Tests: 758 vitest (24 files), 234 Rust (1 ignored: the live LRCLIB probe). `pnpm build` is clean.
+Review round: four reviewers read the whole code diff, and a skeptic re-checked each finding. Nine minor defects were confirmed and fixed:
+- Arc's new text floor kept long lines from shrinking in the small settings preview; they shrink to fit there again.
+- Unstamped translation rows, or a pasted copy of the lyrics under the synced block, could flip good synced LRC to unsynced; those rows no longer count as untimed.
+- The busy-frame cap waited on a timer even on 60–100 Hz displays, where coarse timers dropped frames; it waits only once a frame has been passed over.
+- Windows kept the previous song's cover for a whole song that has no thumbnail; a song without one now shows none.
+- macOS let a quick quit-and-relaunch of a player be read while still launching; the launch gate now follows the process, not the app.
+- Every second launch wrote a false "started" line to the log before handing over; only the instance that stays logs it.
+- The narrowed capability blocked Tauri's debug devtools hotkey; it's allowed again, and `pnpm tauri dev` keeps Settings' context menu for Inspect Element.
+- On Japanese (JIS) keyboards Settings warned about both default nudges, which already sit on the keys labeled [ and ]; JIS now uses its own key positions.
+- In the mock, S reloaded an open Settings tab; it brings it forward, as the core does.
+Also: `--diagnose` decodes LRCLIB search records one at a time, like the app, and Windows-only CI failed on two source-reading tests in a CRLF checkout, now fixed.
+Tests: 775 vitest (24 files), 238 Rust (1 ignored: the live LRCLIB probe). `pnpm build` is clean, and CI is green on macOS and Windows.
 Decisions you can reverse:
 - Settings keeps its taskbar button on Windows while it is open. SPEC, README and INSTALL now say so.
 - macOS Launch at login keeps the autostart plugin's LaunchAgent and reads its real state, instead of moving to `SMAppService.mainApp`.
