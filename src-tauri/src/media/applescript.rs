@@ -466,20 +466,47 @@ impl Consent {
 /// so after this long a player is read anyway.
 pub const LAUNCH_GRACE: Duration = Duration::from_secs(10);
 
-/// When each running player was first seen, for `LAUNCH_GRACE`.
+/// One running process of a player, as NSWorkspace lists it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Instance {
+    pub pid: i32,
+    /// When LaunchServices launched it, in seconds since 1970; not every launch records it.
+    pub launched: Option<f64>,
+    pub finished_launching: bool,
+}
+impl Instance {
+    /// The instance a player is judged by: the newest, by launch date and then pid. While a
+    /// quitting instance and its relaunch both run, the old one's finished launch must not let a
+    /// script go to the new one.
+    pub fn newest(instances: &[Instance]) -> Option<Instance> {
+        let launched = |instance: &Instance| instance.launched.unwrap_or(f64::NEG_INFINITY);
+        instances.iter().copied().max_by(|a, b| {
+            launched(a)
+                .total_cmp(&launched(b))
+                .then_with(|| a.pid.cmp(&b.pid))
+        })
+    }
+}
+
+/// Each running player's process (its pid), and when that process was first seen, for
+/// `LAUNCH_GRACE`.
 #[derive(Debug, Default)]
-pub struct Launches(HashMap<Player, Instant>);
+pub struct Launches(HashMap<Player, (i32, Instant)>);
 impl Launches {
-    /// The players a read script may be sent to now. `running` lists each running player and
-    /// whether it reports having finished launching. A player missing from it is forgotten, so a
-    /// relaunch waits again.
-    pub fn readable(&mut self, running: &[(Player, bool)], now: Instant) -> Vec<Player> {
+    /// The players a read script may be sent to now. `running` lists each running player, its
+    /// newest instance's pid, and whether that instance reports having finished launching. A
+    /// player missing from it is forgotten, and another pid is another process, so a relaunch
+    /// waits again even when no snapshot saw the player closed.
+    pub fn readable(&mut self, running: &[(Player, i32, bool)], now: Instant) -> Vec<Player> {
         self.0
-            .retain(|player, _| running.iter().any(|(running, _)| running == player));
+            .retain(|player, _| running.iter().any(|(running, _, _)| running == player));
         let mut readable = Vec::new();
-        for &(player, finished_launching) in running {
-            let since = *self.0.entry(player).or_insert(now);
-            if finished_launching || now.saturating_duration_since(since) >= LAUNCH_GRACE {
+        for &(player, pid, finished_launching) in running {
+            let seen = self.0.entry(player).or_insert((pid, now));
+            if seen.0 != pid {
+                *seen = (pid, now);
+            }
+            if finished_launching || now.saturating_duration_since(seen.1) >= LAUNCH_GRACE {
                 readable.push(player);
             }
         }
@@ -938,21 +965,21 @@ mod tests {
         let mut launches = Launches::default();
         // Already running when Undertone looks: read at once.
         assert_eq!(
-            launches.readable(&[(Player::Music, true)], t0),
+            launches.readable(&[(Player::Music, 200, true)], t0),
             [Player::Music]
         );
         // Spotify starting: present, but not read until it has finished launching.
-        let starting = [(Player::Spotify, false), (Player::Music, true)];
+        let starting = [(Player::Spotify, 100, false), (Player::Music, 200, true)];
         assert_eq!(launches.readable(&starting, t0), [Player::Music]);
         assert_eq!(launches.readable(&starting, t0 + secs(3)), [Player::Music]);
-        let started = [(Player::Spotify, true), (Player::Music, true)];
+        let started = [(Player::Spotify, 100, true), (Player::Music, 200, true)];
         assert_eq!(
             launches.readable(&started, t0 + secs(4)),
             [Player::Spotify, Player::Music]
         );
         // An app that never reports finishing its launch is read after the grace.
         let mut launches = Launches::default();
-        let silent = [(Player::Spotify, false)];
+        let silent = [(Player::Spotify, 100, false)];
         assert!(launches.readable(&silent, t0).is_empty());
         let just_before = t0 + LAUNCH_GRACE - Duration::from_millis(1);
         assert!(launches.readable(&silent, just_before).is_empty());
@@ -967,6 +994,60 @@ mod tests {
             launches.readable(&silent, t0 + secs(12) + LAUNCH_GRACE),
             [Player::Spotify]
         );
+    }
+    #[test]
+    fn a_relaunch_between_two_snapshots_waits_like_any_launch() {
+        // Spotify restarts to update, and no snapshot sees it closed: the new process is another
+        // pid, still launching, and gets its own grace.
+        let t0 = Instant::now();
+        let secs = Duration::from_secs;
+        let mut launches = Launches::default();
+        assert_eq!(
+            launches.readable(&[(Player::Spotify, 100, true)], t0),
+            [Player::Spotify]
+        );
+        assert_eq!(
+            launches.readable(&[(Player::Spotify, 100, true)], t0 + secs(60)),
+            [Player::Spotify]
+        );
+        let relaunched = [(Player::Spotify, 200, false)];
+        assert!(launches.readable(&relaunched, t0 + secs(63)).is_empty());
+        let just_before = t0 + secs(63) + LAUNCH_GRACE - Duration::from_millis(1);
+        assert!(launches.readable(&relaunched, just_before).is_empty());
+        assert_eq!(
+            launches.readable(&relaunched, t0 + secs(63) + LAUNCH_GRACE),
+            [Player::Spotify]
+        );
+        // Or once it has finished launching.
+        let mut launches = Launches::default();
+        launches.readable(&[(Player::Spotify, 100, true)], t0);
+        assert!(launches
+            .readable(&[(Player::Spotify, 200, false)], t0 + secs(60))
+            .is_empty());
+        assert_eq!(
+            launches.readable(&[(Player::Spotify, 200, true)], t0 + secs(61)),
+            [Player::Spotify]
+        );
+    }
+    #[test]
+    fn the_newest_instance_speaks_for_its_player() {
+        let instance = |pid, launched, finished_launching| Instance {
+            pid,
+            launched,
+            finished_launching,
+        };
+        assert_eq!(Instance::newest(&[]), None);
+        // The old instance, still quitting, has finished launching; the relaunch has not.
+        let quitting = instance(100, Some(1_000.0), true);
+        let relaunch = instance(200, Some(2_000.0), false);
+        assert_eq!(Instance::newest(&[quitting, relaunch]), Some(relaunch));
+        assert_eq!(Instance::newest(&[relaunch, quitting]), Some(relaunch));
+        // The launch date wins over a pid that wrapped around.
+        let wrapped = instance(50, Some(3_000.0), false);
+        assert_eq!(Instance::newest(&[quitting, wrapped]), Some(wrapped));
+        // Without launch dates, the higher pid.
+        let undated = [instance(300, None, true), instance(400, None, false)];
+        assert_eq!(Instance::newest(&undated), Some(undated[1]));
     }
     #[test]
     fn playing_spotify_then_playing_music_then_most_recent() {
