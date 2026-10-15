@@ -20,7 +20,7 @@ export interface Line {
 
 /** Span of the last line when the track duration is unknown. */
 export const LAST_LINE_MS = 5000;
-/** Word tags this far outside their line are junk; the line falls back to estimated timing. */
+/** Word tags this far outside their line are junk; when most of a line's are, it falls back to estimated timing. */
 const TAG_SLACK_MS = 1000;
 
 const STAMP = /^\[\s*(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\s*\]/u;
@@ -124,10 +124,19 @@ function taggedWords(text: string, marks: readonly Mark[], times: readonly numbe
   return words;
 }
 
+/**
+ * Tags are kept when they run forwards and most of them fall near their line; the clamp to [start, end]
+ * takes care of the few that don't (a held last word over a duet partner's next line, an early first
+ * tag). A closing tag only bounds the last word and is clamped to `end` anyway, so it isn't counted,
+ * unless it is the line's only tag.
+ */
 function wordsFor(entry: Entry, end: number): Word[] {
   const { text, marks, shift, start } = entry;
   const times = marks.map((m) => m.time + shift);
-  const sane = times.every((t, i) => t >= start - TAG_SLACK_MS && t <= end + TAG_SLACK_MS && t >= (times[i - 1] ?? -Infinity));
+  const near = (t: number): boolean => t >= start - TAG_SLACK_MS && t <= end + TAG_SLACK_MS;
+  const forwards = times.every((t, i) => t >= (times[i - 1] ?? -Infinity));
+  const counted = times.length > 1 && marks[marks.length - 1]?.index === text.length ? times.slice(0, -1) : times;
+  const sane = forwards && counted.filter(near).length >= Math.ceil(counted.length / 2);
   if (marks.length === 0 || !sane) return timeWords(splitWords(text), start, end);
   return taggedWords(text, marks, times.map((t) => Math.min(end, Math.max(start, t))), start, end);
 }

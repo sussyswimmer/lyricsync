@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LAST_LINE_MS, parseLrc, type Line } from "../src/core/lrc";
-import { LINE_GAP_MS } from "../src/core/timing";
+import { LINE_GAP_MS, splitWords, timeWords } from "../src/core/timing";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -217,6 +217,36 @@ describe("parseLrc: word tags", () => {
     const [line] = parseLrc("[01:00.00]<00:00.00>a <00:00.50>b <00:01.00>\n[01:10.00]next", 80_000);
     expect(line?.words[0]?.start).toBe(60_000);
     expect(line?.words[1]?.start).toBeGreaterThan(60_000);
+  });
+
+  // Regression (one-tag-discards-line): a single tag outside its line's window threw away the real
+  // timing of every word in it, so a held last word over a duet partner's next line lit 6 s early.
+  it("keeps the real starts when a closing tag runs past the next line's start", () => {
+    const [line] = parseLrc("[00:10.00]<00:09.80>a <00:10.50>b <00:19.80>c <00:21.00>\n[00:20.00]next", 30_000);
+    const end = 20_000 - LINE_GAP_MS;
+    expect(spans(line)).toEqual([
+      ["a ", 10_000, 10_500],
+      ["b ", 10_500, end],
+      ["c", end, end],
+    ]);
+    expectWellFormed([line as Line]);
+  });
+
+  it("clamps a single early tag instead of discarding the line's tags", () => {
+    const [line] = parseLrc("[00:10.00]<00:08.50>a <00:10.50>b <00:11.00>c <00:12.00>\n[00:14.00]next", 30_000);
+    expect(spans(line)).toEqual([
+      ["a ", 10_000, 10_500],
+      ["b ", 10_500, 11_000],
+      ["c", 11_000, 12_000],
+    ]);
+  });
+
+  it("still falls back when most tags sit outside the line, or its only tag does", () => {
+    const [mostly] = parseLrc("[00:10.00]<00:01.00>a <00:02.00>b <00:10.50>c <00:11.00>\n[00:14.00]next", 30_000);
+    expect(mostly?.words[1]?.start).not.toBe(10_000);
+    expect(mostly?.words[2]?.start).not.toBe(10_500);
+    const [lone] = parseLrc("[00:10.00]all at once <00:40.00>\n[00:14.00]next", 60_000);
+    expect(lone?.words).toEqual(timeWords(splitWords("all at once"), 10_000, 14_000 - LINE_GAP_MS));
   });
 
   it("clamps tags slightly outside the line into it", () => {
