@@ -5,7 +5,7 @@ import type { KeyLayout, Platform } from "../src/core/accelerator";
 import { PaletteCache } from "../src/core/palette";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
-import { ALTGR_NOTE, NOTE_MS, RECORD_TIMEOUT_MS } from "../src/settings/recorder";
+import { ALTGR_NOTE, MOVED_NOTE, NOTE_MS, RECORD_TIMEOUT_MS } from "../src/settings/recorder";
 import { applyWrite, defaultsPatch, SettingsSync, withDefaults, type Write } from "../src/settings/store";
 import { activeElement, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
 
@@ -420,7 +420,7 @@ describe("Shortcuts: recording a new one", () => {
     const win = mount("windows");
     win.toggleKey.click();
     win.toggleKey.key({ code: "KeyK" });
-    expect(win.message(0).textContent).toBe("Hold Ctrl or Alt with the key.");
+    expect(win.message(0).textContent).toBe("Hold Ctrl, Alt or the Windows key with the key.");
   });
 
   it("saving the binding it already has changes nothing", () => {
@@ -616,9 +616,9 @@ describe("Shortcuts: recording a new one", () => {
     win.toggleKey.key({ code: "KeyQ", key: "A", ctrlKey: true, altKey: true, shiftKey: true });
     expect(win.edits).toEqual([{ shortcuts: { ...D, toggleLyrics: "CmdOrCtrl+Alt+Shift+A" } }]);
     expect(win.toggleKey.textContent).toBe("Ctrl+Alt+Shift+A");
-    // read again each time listening starts
+    // read as the panel mounts, then again each time listening starts
     win.laterKey.click();
-    expect(asked).toHaveLength(2);
+    expect(asked).toHaveLength(3);
 
     // a Mac registers by position: the layout isn't asked for
     const mac = mount("mac", {}, OK, keyLayout);
@@ -626,7 +626,70 @@ describe("Shortcuts: recording a new one", () => {
     await Promise.resolve();
     mac.toggleKey.key({ code: "KeyQ", key: "a", metaKey: true, altKey: true });
     expect(mac.edits).toEqual([{ shortcuts: { ...D, toggleLyrics: "CmdOrCtrl+Alt+Q" } }]);
-    expect(asked).toHaveLength(2);
+    mac.panel.refreshKeyLayout();
+    expect(asked).toHaveLength(3);
+  });
+
+  it("on Windows, warns under a saved [ or ] that this keyboard layout may put on another key", async () => {
+    // German: ü where US has [, + where US has ]
+    let layout: KeyLayout | null = new Map([
+      ["BracketLeft", "ü"],
+      ["BracketRight", "+"],
+      ["KeyL", "l"],
+      ["KeyZ", "y"],
+    ]);
+    const asked: number[] = [];
+    const keyLayout = (): Promise<KeyLayout | null> => {
+      asked.push(1);
+      return Promise.resolve(layout);
+    };
+    const win = mount("windows", {}, OK, keyLayout);
+    // read once as the panel mounts
+    expect(asked).toHaveLength(1);
+    expect([0, 1, 2].map((i) => win.message(i).textContent)).toEqual(["", "", ""]);
+    await Promise.resolve();
+    expect([0, 1, 2].map((i) => win.message(i).textContent)).toEqual(["", MOVED_NOTE, MOVED_NOTE]);
+    expect([0, 1, 2].map((i) => win.message(i).getAttribute("data-tone"))).toEqual([null, "warn", "warn"]);
+    expect(win.earlierKey.classList.contains("is-warning")).toBe(true);
+    expect(win.toggleKey.classList.contains("is-warning")).toBe(false);
+    // the core's own warning comes first
+    win.rerender({ shortcuts: { ...OK, nudgeLater: "unavailable" } });
+    expect(win.message(2).textContent).toBe("Another app is using this combination.");
+    win.rerender({ shortcuts: OK });
+
+    // recording a letter clears it (Z types y on German: recorded as Y)
+    win.earlierKey.click();
+    await Promise.resolve();
+    win.earlierKey.key({ code: "KeyZ", key: "Y", ctrlKey: true, altKey: true, shiftKey: true });
+    expect(win.edits).toEqual([{ shortcuts: { ...D, nudgeEarlier: "CmdOrCtrl+Alt+Shift+Y" } }]);
+    expect([win.message(1).textContent, win.message(2).textContent]).toEqual(["", MOVED_NOTE]);
+
+    // switched to a US-like layout while away: read again when the window comes back
+    layout = new Map([
+      ["BracketLeft", "["],
+      ["BracketRight", "]"],
+    ]);
+    win.panel.refreshKeyLayout();
+    await Promise.resolve();
+    expect(win.message(2).textContent).toBe("");
+    // an engine that can't say: no warning
+    layout = null;
+    win.rerender({ settings: { ...win.settings(), shortcuts: D } });
+    win.panel.refreshKeyLayout();
+    await Promise.resolve();
+    expect([0, 1, 2].map((i) => win.message(i).textContent)).toEqual(["", "", ""]);
+  });
+
+  it("only the latest keyboard layout read lands", async () => {
+    const answers: ((layout: KeyLayout | null) => void)[] = [];
+    const keyLayout = (): Promise<KeyLayout | null> => new Promise((resolve) => answers.push(resolve));
+    const win = mount("windows", {}, OK, keyLayout);
+    win.panel.refreshKeyLayout();
+    const [first, second] = answers;
+    second?.(new Map([["BracketLeft", "["]]));
+    first?.(new Map([["BracketLeft", "ü"]]));
+    await Promise.resolve();
+    expect(win.message(2).textContent).toBe("");
   });
 });
 

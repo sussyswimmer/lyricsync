@@ -7,6 +7,7 @@ import {
   heldModifiers,
   isModifierKey,
   loadKeyLayout,
+  movedOnLayout,
   recordKey,
   reservedUse,
   speakAccelerator,
@@ -23,8 +24,11 @@ export const RECORD_TIMEOUT_MS = 25_000;
 export const NOTE_MS = 4000;
 /** Left under a Ctrl+Alt shortcut just saved on Windows (`clashesWithAltGr`). */
 export const ALTGR_NOTE = "Saved. Ctrl+Alt is AltGr on many keyboards, so this may block a character. Adding Shift helps.";
+/** Under a saved punctuation shortcut that Windows may register on another key of this layout (`movedOnLayout`). */
+export const MOVED_NOTE = "On this keyboard layout, this shortcut may use another key. Record a new one.";
 
-const currentLayout = (): Promise<KeyLayout | null> => loadKeyLayout(typeof navigator === "undefined" ? undefined : navigator);
+/** The keyboard layout in use, as the engine reports it (null where it can't say). */
+export const currentLayout = (): Promise<KeyLayout | null> => loadKeyLayout(typeof navigator === "undefined" ? undefined : navigator);
 
 export interface RecorderOptions {
   action: ShortcutAction;
@@ -111,6 +115,13 @@ export class ShortcutRecorder {
     this.paint();
   }
 
+  /** The keyboard layout in use (Windows): what a key records as, and whether the saved key may have moved. */
+  setLayout(layout: KeyLayout | null): void {
+    if (layout === this.layout) return;
+    this.layout = layout;
+    this.paint();
+  }
+
   /** Starts listening for a new combination. */
   start(): void {
     if (this.listening) return;
@@ -123,9 +134,7 @@ export class ShortcutRecorder {
     if (this.opts.platform === "windows") {
       // Read again each time: the user may have switched layouts since.
       (this.opts.keyLayout ?? currentLayout)().then(
-        (layout) => {
-          this.layout = layout;
-        },
+        (layout) => this.setLayout(layout),
         () => undefined,
       );
     }
@@ -197,7 +206,7 @@ export class ShortcutRecorder {
       // Plain Tab and Shift+Tab move focus on, and leaving the button cancels.
       if (e.code === "Tab") return;
       e.preventDefault();
-      this.setNote({ text: platform === "mac" ? "Hold ⌘, ⌥ or ⌃ with the key." : "Hold Ctrl or Alt with the key.", tone: "error" });
+      this.setNote({ text: platform === "mac" ? "Hold ⌘, ⌥ or ⌃ with the key." : "Hold Ctrl, Alt or the Windows key with the key.", tone: "error" });
       return;
     }
     e.preventDefault();
@@ -284,6 +293,10 @@ export class ShortcutRecorder {
       tone = "warn";
     } else if (this.state === "invalid") {
       message = "Not a usable combination.";
+      tone = "warn";
+    } else if (movedOnLayout(this.binding, platform, this.layout)) {
+      // Registered, so the core says "ok", but maybe on another key: the default [ is ß on German.
+      message = MOVED_NOTE;
       tone = "warn";
     }
     setText(this.message, message);

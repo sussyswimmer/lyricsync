@@ -184,6 +184,8 @@ async function boot(host: HTMLElement): Promise<void> {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") leave();
   });
+  // Back in front: the keyboard layout may have changed meanwhile (Windows; a no-op elsewhere).
+  window.addEventListener("focus", () => panel?.refreshKeyLayout());
 
   // Keyboard focus and scrollIntoView stop below the pinned preview, never under it.
   const pad = (): void => {

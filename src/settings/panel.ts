@@ -13,7 +13,7 @@ import type { Palette } from "../core/palette";
 import { h } from "../overlay/dom";
 import { FONTS, fontFor } from "../overlay/fonts";
 import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle, type Option } from "./controls";
-import { ShortcutRecorder } from "./recorder";
+import { currentLayout, ShortcutRecorder } from "./recorder";
 import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
 /** What the panel draws. */
@@ -51,7 +51,7 @@ export interface PanelActions {
 export interface PanelOptions {
   /** how shortcuts are written (⌥⇧⌘L or Ctrl+Alt+Shift+L) and the menu is named. Default: detected. */
   platform?: Platform;
-  /** the keyboard layout a shortcut row reads as it starts listening. Default: the engine's own. */
+  /** the keyboard layout, read on Windows as the window opens, as it comes to the front and as a shortcut row starts listening. Default: the engine's own. */
   keyLayout?: () => Promise<KeyLayout | null>;
 }
 
@@ -156,6 +156,8 @@ export class SettingsPanel {
   private readonly renderers: ((state: PanelState) => void)[] = [];
   private readonly status: HTMLElement;
   private recorders: ShortcutRecorder[] = [];
+  /** Counts keyboard layout reads, so only the latest one lands. */
+  private layoutReads = 0;
 
   constructor(actions: PanelActions, options: PanelOptions = {}) {
     this.actions = actions;
@@ -178,6 +180,7 @@ export class SettingsPanel {
       this.footer(),
       this.status,
     );
+    this.refreshKeyLayout();
   }
 
   render(state: PanelState): void {
@@ -188,6 +191,24 @@ export class SettingsPanel {
   /** Stops a shortcut row that is listening for keys (the window lost focus or is closing). */
   cancelRecording(): void {
     for (const recorder of this.recorders) recorder.cancel();
+  }
+
+  /**
+   * Reads the keyboard layout again (Windows only: a Mac registers by key position, and WKWebView
+   * can't say anyway), so each shortcut row can warn when its saved key may sit elsewhere on it.
+   * Read as the window opens and each time it comes back to the front, since the user may have
+   * switched layouts meanwhile.
+   */
+  refreshKeyLayout(): void {
+    if (this.platform !== "windows") return;
+    const read = ++this.layoutReads;
+    (this.keyLayout ?? currentLayout)().then(
+      (layout) => {
+        if (read !== this.layoutReads) return;
+        for (const recorder of this.recorders) recorder.setLayout(layout);
+      },
+      () => undefined,
+    );
   }
 
   /** Polite screen reader announcement. */
