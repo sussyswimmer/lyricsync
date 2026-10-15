@@ -37,9 +37,10 @@ const MARGIN = 0.05;
 /** A line longer than this share of its path shrinks to fit... */
 const FIT = 0.94;
 /**
- * ...but never below this share of its size; past that it runs off the path ends. On a display
- * narrower than 16:9 the floor drops in proportion: the size follows the stage height, so an ordinary
- * line on a portrait display needs to shrink further to fit its width.
+ * ...but, shrunk to this share of its size, it may fill its whole path rather than FIT of it. It never
+ * runs past the path's ends, which stay on screen: only a line still too long at MIN_TEXT_PX does. On a
+ * display narrower than 16:9 the share drops in proportion: the size follows the stage height, so an
+ * ordinary line on a portrait display needs to shrink further to fit its width.
  */
 const MIN_FIT = 0.55;
 /** Glyph extents in font sizes, for keeping neighbors clear of the focus line: capitals above the baseline, descenders below. */
@@ -157,7 +158,7 @@ export interface ArcGeometry {
   bend: number;
   /** the focus line's baseline at the middle of its path, px from the top */
   mid: number;
-  /** the smallest share of its size a line shrinks to before it runs off the path ends */
+  /** the share of its size from which a shrinking line may fill its whole path (MIN_FIT, for this aspect ratio) */
   minFit: number;
 }
 
@@ -444,9 +445,9 @@ export class ArcMode implements ModeRenderer {
    * Path from 5% to 95% of the width through `mid` at the middle of the stage, its ends `bend` px
    * below that (above, for a negative bend).
    *
-   * SVG drops glyphs that run past the end of a text path, so a line still too long at its smallest
-   * fit would lose words in mid-air at 5% and 95%. For such a line, `extend` px of straight track
-   * continue each end along its tangent; the text stays centered and runs off the screen edges instead.
+   * SVG drops glyphs that run past the end of a text path, so a line still too long at MIN_TEXT_PX
+   * (see fitted) would lose words in mid-air at 5% and 95%. For such a line, `extend` px of straight
+   * track continue each end along its tangent; the text stays centered and runs off the screen edges instead.
    */
   private curve(look: Look, mid: number, bend: number, extend = 0): string {
     const x0 = snap(look.width * MARGIN, look.dpr);
@@ -465,12 +466,16 @@ export class ArcMode implements ModeRenderer {
     return `M ${x0 - ex} ${ends + ey} L ${arc} L ${x1 + ex} ${ends + ey}`;
   }
 
-  /** Font size for line `i` drawn at `size`: shrunk so it fits its path, within limits. */
+  /**
+   * Font size for line `i` drawn at `size`: shrunk so it fits its path (see FIT and MIN_FIT), and never
+   * longer than the path, down to MIN_TEXT_PX.
+   */
   private fitted(i: number, size: number, look: Look): number {
     const natural = this.natural(i, size, look);
     const room = this.pathLength * FIT;
     if (room <= 0 || natural <= room) return size;
-    return Math.max(size * this.geo.minFit, (size * room) / natural);
+    const fit = Math.max(size * this.geo.minFit, (size * room) / natural);
+    return Math.max(Math.min(size, MIN_TEXT_PX), Math.min(fit, (size * this.pathLength) / natural));
   }
 
   /** Focus and neighbor sizes around line `index`: a long focus line that had to shrink takes its neighbors (and their spacing) down with it, so it still leads. */
