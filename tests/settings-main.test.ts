@@ -357,6 +357,42 @@ describe("settings window: Reset to defaults", () => {
   });
 });
 
+describe("settings window: nothing is lost as the window goes away", () => {
+  const lyricsSwitch = (root: FakeElement): FakeElement => {
+    const general = root.all("group").find((g) => g.one("group-title").textContent === "General") as FakeElement;
+    return general.all("switch")[0] as FakeElement;
+  };
+
+  it("an edit still waiting for its debounce goes out at once when the window hides, blurs or closes", async () => {
+    for (const leave of ["hidden", "blur", "pagehide"]) {
+      stubWindow(); // a fresh page for each
+      const core = scriptedBridge();
+      const root = await boot(core);
+      const lyrics = lyricsSwitch(root);
+      lyrics.checked = false;
+      lyrics.dispatch("change");
+      expect(core.calls("update_settings"), leave).toEqual([]);
+      if (leave === "hidden") {
+        page.visibilityState = "hidden";
+        fire(documentListeners, "visibilitychange");
+      } else {
+        fire(windowListeners, leave);
+      }
+      expect(core.calls("update_settings"), leave).toEqual([{ patch: { enabled: false } }]);
+    }
+  });
+
+  it("becoming visible again sends nothing", async () => {
+    const core = scriptedBridge();
+    const root = await boot(core);
+    const lyrics = lyricsSwitch(root);
+    lyrics.checked = false;
+    lyrics.dispatch("change");
+    fire(documentListeners, "visibilitychange");
+    expect(core.calls("update_settings")).toEqual([]);
+  });
+});
+
 describe("settings window: a window, not a web page", () => {
   it("in the app, turns off the browser's context menu and its reload, print and find keys", async () => {
     await boot(scriptedBridge());
