@@ -54,18 +54,39 @@ impl Provider for Fake {
         }
     }
 }
+impl Fake {
+    fn new(answer: lrclib::Record) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            gate: None,
+            failures: 0,
+            failure: Failure::transient("simulated outage"),
+            answer,
+        }
+    }
+}
 fn fake(gate: Option<Arc<Notify>>, fail: bool) -> Arc<Fake> {
     let failures = if fail { usize::MAX } else { 0 };
-    flaky(failures, Failure::transient("simulated outage"), gate)
+    Arc::new(Fake {
+        gate,
+        failures,
+        ..Fake::new(record())
+    })
 }
 fn flaky(failures: usize, failure: Failure, gate: Option<Arc<Notify>>) -> Arc<Fake> {
     Arc::new(Fake {
-        calls: AtomicUsize::new(0),
         gate,
         failures,
         failure,
-        answer: record(),
+        ..Fake::new(record())
     })
+}
+/// LRCLIB's record for the demo song while it has only plain text.
+fn unsynced() -> lrclib::Record {
+    lrclib::Record {
+        synced_lyrics: None,
+        ..record()
+    }
 }
 /// The events sent so far, as (status, source).
 fn sent(events: &mut broadcast::Receiver<Lyrics>) -> Vec<(LyricsStatus, LyricsSource)> {
@@ -363,4 +384,99 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
         LyricsStatus::Found
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+}
+/// Saves the demo song as plain-only, `age` seconds ago; returns that time.
+async fn plain_entry(cache: &cache::Cache, age: u64) -> u64 {
+    let saved_at = now_seconds() - age;
+    let plain = unsynced().into_lyrics(&track().key);
+    cache.put(&plain, saved_at).await.unwrap();
+    saved_at
+}
+#[tokio::test(start_paused = true)]
+async fn an_old_plain_only_song_shows_then_turns_synced_without_loading_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache = cache::Cache::new(directory.path());
+    plain_entry(&cache, cache::PLAIN_RECHECK_SECS + 60).await;
+    let provider = fake(None, false);
+    let service = Service::new(provider.clone(), cache.clone());
+    let mut events = service.subscribe();
+    let key = track().key;
+    let shown = wait(service.start(track(), false), &key).await;
+    assert_eq!(
+        (shown.status, shown.source),
+        (LyricsStatus::PlainOnly, LyricsSource::Cache)
+    );
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(
+        sent(&mut events),
+        [
+            (LyricsStatus::Loading, LyricsSource::Lrclib),
+            (LyricsStatus::PlainOnly, LyricsSource::Cache),
+            (LyricsStatus::Found, LyricsSource::Lrclib)
+        ]
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(service.get(&key).await.status, LyricsStatus::Found);
+    let saved = cache.get(&key, now_seconds()).await.unwrap().unwrap();
+    assert_eq!(saved.status, LyricsStatus::Found);
+}
+#[tokio::test(start_paused = true)]
+async fn an_old_plain_only_song_is_kept_when_lrclib_has_nothing_better() {
+    // Still only plain text, or no record at all any more: the plain text stays, due in 30 days.
+    let gone = lrclib::Record {
+        plain_lyrics: None,
+        ..unsynced()
+    };
+    for answer in [unsynced(), gone] {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = cache::Cache::new(directory.path());
+        plain_entry(&cache, cache::PLAIN_RECHECK_SECS + 60).await;
+        let provider = Arc::new(Fake::new(answer));
+        let service = Service::new(provider.clone(), cache.clone());
+        let mut events = service.subscribe();
+        let key = track().key;
+        let checked = now_seconds();
+        wait(service.start(track(), false), &key).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(
+            sent(&mut events),
+            [
+                (LyricsStatus::Loading, LyricsSource::Lrclib),
+                (LyricsStatus::PlainOnly, LyricsSource::Cache)
+            ]
+        );
+        let kept = cache.read(&key, now_seconds()).await.unwrap().unwrap();
+        assert_eq!(kept.lyrics.status, LyricsStatus::PlainOnly);
+        assert!(kept.saved_at >= checked);
+        // Playing it again in this session asks nothing.
+        wait(service.start(track(), false), &key).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn a_failed_recheck_stays_due_and_a_recent_plain_only_song_is_not_rechecked() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache = cache::Cache::new(directory.path());
+    let saved_at = plain_entry(&cache, cache::PLAIN_RECHECK_SECS + 60).await;
+    let provider = fake(None, true);
+    let service = Service::new(provider.clone(), cache.clone());
+    let mut events = service.subscribe();
+    let key = track().key;
+    wait(service.start(track(), false), &key).await;
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    // One ask, no retries, and the plain text stays on screen.
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sent(&mut events).len(), 2);
+    let entry = cache.read(&key, now_seconds()).await.unwrap().unwrap();
+    assert_eq!(entry.saved_at, saved_at);
+    let directory = tempfile::tempdir().unwrap();
+    let cache = cache::Cache::new(directory.path());
+    plain_entry(&cache, cache::PLAIN_RECHECK_SECS - 3600).await;
+    let provider = fake(None, false);
+    let service = Service::new(provider.clone(), cache);
+    let shown = wait(service.start(track(), false), &key).await;
+    assert_eq!(shown.status, LyricsStatus::PlainOnly);
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }

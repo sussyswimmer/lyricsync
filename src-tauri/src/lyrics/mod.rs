@@ -115,6 +115,14 @@ const RETRY_BACKOFF: [Duration; 3] = [
     Duration::from_secs(20),
     Duration::from_secs(60),
 ];
+/// Quiet work for the current track after its job answered: no `loading` event, and nothing is
+/// broadcast unless a better answer arrives, so the overlay never fades back to its loading view.
+enum FollowUp {
+    /// The lookup failed on something transient.
+    Retry,
+    /// The answer is a plain-only hit due for a recheck (`cache::stale`), showing meanwhile.
+    Recheck(Lyrics),
+}
 pub struct Service {
     provider: Arc<dyn Provider>,
     cache: cache::Cache,
@@ -184,7 +192,7 @@ impl Service {
                         (error_result, false, now_seconds(), true)
                     }
                 };
-                let retry = {
+                let follow_up = {
                     let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
                     // A refetch can promote a lookup while disk/memory cache is being read. Do not return that cached result.
                     if from_cache && force.load(Ordering::Acquire) {
@@ -200,29 +208,42 @@ impl Service {
                         );
                     }
                     state.flights.remove(&track.key);
-                    // Only the playing track is worth another try; any other is looked up again
+                    // Only the playing track is worth more work; any other is looked up again
                     // when it plays again.
-                    let retry = (transient && state.current(&track.key)).then(|| {
+                    let follow_up = if !state.current(&track.key) {
+                        None
+                    } else if transient {
+                        Some(FollowUp::Retry)
+                    } else if from_cache && cache::stale(&result, saved_at, now_seconds()) {
+                        Some(FollowUp::Recheck(result.clone()))
+                    } else {
+                        None
+                    };
+                    let follow_up = follow_up.map(|work| {
                         state.quiet += 1;
-                        state.quiet
+                        (work, state.quiet)
                     });
                     // Broadcast enqueue is nonblocking and cannot re-enter the service. Keep result ordering under the state lock.
                     let _ = service.events.send(result.clone());
                     sender.send_replace(Some(result));
-                    retry
+                    follow_up
                 };
-                if let Some(token) = retry {
-                    service.retry(&track, token).await;
+                match follow_up {
+                    Some((FollowUp::Retry, token)) => service.retry(&track, token).await,
+                    Some((FollowUp::Recheck(plain), token)) => {
+                        service.recheck(&track, token, plain).await
+                    }
+                    None => {}
                 }
                 break;
             }
         });
         receiver
     }
-    /// Quiet retries after a transient failure: no `loading` event, and nothing new is broadcast
-    /// until an answer arrives, so the overlay goes from its "Couldn't load lyrics" note straight
-    /// to the lyrics. Each try first checks that nothing overtook this one (another track, a
-    /// refetch); a permanent failure ends them.
+    /// Tries again after a transient failure, waiting `RETRY_BACKOFF` before each try, so the
+    /// overlay goes from its "Couldn't load lyrics" note straight to the lyrics. Each try first
+    /// checks that nothing overtook this one (another track, a refetch); a permanent failure ends
+    /// them.
     async fn retry(&self, track: &Track, token: u64) {
         for wait in RETRY_BACKOFF {
             tokio::time::sleep(wait).await;
@@ -240,6 +261,44 @@ impl Service {
             eprintln!("lyrics retry failed: {failure}");
             if !failure.transient {
                 return;
+            }
+        }
+    }
+    /// Asks LRCLIB once whether a plain-only song has synced lyrics now, while the plain text
+    /// shows. Synced lyrics replace it live (from unsynced to word highlight); any other answer
+    /// keeps it and starts its 30 days again; a failure leaves it due, for the next play.
+    async fn recheck(&self, track: &Track, token: u64, plain: Lyrics) {
+        let result = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(failure)) => {
+                eprintln!("lyrics recheck failed: {failure}");
+                return;
+            }
+            Err(_) => {
+                eprintln!("lyrics recheck timed out after six seconds");
+                return;
+            }
+        };
+        if result.status == LyricsStatus::Found {
+            self.settle(track, token, result).await;
+            return;
+        }
+        // A newer job (a refetch) may have saved its own answer meanwhile: don't write over it.
+        if self.state.lock().unwrap_or_else(|e| e.into_inner()).quiet != token {
+            return;
+        }
+        let saved_at = now_seconds();
+        let plain = Lyrics {
+            source: LyricsSource::Lrclib,
+            ..plain
+        };
+        if let Err(error) = self.cache.put(&plain, saved_at).await {
+            eprintln!("lyrics cache write failed: {error}");
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.quiet == token {
+            if let Some(completed) = state.completed.get_mut(&track.key) {
+                completed.saved_at = saved_at;
             }
         }
     }
