@@ -277,6 +277,25 @@ describe("lrcShape", () => {
     const raw = "﻿[ti:Thing]\r\n[00:01.00][00:30.00]Chorus\r\n[00:01.00]<00:01.00>Again\r\n[00:05.00]\r\nloose words\r\n\r\n[00:75.00]bad stamp\r\nwords [00:09.00]";
     expect(lrcShape(raw)).toEqual({ timedLyricRows: 2, distinctLyricStamps: 2, untimedTextRows: 1 });
   });
+
+  it("leaves out an unstamped row right under a timed row, and copies of timed rows", () => {
+    const raw = [
+      "[00:01.00]first placeholder",
+      "first, translated", // under a timed row
+      "",
+      "[00:03.00]second placeholder",
+      "",
+      "second, translated", // under a timed row, blank rows aside
+      "[00:05.00]",
+      "after a gap", // counts: a gap is not a timed lyric row
+      "first placeholder", // a copy of a timed row
+      "something else", // counts
+      "[00:75.00]bad stamp",
+      "under a bad stamp", // counts
+      "second <00:04.00>placeholder", // a copy, once word tags are read
+    ].join("\n");
+    expect(lrcShape(raw)).toEqual({ timedLyricRows: 2, distinctLyricStamps: 2, untimedTextRows: 3 });
+  });
 });
 
 describe("stripLrc", () => {

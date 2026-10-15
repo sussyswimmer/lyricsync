@@ -6,7 +6,9 @@ import type { StageView } from "./stage";
 /**
  * Synced LRC whose timing would hold one line on screen for most of the song: more text rows without
  * a stamp than with one (partly timed), or four or more lines on one or two stamps (the parser keeps
- * only the first line of a stamp). Translated LRCs put two or three rows on every stamp, and pass.
+ * only the first line of a stamp). Translated LRCs put two or three rows on every stamp, or an
+ * unstamped translation under each stamped row, and pass; so does a synced block with its plain text
+ * pasted under it (see LrcShape.untimedTextRows).
  */
 function brokenTiming(shape: LrcShape): boolean {
   return shape.untimedTextRows > shape.timedLyricRows || (shape.timedLyricRows >= 4 && shape.distinctLyricStamps <= 2);

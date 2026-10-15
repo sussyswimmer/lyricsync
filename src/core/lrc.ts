@@ -203,26 +203,38 @@ export interface LrcShape {
   timedLyricRows: number;
   /** distinct stamps among those rows */
   distinctLyricStamps: number;
-  /** rows with text and no stamp anywhere, metadata left out */
+  /**
+   * rows with text and no stamp anywhere, metadata left out. Rows that belong to the timed text are
+   * left out too: one right under a timed lyric row (blank rows aside), its translation or
+   * continuation, and one with a timed lyric row's text, the synced block pasted again as plain text.
+   */
   untimedTextRows: number;
 }
 
 export function lrcShape(raw: string): LrcShape {
   let timedLyricRows = 0;
-  let untimedTextRows = 0;
   const stamps = new Set<number>();
+  const timedTexts = new Set<string>();
+  const untimedTexts: string[] = [];
+  // the last row with anything on it, metadata aside, was a timed lyric row (not a gap or a bad stamp)
+  let underTimed = false;
   for (const row of rowsOf(raw)) {
     const line = row.trim();
     if (line === "" || META.test(line)) continue;
     const stamped = readStamps(line);
     if (stamped) {
-      if (readBody(stamped.body).text === "") continue;
+      const { text } = readBody(stamped.body);
+      underTimed = text !== "";
+      if (text === "") continue;
       timedLyricRows++;
+      timedTexts.add(text);
       for (const stamp of stamped.stamps) stamps.add(stamp);
-    } else if (!ANY_STAMP.test(line)) {
-      untimedTextRows++;
+    } else {
+      if (!underTimed && !ANY_STAMP.test(line)) untimedTexts.push(readBody(line).text);
+      underTimed = false;
     }
   }
+  const untimedTextRows = untimedTexts.filter((text) => !timedTexts.has(text)).length;
   return { timedLyricRows, distinctLyricStamps: stamps.size, untimedTextRows };
 }
 
