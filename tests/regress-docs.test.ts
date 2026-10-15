@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "../contract/contract";
+import { describe, expect, it } from "vitest";
+import { CONTRACT_VERSION, DEFAULT_SETTINGS } from "../contract/contract";
 import { MOCK_TRACKS } from "../src/bridge/mock";
 import { displayAccelerator } from "../src/core/accelerator";
 
@@ -10,33 +10,43 @@ import { displayAccelerator } from "../src/core/accelerator";
  *   and the overlay's pure modules.
  * - handoff-log-missing: docs/HANDOFF.md stopped at C4, so C5–C8 and every request to Codex were missing
  *   from the only channel between the two halves.
- * Plus the facts the docs repeat from code (demo tracks, defaults), so they can't drift apart unnoticed.
+ * - docs-drift (2026-10-15 audit): LYRICS.md still said "the contract is v2" at v3, `--overlay-probe` was
+ *   documented only in HANDOFF.md, and DESKTOP_LAYER.md, SPEC.md and the work orders had no link check.
+ * Plus the facts the docs repeat from code (demo tracks, defaults, flags, commands and events), so they
+ * can't drift apart unnoticed.
  */
 
 interface Fs {
   readFileSync(path: URL, encoding: "utf8"): string;
   existsSync(path: URL): boolean;
-  readdirSync(path: URL, options: { recursive: true }): string[];
+  readdirSync(path: URL, options?: { recursive?: boolean }): string[];
 }
 
+// Through a variable, so the strict config (no Node types) doesn't resolve the module. Loaded before
+// the suites are collected, because the list of docs below decides which tests there are.
+const fsModule = "node:fs";
+const fs = (await import(/* @vite-ignore */ fsModule)) as Fs;
+
 const ROOT = new URL("../", import.meta.url);
-const DOCS = [
-  "README.md",
-  "docs/USER_GUIDE.md",
-  "docs/HANDOFF.md",
-  "docs/INSTALL.md",
-  "docs/LYRICS.md",
-  "docs/NOW_PLAYING.md",
-] as const;
-
-let fs: Fs;
 const read = (path: string): string => fs.readFileSync(new URL(path, ROOT), "utf8");
+const markdown = (dir: string): string[] =>
+  fs
+    .readdirSync(new URL(dir || "./", ROOT))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => `${dir}${f}`);
 
-beforeAll(async () => {
-  // Through a variable, so the strict config (no Node types) doesn't resolve the module.
-  const fsModule = "node:fs";
-  fs = (await import(/* @vite-ignore */ fsModule)) as Fs;
-});
+/** Every Markdown file at the root and in docs/, so a new doc is checked without being listed here. */
+const DOCS: readonly string[] = [...markdown(""), ...markdown("docs/")].sort();
+/** CLAUDE.md and AGENTS.md are the original work orders and HANDOFF.md is a log: they keep what was true then. */
+const HISTORY = new Set(["CLAUDE.md", "AGENTS.md", "docs/HANDOFF.md"]);
+/** The docs that describe the code as it is now. */
+const CURRENT = DOCS.filter((doc) => !HISTORY.has(doc));
+
+/** Every `--flag` string the Rust core has: what the app reads from its command line. */
+function appFlags(): Set<string> {
+  const rust = fs.readdirSync(new URL("src-tauri/src/", ROOT), { recursive: true }).filter((f) => f.endsWith(".rs"));
+  return new Set(rust.flatMap((f) => [...read(`src-tauri/src/${f}`).matchAll(/"(--[a-z][a-z0-9-]*)"/g)].map((m) => m[1] ?? "")));
+}
 
 /** Markdown without fenced code blocks (a `# comment` in a shell block is not a heading). */
 function prose(md: string): string {
@@ -78,6 +88,10 @@ describe("slug", () => {
 });
 
 describe("doc links", () => {
+  it("finds the docs", () => {
+    expect(DOCS).toEqual(expect.arrayContaining(["README.md", "SPEC.md", "docs/USER_GUIDE.md", "docs/HANDOFF.md", "docs/ACCEPTANCE.md"]));
+  });
+
   for (const doc of DOCS) {
     it(`${doc}: every relative link points at a file (and heading) that exists`, () => {
       const base = new URL(doc, ROOT);
@@ -139,15 +153,12 @@ describe("README development notes", () => {
 // as is), so cargo got the app's flag and refused to run.
 describe("debug flags in the docs", () => {
   it("reach the app: `pnpm tauri dev -- -- <flag>`", () => {
-    // every flag the app reads from its command line
-    const rust = fs.readdirSync(new URL("src-tauri/src/", ROOT), { recursive: true }).filter((f) => f.endsWith(".rs"));
-    const flags = new Set(rust.flatMap((f) => [...read(`src-tauri/src/${f}`).matchAll(/arg == "(--[a-z-]+)"/g)].map((m) => m[1] ?? "")));
+    const flags = appFlags();
     expect([...flags]).toEqual(expect.arrayContaining(["--media-test", "--desktop-layer-test"]));
 
-    const docs = ["README.md", ...fs.readdirSync(new URL("docs/", ROOT), { recursive: true }).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`)];
     const runs: string[] = [];
     const wrong: string[] = [];
-    for (const doc of docs) {
+    for (const doc of DOCS) {
       for (const m of read(doc).matchAll(/pnpm (?:exec )?tauri dev\b([^`\n#]*)/g)) {
         const args = (m[1] ?? "").trim().split(/\s+/).filter(Boolean);
         const firstFlag = args.findIndex((a) => flags.has(a));
@@ -160,6 +171,41 @@ describe("debug flags in the docs", () => {
     }
     expect(runs.length).toBeGreaterThanOrEqual(3);
     expect(wrong).toEqual([]);
+  });
+
+  // Regression (docs-drift): `--overlay-probe`, the check for the covered-overlay fix, was only in HANDOFF.md.
+  it("are each explained in a doc other than the handoff log", () => {
+    const flags = [...appFlags()];
+    expect(flags).toEqual(expect.arrayContaining(["--media-test", "--desktop-layer-test", "--desktop-layer-all", "--overlay-probe", "--diagnose"]));
+    const text = CURRENT.map(read).join("\n");
+    const missing = flags.filter((flag) => !new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(text));
+    expect(missing).toEqual([]);
+  });
+});
+
+// Regression (docs-drift): LYRICS.md said "The shared contract is v2" a version after v3 landed. A claim
+// in the present tense must name the current version; "contract v2 adds …" is history and may stay.
+describe("contract version in the docs", () => {
+  it("every \"contract is vN\" names CONTRACT_VERSION", () => {
+    const claims = CURRENT.flatMap((doc) => [...read(doc).matchAll(/\bcontract is (?:now )?v(\d+)\b/gi)].map((m) => `${doc}: ${m[0]}`));
+    expect(claims.length).toBeGreaterThan(0);
+    expect(claims.filter((claim) => !claim.endsWith(`v${CONTRACT_VERSION}`))).toEqual([]);
+  });
+});
+
+// SPEC.md is the contract's reference: it names every command the core registers and every event it
+// sends, as Rust declares them.
+describe("SPEC.md and the core", () => {
+  it("lists every command in generate_handler! and every event constant", () => {
+    const handler = /generate_handler!\[([\s\S]*?)\]/.exec(read("src-tauri/src/lib.rs"))?.[1] ?? "";
+    // debug_probe is a debug-only helper for `--overlay-probe`, not part of the contract.
+    const commands = [...handler.matchAll(/commands::(\w+)/g)].map((m) => m[1] ?? "").filter((name) => name !== "debug_probe");
+    const events = [...read("src-tauri/src/contract.rs").matchAll(/pub const \w+_EVENT: &str = "([^"]+)";/g)].map((m) => m[1] ?? "");
+    expect(commands.length).toBeGreaterThanOrEqual(11);
+    expect(events.length).toBeGreaterThanOrEqual(5);
+    const spec = read("SPEC.md");
+    expect(commands.filter((name) => !spec.includes(`\`${name}(`))).toEqual([]);
+    expect(events.filter((name) => !spec.includes(`\`${name}\``))).toEqual([]);
   });
 });
 
