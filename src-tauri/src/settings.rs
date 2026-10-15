@@ -463,13 +463,31 @@ pub mod runtime {
         }
     }
 
-    /// The OS login item's real state; `None` (logged) when it can't be read.
+    /// The OS login item's real state; `None` (logged) when it can't be read. On macOS the plugin
+    /// only says whether its plist exists; System Settings may have turned it off since.
     fn login_item(app: &AppHandle) -> Option<bool> {
         match app.try_state::<AutoLaunchManager>()?.is_enabled() {
+            #[cfg(target_os = "macos")]
+            Ok(exists) => Some(crate::login_item::is_on(exists, login_item_status(app))),
+            #[cfg(not(target_os = "macos"))]
             Ok(enabled) => Some(enabled),
             Err(error) => {
                 applog!("launch at login: {error}");
                 None
+            }
+        }
+    }
+    /// What macOS does with the plugin's LaunchAgent plist (`crate::login_item`).
+    #[cfg(target_os = "macos")]
+    fn login_item_status(app: &AppHandle) -> isize {
+        match app.path().home_dir() {
+            Ok(home) => crate::login_item::native::status(&crate::login_item::legacy_plist(
+                &home,
+                &app.package_info().name,
+            )),
+            Err(error) => {
+                applog!("launch at login: {error}");
+                crate::login_item::NOT_FOUND
             }
         }
     }
@@ -482,7 +500,21 @@ pub mod runtime {
         } else {
             launcher.disable()
         };
-        result.map_err(|e| format!("launch at login: {e}"))
+        result.map_err(|e| format!("launch at login: {e}"))?;
+        // A plist System Settings keeps turned off won't start Undertone: refuse, so the switch
+        // stays off, and show the user where to allow it. The plist stays, so allowing it there
+        // is picked up on the next tray hover or Settings show.
+        #[cfg(target_os = "macos")]
+        if enabled {
+            if let Err(error) = crate::login_item::check_enabled(login_item_status(app)) {
+                let opened = app.run_on_main_thread(crate::login_item::native::open_login_items);
+                if let Err(open_error) = opened {
+                    applog!("launch at login: System Settings not opened: {open_error}");
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     /// Loads stored settings into AppState before any window or service reads them, migrated to

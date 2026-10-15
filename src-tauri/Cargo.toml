@@ -25,6 +25,7 @@ desktop = [
     "dep:objc2-foundation",
     "dep:objc2-app-kit",
     "dep:objc2-core-graphics",
+    "dep:objc2-service-management",
     "dep:block2",
 ]
 
@@ -69,6 +70,7 @@ objc2-foundation = { version = "0.3", optional = true, features = [
     "NSOperation",
     "NSString",
     "NSThread",
+    "NSURL",
     "NSValue",
 ] }
 objc2-app-kit = { version = "0.3", optional = true, features = [
@@ -84,6 +86,13 @@ objc2-app-kit = { version = "0.3", optional = true, features = [
     "NSWorkspace",
 ] }
 objc2-core-graphics = { version = "0.3", optional = true, features = ["CGWindowLevel"] }
+# Launch at login: what System Settings does with the autostart plugin's LaunchAgent (login_item.rs).
+objc2-service-management = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "objc2",
+    "objc2-foundation",
+    "SMAppService",
+] }
 
 [profile.release]
 codegen-units = 1

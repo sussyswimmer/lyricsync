@@ -7,6 +7,7 @@ mod commands;
 pub mod contract;
 pub mod desktop_layer;
 pub mod diagnose;
+pub mod login_item;
 pub mod lyrics;
 pub mod media;
 pub mod settings;
