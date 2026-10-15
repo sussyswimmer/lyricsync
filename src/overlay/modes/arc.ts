@@ -38,9 +38,11 @@ const MARGIN = 0.05;
 const FIT = 0.94;
 /**
  * ...but, shrunk to this share of its size, it may fill its whole path rather than FIT of it. It never
- * runs past the path's ends, which stay on screen: only a line still too long at MIN_TEXT_PX does. On a
- * display narrower than 16:9 the share drops in proportion: the size follows the stage height, so an
- * ordinary line on a portrait display needs to shrink further to fit its width.
+ * runs past the path's ends, which stay on screen: only a line still too long at MIN_TEXT_PX does (or
+ * at this share of its size, where that is smaller: small sizes on a small stage, like the settings
+ * preview, shrink as far as this share). On a display narrower than 16:9 the share drops in
+ * proportion: the size follows the stage height, so an ordinary line on a portrait display needs to
+ * shrink further to fit its width.
  */
 const MIN_FIT = 0.55;
 /** Glyph extents in font sizes, for keeping neighbors clear of the focus line: capitals above the baseline, descenders below. */
@@ -468,14 +470,16 @@ export class ArcMode implements ModeRenderer {
 
   /**
    * Font size for line `i` drawn at `size`: shrunk so it fits its path (see FIT and MIN_FIT), and never
-   * longer than the path, down to MIN_TEXT_PX.
+   * longer than the path, down to MIN_TEXT_PX or `minFit` of its size, whichever is smaller. Flooring
+   * at MIN_TEXT_PX alone kept a long line in the settings preview (size 15, neighbors 11) from
+   * shrinking at all, and it ran off both edges of the stage.
    */
   private fitted(i: number, size: number, look: Look): number {
     const natural = this.natural(i, size, look);
     const room = this.pathLength * FIT;
     if (room <= 0 || natural <= room) return size;
     const fit = Math.max(size * this.geo.minFit, (size * room) / natural);
-    return Math.max(Math.min(size, MIN_TEXT_PX), Math.min(fit, (size * this.pathLength) / natural));
+    return Math.max(Math.min(size * this.geo.minFit, MIN_TEXT_PX), Math.min(fit, (size * this.pathLength) / natural));
   }
 
   /** Focus and neighbor sizes around line `index`: a long focus line that had to shrink takes its neighbors (and their spacing) down with it, so it still leads. */

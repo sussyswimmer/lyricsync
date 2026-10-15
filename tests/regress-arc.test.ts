@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import { parseLrc, type Line } from "../src/core/lrc";
-import { dropShadow, resolveLook, rgba, type Frame, type Look } from "../src/overlay/look";
+import { dropShadow, resolveLook, rgba, snap, type Frame, type Look } from "../src/overlay/look";
 import {
   arcGeometry,
   arcLength,
@@ -304,6 +304,9 @@ describe("arc.css", () => {
  * themselves, and counts of what a build costs (elements made, layout reads).
  */
 const cost = { created: 0, measured: 0 };
+/** What the shared path measures: about 90% of a 1280 px stage, unless a test sets its own stage's. */
+const DEFAULT_PATH = 1160;
+let pathLength = DEFAULT_PATH;
 
 class FakeStyle {
   readonly props = new Map<string, string>();
@@ -386,10 +389,10 @@ class FakeNode {
     this.animations.push(anim);
     return anim;
   }
-  /** the shared path, about 90% of a 1280 px stage */
+  /** the shared path (see pathLength) */
   getTotalLength(): number {
     cost.measured++;
-    return 1160;
+    return pathLength;
   }
   getComputedTextLength(): number {
     cost.measured++;
@@ -597,5 +600,46 @@ describe("Arc long lines", () => {
     m.paint(cue(0, 2000));
     const focus = h.children[0]?.find("arc-focus")[0] as FakeNode;
     expect(sizeOf(focus) * 0.5 * focus.textContent.length).toBeCloseTo(1160 * 0.94, 0);
+  });
+});
+
+// Regression (arc-preview-floor): the cap at the path's length stopped shrinking at MIN_TEXT_PX, which
+// is above 55% of the settings preview's sizes (15 px at the default Size, 11 px neighbors), so a long
+// line there barely shrank (below Size 42, not at all) and ran off both edges of the stage.
+describe("Arc long lines in the settings preview", () => {
+  beforeEach(() => {
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => new FakeNode(tag),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    pathLength = DEFAULT_PATH;
+  });
+
+  /** 65 characters of placeholder text. */
+  const LONG = "placeholder words drift on ".repeat(3).slice(0, 65);
+
+  it.each([
+    [58, 352, 176],
+    [40, 352, 176],
+    [58, 340, 191],
+    [40, 340, 191],
+  ])("fits a 65-character line, in focus and as the next line, at Size %s on %sx%s", (size, width, height) => {
+    const l = look({ size }, { width, height, referenceHeight: 680 });
+    const half = (snap(l.width * 0.95, l.dpr) - snap(l.width * 0.05, l.dpr)) / 2;
+    pathLength = 2 * arcLength(half, half, arcGeometry(l, 1).bend);
+    const song = parseLrc(`[00:01.00]a short one\n[00:04.00]${LONG}\n[00:09.00]${LONG}\n[00:14.00]a short two`, 30_000);
+    const host = new FakeNode("main");
+    const mode = new ArcMode();
+    mode.build(asHost(host), song, l);
+    mode.paint(cue(1, 5000));
+    const long = (host.children[0]?.find("arc-line") ?? []).filter((b) => b.textContent === LONG && !b.classList.contains("arc-glow"));
+    expect(long.map((b) => (b.classList.contains("arc-focus") ? "focus" : "next")).sort()).toEqual(["focus", "next"]);
+    for (const band of long) {
+      const natural = sizeOf(band) * 0.5 * band.textContent.length;
+      expect(natural, `${band.className}: ${sizeOf(band).toFixed(2)} px`).toBeLessThanOrEqual(pathLength + 0.5);
+    }
   });
 });
