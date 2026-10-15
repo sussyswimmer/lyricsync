@@ -16,7 +16,6 @@ required-features = ["desktop"]
 default = []
 desktop = [
     "dep:tauri",
-    "dep:tauri-plugin-store",
     "dep:tauri-plugin-autostart",
     "dep:tauri-plugin-single-instance",
     "dep:tauri-plugin-global-shortcut",
@@ -26,6 +25,7 @@ desktop = [
     "dep:objc2-foundation",
     "dep:objc2-app-kit",
     "dep:objc2-core-graphics",
+    "dep:objc2-service-management",
     "dep:block2",
 ]
 
@@ -37,7 +37,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["time", "sync", "macros", "rt-multi-thread", "fs", "io-util"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots", "system-proxy"] }
 regex = "1"
 unicode-normalization = "0.1"
 sha1 = "0.10"
@@ -47,7 +47,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tauri = { version = "2", optional = true, features = ["macos-private-api", "tray-icon"] }
-tauri-plugin-store = { version = "2", optional = true }
 tauri-plugin-autostart = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
@@ -71,6 +70,7 @@ objc2-foundation = { version = "0.3", optional = true, features = [
     "NSOperation",
     "NSString",
     "NSThread",
+    "NSURL",
     "NSValue",
 ] }
 objc2-app-kit = { version = "0.3", optional = true, features = [
@@ -86,6 +86,13 @@ objc2-app-kit = { version = "0.3", optional = true, features = [
     "NSWorkspace",
 ] }
 objc2-core-graphics = { version = "0.3", optional = true, features = ["CGWindowLevel"] }
+# Launch at login: what System Settings does with the autostart plugin's LaunchAgent (login_item.rs).
+objc2-service-management = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "objc2",
+    "objc2-foundation",
+    "SMAppService",
+] }
 
 [profile.release]
 codegen-units = 1

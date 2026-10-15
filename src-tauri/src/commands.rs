@@ -100,6 +100,7 @@ pub fn show_settings(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn debug_probe(webview: tauri::Webview, message: String) {
     if cfg!(debug_assertions) {
+        // Stderr only, never the log file: the message quotes the overlay's text, the lyrics.
         eprintln!("probe[{}]: {message}", webview.label());
     }
 }
