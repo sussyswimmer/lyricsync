@@ -35,9 +35,36 @@ impl From<&NowPlaying> for Track {
         }
     }
 }
+/// Why a lookup has no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    /// No network yet, a timeout, or a busy or rate-limited LRCLIB: another try a little later may
+    /// work. Otherwise (a 4xx answer, unusable metadata) it would get the same answer.
+    pub transient: bool,
+}
+impl Failure {
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transient: true,
+        }
+    }
+    pub fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transient: false,
+        }
+    }
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
 #[async_trait]
 pub trait Provider: Send + Sync {
-    async fn lookup(&self, track: &Track) -> Result<Lyrics, String>;
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure>;
 }
 pub fn empty(key: &str, status: LyricsStatus) -> Lyrics {
     Lyrics {
@@ -67,6 +94,34 @@ struct State {
     flights: HashMap<String, Flight>,
     tracks: VecDeque<Track>,
     completed: HashMap<String, Completed>,
+    /// Bumped by every new job and every quiet follow-up. A follow-up holding an older value was
+    /// overtaken (another track, a refetch) and stops.
+    quiet: u64,
+}
+impl State {
+    /// The track started last: the one playing, as far as the service knows.
+    fn current(&self, key: &str) -> bool {
+        self.tracks.back().is_some_and(|track| track.key == key)
+    }
+}
+/// One lookup's budget, from the track change through the cache, waiting for a free slot, the
+/// exact match and the searches.
+const DEADLINE: Duration = Duration::from_secs(6);
+/// After a transient failure on the current track (no network yet after wake, a busy or
+/// rate-limiting LRCLIB, the deadline), the lookup is tried again after each of these waits: about
+/// a minute and a half in all.
+const RETRY_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(20),
+    Duration::from_secs(60),
+];
+/// Quiet work for the current track after its job answered: no `loading` event, and nothing is
+/// broadcast unless a better answer arrives, so the overlay never fades back to its loading view.
+enum FollowUp {
+    /// The lookup failed on something transient.
+    Retry,
+    /// The answer is a plain-only hit due for a recheck (`cache::stale`), showing meanwhile.
+    Recheck(Lyrics),
 }
 pub struct Service {
     provider: Arc<dyn Provider>,
@@ -115,54 +170,170 @@ impl Service {
                 force: force.clone(),
             },
         );
+        state.quiet += 1;
         let _ = self.events.send(empty(&track.key, LyricsStatus::Loading));
         drop(state);
         let service = self.clone();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+        let deadline = tokio::time::Instant::now() + DEADLINE;
         tokio::spawn(async move {
             loop {
                 let outcome =
                     tokio::time::timeout_at(deadline, service.resolve(&track, &force)).await;
-                let (result, from_cache, saved_at) = match outcome {
-                    Ok(Ok(result)) => result,
+                let (result, from_cache, saved_at, transient) = match outcome {
+                    Ok(Ok((result, from_cache, saved_at))) => (result, from_cache, saved_at, false),
                     Ok(Err(error)) => {
                         eprintln!("lyrics lookup failed: {error}");
-                        (empty(&track.key, LyricsStatus::Error), false, now_seconds())
+                        let error_result = empty(&track.key, LyricsStatus::Error);
+                        (error_result, false, now_seconds(), error.transient)
                     }
                     Err(_) => {
                         eprintln!("lyrics lookup timed out after six seconds");
-                        (empty(&track.key, LyricsStatus::Error), false, now_seconds())
+                        let error_result = empty(&track.key, LyricsStatus::Error);
+                        (error_result, false, now_seconds(), true)
                     }
                 };
-                let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
-                // A refetch can promote a lookup while disk/memory cache is being read. Do not return that cached result.
-                if from_cache && force.load(Ordering::Acquire) {
-                    drop(state);
-                    continue;
+                let follow_up = {
+                    let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+                    // A refetch can promote a lookup while disk/memory cache is being read. Do not return that cached result.
+                    if from_cache && force.load(Ordering::Acquire) {
+                        continue;
+                    }
+                    if state.tracks.iter().any(|known| known.key == track.key) {
+                        state.completed.insert(
+                            track.key.clone(),
+                            Completed {
+                                lyrics: result.clone(),
+                                saved_at,
+                            },
+                        );
+                    }
+                    state.flights.remove(&track.key);
+                    // Only the playing track is worth more work; any other is looked up again
+                    // when it plays again.
+                    let follow_up = if !state.current(&track.key) {
+                        None
+                    } else if transient {
+                        Some(FollowUp::Retry)
+                    } else if from_cache && cache::stale(&result, saved_at, now_seconds()) {
+                        Some(FollowUp::Recheck(result.clone()))
+                    } else {
+                        None
+                    };
+                    let follow_up = follow_up.map(|work| {
+                        state.quiet += 1;
+                        (work, state.quiet)
+                    });
+                    // Broadcast enqueue is nonblocking and cannot re-enter the service. Keep result ordering under the state lock.
+                    let _ = service.events.send(result.clone());
+                    sender.send_replace(Some(result));
+                    follow_up
+                };
+                match follow_up {
+                    Some((FollowUp::Retry, token)) => service.retry(&track, token).await,
+                    Some((FollowUp::Recheck(plain), token)) => {
+                        service.recheck(&track, token, plain).await
+                    }
+                    None => {}
                 }
-                if state.tracks.iter().any(|known| known.key == track.key) {
-                    state.completed.insert(
-                        track.key.clone(),
-                        Completed {
-                            lyrics: result.clone(),
-                            saved_at,
-                        },
-                    );
-                }
-                state.flights.remove(&track.key);
-                // Broadcast enqueue is nonblocking and cannot re-enter the service. Keep result ordering under the state lock.
-                let _ = service.events.send(result.clone());
-                sender.send_replace(Some(result));
                 break;
             }
         });
         receiver
     }
+    /// Tries again after a transient failure, waiting `RETRY_BACKOFF` before each try, so the
+    /// overlay goes from its "Couldn't load lyrics" note straight to the lyrics. Each try first
+    /// checks that nothing overtook this one (another track, a refetch); a permanent failure ends
+    /// them.
+    async fn retry(&self, track: &Track, token: u64) {
+        for wait in RETRY_BACKOFF {
+            tokio::time::sleep(wait).await;
+            if !self.unchanged(&track.key, token) {
+                return;
+            }
+            let failure = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
+                Ok(Ok(result)) => {
+                    self.settle(track, token, result).await;
+                    return;
+                }
+                Ok(Err(failure)) => failure,
+                Err(_) => Failure::transient("timed out after six seconds"),
+            };
+            eprintln!("lyrics retry failed: {failure}");
+            if !failure.transient {
+                return;
+            }
+        }
+    }
+    /// Asks LRCLIB once whether a plain-only song has synced lyrics now, while the plain text
+    /// shows. Synced lyrics replace it live (from unsynced to word highlight); any other answer
+    /// keeps it and starts its 30 days again; a failure leaves it due, for the next play.
+    async fn recheck(&self, track: &Track, token: u64, plain: Lyrics) {
+        let result = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(failure)) => {
+                eprintln!("lyrics recheck failed: {failure}");
+                return;
+            }
+            Err(_) => {
+                eprintln!("lyrics recheck timed out after six seconds");
+                return;
+            }
+        };
+        if result.status == LyricsStatus::Found {
+            self.settle(track, token, result).await;
+            return;
+        }
+        // A newer job (a refetch) may have saved its own answer meanwhile: don't write over it.
+        if self.state.lock().unwrap_or_else(|e| e.into_inner()).quiet != token {
+            return;
+        }
+        let saved_at = now_seconds();
+        let plain = Lyrics {
+            source: LyricsSource::Lrclib,
+            ..plain
+        };
+        if let Err(error) = self.cache.put(&plain, saved_at).await {
+            eprintln!("lyrics cache write failed: {error}");
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.quiet == token {
+            if let Some(completed) = state.completed.get_mut(&track.key) {
+                completed.saved_at = saved_at;
+            }
+        }
+    }
+    /// Nothing overtook the quiet follow-up holding `token`, and its track still plays.
+    fn unchanged(&self, key: &str, token: u64) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.quiet == token && state.current(key)
+    }
+    /// Saves a quiet follow-up's answer, and makes it the track's result and broadcasts it unless
+    /// a newer job took over meanwhile (that job sends its own).
+    async fn settle(&self, track: &Track, token: u64, result: Lyrics) {
+        let saved_at = now_seconds();
+        if let Err(error) = self.cache.put(&result, saved_at).await {
+            eprintln!("lyrics cache write failed: {error}");
+        }
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.quiet != token {
+            return;
+        }
+        if state.tracks.iter().any(|known| known.key == track.key) {
+            state.completed.insert(
+                track.key.clone(),
+                Completed {
+                    lyrics: result.clone(),
+                    saved_at,
+                },
+            );
+        }
+        let _ = self.events.send(result);
+    }
     async fn resolve(
         &self,
         track: &Track,
         force: &AtomicBool,
-    ) -> Result<(Lyrics, bool, u64), String> {
+    ) -> Result<(Lyrics, bool, u64), Failure> {
         if !force.load(Ordering::Acquire) {
             {
                 let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -180,16 +351,44 @@ impl Service {
                 Err(error) => eprintln!("lyrics cache read failed; using network: {error}"),
             }
         }
-        let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
-        let result = self.provider.lookup(track).await?;
-        if result.track_key != track.key || !cache::cacheable(&result) {
-            return Err("provider returned an invalid terminal lyrics result".into());
-        }
+        let result = self.fetch(track).await?;
         let saved_at = now_seconds();
         if let Err(error) = self.cache.put(&result, saved_at).await {
             eprintln!("lyrics cache write failed: {error}");
         }
         Ok((result, false, saved_at))
+    }
+    /// The network half of a lookup, in one of the shared slots. A track that stopped being the
+    /// current one before its lookup reached the network (the user skipped on) doesn't take a slot
+    /// or a request, which keeps a burst of skips from tripping LRCLIB's rate limit: it is looked
+    /// up again when it plays again.
+    async fn fetch(&self, track: &Track) -> Result<Lyrics, Failure> {
+        let skipped =
+            || Failure::permanent("skipped: another track started before it reached LRCLIB");
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let _slot = self
+            .slots
+            .acquire()
+            .await
+            .map_err(|e| Failure::permanent(e.to_string()))?;
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let result = self.provider.lookup(track).await?;
+        if result.track_key != track.key || !cache::cacheable(&result) {
+            return Err(Failure::permanent(
+                "provider returned an invalid terminal lyrics result",
+            ));
+        }
+        Ok(result)
+    }
+    fn current(&self, key: &str) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .current(key)
     }
     pub async fn get(self: &Arc<Self>, key: &str) -> Lyrics {
         let (flight, track) = {

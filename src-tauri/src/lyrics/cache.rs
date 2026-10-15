@@ -7,6 +7,8 @@ use std::{
 };
 
 pub const NEGATIVE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// LRCLIB's synced coverage grows, so a plain-only result this old is asked about again.
+pub const PLAIN_RECHECK_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Cache {
@@ -38,6 +40,14 @@ pub fn fresh(lyrics: &Lyrics, saved_at: u64, now: u64) -> bool {
             || now
                 .checked_sub(saved_at)
                 .is_some_and(|age| age < NEGATIVE_TTL_SECS))
+}
+/// A plain-only result that is still served, but due for a quiet check for synced lyrics: older
+/// than `PLAIN_RECHECK_SECS`, or saved by a clock that was ahead.
+pub fn stale(lyrics: &Lyrics, saved_at: u64, now: u64) -> bool {
+    lyrics.status == LyricsStatus::PlainOnly
+        && now
+            .checked_sub(saved_at)
+            .is_none_or(|age| age >= PLAIN_RECHECK_SECS)
 }
 impl Cache {
     pub fn new(app_data_dir: impl AsRef<Path>) -> Self {
@@ -148,6 +158,27 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(cache.get(&negative.track_key, 99).await.unwrap().is_none());
+    }
+    #[test]
+    fn plain_only_results_are_rechecked_after_thirty_days_and_still_served() {
+        let mut unsynced = record();
+        unsynced.synced_lyrics = None;
+        let plain = unsynced.into_lyrics("key");
+        for (now, due) in [
+            (100, false),
+            (100 + PLAIN_RECHECK_SECS - 1, false),
+            (100 + PLAIN_RECHECK_SECS, true),
+            (99, true),
+        ] {
+            assert_eq!(stale(&plain, 100, now), due, "{now}");
+            assert!(fresh(&plain, 100, now));
+        }
+        // Synced lyrics and instrumentals are never rechecked; not-found simply expires.
+        let found = record().into_lyrics("key");
+        assert!(!stale(&found, 0, u64::MAX));
+        for status in [LyricsStatus::Instrumental, LyricsStatus::NotFound] {
+            assert!(!stale(&empty("key", status), 0, u64::MAX));
+        }
     }
     #[tokio::test]
     async fn corrupt_wrong_key_and_transient_results_are_not_hits() {
