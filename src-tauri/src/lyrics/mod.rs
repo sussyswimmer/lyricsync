@@ -35,9 +35,36 @@ impl From<&NowPlaying> for Track {
         }
     }
 }
+/// Why a lookup has no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    /// No network yet, a timeout, or a busy or rate-limited LRCLIB: another try a little later may
+    /// work. Otherwise (a 4xx answer, unusable metadata) it would get the same answer.
+    pub transient: bool,
+}
+impl Failure {
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transient: true,
+        }
+    }
+    pub fn permanent(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            transient: false,
+        }
+    }
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
 #[async_trait]
 pub trait Provider: Send + Sync {
-    async fn lookup(&self, track: &Track) -> Result<Lyrics, String>;
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure>;
 }
 pub fn empty(key: &str, status: LyricsStatus) -> Lyrics {
     Lyrics {
@@ -162,7 +189,7 @@ impl Service {
         &self,
         track: &Track,
         force: &AtomicBool,
-    ) -> Result<(Lyrics, bool, u64), String> {
+    ) -> Result<(Lyrics, bool, u64), Failure> {
         if !force.load(Ordering::Acquire) {
             {
                 let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -180,10 +207,16 @@ impl Service {
                 Err(error) => eprintln!("lyrics cache read failed; using network: {error}"),
             }
         }
-        let _slot = self.slots.acquire().await.map_err(|e| e.to_string())?;
+        let _slot = self
+            .slots
+            .acquire()
+            .await
+            .map_err(|e| Failure::permanent(e.to_string()))?;
         let result = self.provider.lookup(track).await?;
         if result.track_key != track.key || !cache::cacheable(&result) {
-            return Err("provider returned an invalid terminal lyrics result".into());
+            return Err(Failure::permanent(
+                "provider returned an invalid terminal lyrics result",
+            ));
         }
         let saved_at = now_seconds();
         if let Err(error) = self.cache.put(&result, saved_at).await {

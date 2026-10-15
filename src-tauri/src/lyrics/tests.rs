@@ -30,13 +30,13 @@ struct Fake {
 }
 #[async_trait]
 impl Provider for Fake {
-    async fn lookup(&self, track: &Track) -> Result<Lyrics, String> {
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if let Some(gate) = &self.gate {
             gate.notified().await;
         }
         if self.fail {
-            Err("simulated outage".into())
+            Err(Failure::transient("simulated outage"))
         } else {
             Ok(record().into_lyrics(&track.key))
         }

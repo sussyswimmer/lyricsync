@@ -1,4 +1,4 @@
-use super::{empty, matching, Provider, Track};
+use super::{empty, matching, Failure, Provider, Track};
 use crate::contract::{Lyrics, LyricsSource, LyricsStatus};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
@@ -8,6 +8,30 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// LRCLIB answers HTTP 400 for a duration under one second.
 const MIN_DURATION_MS: f64 = 1000.0;
+/// The wait before the one retry when the server names none, or there was no connection.
+const RETRY_WAIT: Duration = Duration::from_secs(1);
+/// A longer `Retry-After` isn't waited out inside a lookup, which has six seconds in all; the
+/// service's quiet retries come back later instead.
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
+/// "Not now": LRCLIB answers 503 when it's busy and 429 when it rate-limits, both with
+/// `retry-after: 1`; a gateway answers 502 or 504 when it can't reach LRCLIB.
+fn busy(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+/// How long to wait before the retry: `Retry-After` in seconds (a date or anything else counts as
+/// absent, so `RETRY_WAIT`), or `None` when that is longer than `MAX_RETRY_WAIT`.
+fn retry_wait(retry_after: Option<&str>) -> Option<Duration> {
+    let wait = retry_after
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map_or(RETRY_WAIT, Duration::from_secs);
+    (wait <= MAX_RETRY_WAIT).then_some(wait)
+}
 /// Also sent for Spotify artwork. The version is Cargo's, which a test keeps equal to
 /// tauri.conf.json's (the installers') and package.json's.
 pub const USER_AGENT: &str = concat!(
@@ -104,56 +128,84 @@ impl LrcLib {
             base,
         })
     }
+    /// Asks once more, after `Retry-After`, when the answer means "not now" (`busy`) or there was
+    /// no connection. The service's deadline bounds the whole lookup, waits included.
     async fn json<T: DeserializeOwned>(
         &self,
         endpoint: &str,
         parameters: &[(&str, String)],
         allow_404: bool,
-    ) -> Result<Option<T>, String> {
-        let url = self.base.join(endpoint).map_err(|e| e.to_string())?;
-        let mut response = self
-            .client
-            .get(url)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .query(parameters)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+    ) -> Result<Option<T>, Failure> {
+        let url = self
+            .base
+            .join(endpoint)
+            .map_err(|e| Failure::permanent(e.to_string()))?;
+        let mut retried = false;
+        let mut response = loop {
+            let request = self
+                .client
+                .get(url.clone())
+                .header(reqwest::header::ACCEPT, "application/json")
+                .query(parameters);
+            let wait = match request.send().await {
+                Ok(response) if busy(response.status()) => {
+                    let header = response.headers().get(reqwest::header::RETRY_AFTER);
+                    match retry_wait(header.and_then(|value| value.to_str().ok())) {
+                        Some(wait) if !retried => wait,
+                        _ => {
+                            return Err(Failure::transient(format!(
+                                "LRCLIB returned HTTP {}",
+                                response.status().as_u16()
+                            )))
+                        }
+                    }
+                }
+                Ok(response) => break response,
+                Err(error) if !retried && (error.is_connect() || error.is_timeout()) => RETRY_WAIT,
+                Err(error) => return Err(Failure::transient(error.to_string())),
+            };
+            retried = true;
+            tokio::time::sleep(wait).await;
+        };
+        let status = response.status();
         // /api/get answers 404 for no match, and 400 for metadata it won't match (a duration it
         // rejects): either way there is no exact record, and search still gets its turn.
-        if allow_404
-            && matches!(
-                response.status(),
-                StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
-            )
-        {
+        if allow_404 && matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST) {
             return Ok(None);
         }
-        if !response.status().is_success() {
-            return Err(format!(
-                "LRCLIB returned HTTP {}",
-                response.status().as_u16()
-            ));
+        if !status.is_success() {
+            let message = format!("LRCLIB returned HTTP {}", status.as_u16());
+            // A 4xx is about the request itself, and asking again gets the same answer.
+            return Err(if status.is_client_error() {
+                Failure::permanent(message)
+            } else {
+                Failure::transient(message)
+            });
         }
+        let too_large = || Failure::permanent("LRCLIB response exceeds size limit");
         if response
             .content_length()
             .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
         {
-            return Err("LRCLIB response exceeds size limit".into());
+            return Err(too_large());
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| Failure::transient(e.to_string()))?
+        {
             if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err("LRCLIB response exceeds size limit".into());
+                return Err(too_large());
             }
             bytes.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&bytes)
             .map(Some)
-            .map_err(|e| format!("invalid LRCLIB JSON: {e}"))
+            .map_err(|e| Failure::transient(format!("invalid LRCLIB JSON: {e}")))
     }
     /// A body that isn't a JSON array is still an error.
-    async fn search(&self, track: &Track, title: &str) -> Result<Vec<Record>, String> {
+    async fn search(&self, track: &Track, title: &str) -> Result<Vec<Record>, Failure> {
         self.json(
             "search",
             &[
@@ -168,9 +220,9 @@ impl LrcLib {
 }
 #[async_trait]
 impl Provider for LrcLib {
-    async fn lookup(&self, track: &Track) -> Result<Lyrics, String> {
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure> {
         if !track.duration_ms.is_finite() || track.duration_ms < 0.0 {
-            return Err("track metadata is incomplete".into());
+            return Err(Failure::permanent("track metadata is incomplete"));
         }
         // A stream, an ad or a podcast often has no length, title or artist. LRCLIB can't match it
         // (and rejects a duration under a second), so it has no lyrics rather than an error chip.

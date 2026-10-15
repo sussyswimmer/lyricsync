@@ -6,15 +6,24 @@ use tokio::{
     net::TcpListener,
 };
 
-async fn server(
-    responses: Vec<(u16, String)>,
-) -> (LrcLib, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
+type Fixture = (LrcLib, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>);
+async fn server(responses: Vec<(u16, String)>) -> Fixture {
+    server_with_headers(
+        responses
+            .into_iter()
+            .map(|(status, body)| (status, "", body))
+            .collect(),
+    )
+    .await
+}
+/// Each response's extra header lines end in "\r\n".
+async fn server_with_headers(responses: Vec<(u16, &'static str, String)>) -> Fixture {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = Url::parse(&format!("http://{}/api/", listener.local_addr().unwrap())).unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
     let capture = requests.clone();
     let task = tokio::spawn(async move {
-        for (status, body) in responses {
+        for (status, headers, body) in responses {
             let (mut stream, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
                 .await
                 .unwrap()
@@ -31,7 +40,7 @@ async fn server(
                 .lock()
                 .unwrap()
                 .push(String::from_utf8(request).unwrap());
-            let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}", body.len());
             if let Err(error) = stream.write_all(response.as_bytes()).await {
                 assert!(matches!(
                     error.kind(),
@@ -90,17 +99,89 @@ async fn valid_empty_search_is_not_found_but_http_and_json_errors_are_errors() {
         LyricsStatus::NotFound
     );
     server.await.unwrap();
-    for response in [
-        (429, "{}".into()),
-        (500, "{}".into()),
-        (200, "{".into()),
-        (200, "x".repeat(MAX_RESPONSE_BYTES + 1)),
+    // A server error or a garbled answer may be gone a little later; a 4xx or an oversized
+    // answer would come back the same. None of them is retried within the lookup.
+    for (response, transient) in [
+        ((500, "{}".into()), true),
+        ((200, "{".into()), true),
+        ((403, "{}".into()), false),
+        ((200, "x".repeat(MAX_RESPONSE_BYTES + 1)), false),
     ] {
-        let (client, _, server) = self::server(vec![response]).await;
-        assert!(client.lookup(&track()).await.is_err());
+        let (client, requests, server) = self::server(vec![response]).await;
+        assert_eq!(
+            client.lookup(&track()).await.unwrap_err().transient,
+            transient
+        );
         // The size guard can close the socket without consuming the oversized response.
         server.await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1);
     }
+}
+#[tokio::test]
+async fn a_busy_answer_is_asked_again_once_after_retry_after() {
+    for status in [429, 503, 502, 504] {
+        let (client, requests, server) = server_with_headers(vec![
+            (status, "Retry-After: 0\r\n", "{}".into()),
+            (200, "", serde_json::to_string(&record()).unwrap()),
+        ])
+        .await;
+        assert_eq!(
+            client.lookup(&track()).await.unwrap().status,
+            LyricsStatus::Found,
+            "{status}"
+        );
+        server.await.unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|r| r.starts_with("GET /api/get?")));
+    }
+    // Only once per request: a second busy answer ends the lookup, as transient.
+    let (client, requests, server) = server_with_headers(vec![
+        (503, "Retry-After: 0\r\n", "{}".into()),
+        (503, "Retry-After: 0\r\n", "{}".into()),
+    ])
+    .await;
+    let failure = client.lookup(&track()).await.unwrap_err();
+    assert!(failure.transient);
+    assert_eq!(failure.message, "LRCLIB returned HTTP 503");
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    // Longer than the lookup can wait: no second request, the quiet retries come back later.
+    let (client, requests, server) =
+        server_with_headers(vec![(429, "Retry-After: 60\r\n", "{}".into())]).await;
+    assert!(client.lookup(&track()).await.unwrap_err().transient);
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+#[test]
+fn retry_after_is_read_in_seconds_and_capped() {
+    for (header, wait) in [
+        (None, Some(RETRY_WAIT)),
+        (Some("0"), Some(Duration::ZERO)),
+        (Some(" 2 "), Some(Duration::from_secs(2))),
+        (Some("3"), None),
+        (Some("Wed, 21 Oct 2026 07:28:00 GMT"), Some(RETRY_WAIT)),
+        (Some("-1"), Some(RETRY_WAIT)),
+    ] {
+        assert_eq!(retry_wait(header), wait, "{header:?}");
+    }
+    assert!(RETRY_WAIT <= MAX_RETRY_WAIT);
+}
+#[tokio::test(start_paused = true)]
+async fn no_connection_is_asked_again_then_transient() {
+    // A port nothing listens on: the connection is refused (or, with the paused clock, times
+    // out), both times.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = Url::parse(&format!("http://{}/api/", listener.local_addr().unwrap())).unwrap();
+    drop(listener);
+    let started = tokio::time::Instant::now();
+    let failure = LrcLib::build(url, true)
+        .unwrap()
+        .lookup(&track())
+        .await
+        .unwrap_err();
+    assert!(failure.transient, "{failure}");
+    assert!(started.elapsed() >= RETRY_WAIT);
 }
 #[tokio::test]
 #[ignore = "requires live access to lrclib.net; queries an original nonexistent test title"]
