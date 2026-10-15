@@ -499,6 +499,53 @@ describe("frames on a boundary", () => {
   });
 });
 
+// Regression (dpr-change-no-resize): layouts are snapped to device pixels, but only a resize rebuilt
+// them, and a window moved between a 2× and a 1× screen of the same size never resizes.
+describe("the stage on a device pixel ratio change", () => {
+  interface Query {
+    media: string;
+    matches: boolean;
+    listeners: Set<() => void>;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(type: string, fn: () => void): void;
+  }
+  let queries: Query[] = [];
+
+  beforeEach(() => {
+    queries = [];
+    vi.stubGlobal("devicePixelRatio", 2);
+    vi.stubGlobal("matchMedia", (media: string): Query => {
+      const listeners = new Set<() => void>();
+      const query: Query = {
+        media,
+        matches: false,
+        listeners,
+        addEventListener: (_type, fn) => listeners.add(fn),
+        removeEventListener: (_type, fn) => listeners.delete(fn),
+      };
+      queries.push(query);
+      return query;
+    });
+  });
+
+  const watched = (): Query[] => queries.filter((q) => q.media.startsWith("(resolution") && q.listeners.size > 0);
+
+  it("rebuilds with the new ratio, then watches that one; destroy stops watching", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    const before = scenes()[0]?.find("drift")[0];
+    expect(watched().map((q) => q.media)).toEqual(["(resolution: 2dppx)"]);
+
+    vi.stubGlobal("devicePixelRatio", 1);
+    for (const fn of [...(watched()[0]?.listeners ?? [])]) fn();
+    expect(scenes()[0]?.find("drift")[0]).not.toBe(before);
+    expect(watched().map((q) => q.media)).toEqual(["(resolution: 1dppx)"]);
+
+    s.destroy();
+    expect(watched()).toEqual([]);
+  });
+});
+
 describe("the stage while paused", () => {
   it("tells the mode the clock isn't running", () => {
     const { stage: s } = stage();

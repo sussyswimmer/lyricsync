@@ -184,6 +184,12 @@ export class LyricStage {
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
+  /** Matches the device pixel ratio the layout was snapped to; see watchDpr. */
+  private dprQuery: MediaQueryList | null = null;
+  private readonly onDpr = (): void => {
+    this.watchDpr();
+    this.rebuild();
+  };
   /** A face (or a script subset of one, e.g. Vietnamese) finished loading: measured layouts redo themselves. */
   private readonly onFontsLoaded = (): void => {
     if (this.fontTimer) return;
@@ -203,6 +209,7 @@ export class LyricStage {
     this.resize?.observe(host);
     this.motionQuery = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
     this.motionQuery?.addEventListener("change", this.onMotion);
+    this.watchDpr();
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
   }
 
@@ -311,11 +318,26 @@ export class LyricStage {
   destroy(): void {
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
+    this.dprQuery?.removeEventListener("change", this.onDpr);
+    this.dprQuery = null;
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     if (this.fontTimer) clearTimeout(this.fontTimer);
     this.scene?.mode?.destroy();
     this.root.remove();
     this.host.classList.remove("ut-stage", "ut-hidden");
+  }
+
+  /**
+   * Layouts are snapped to device pixels. A window that moves to a screen of another scale (the
+   * settings window dragged to another display, an overlay kept across a primary-display change) may
+   * keep its CSS size, so no resize says so: listen for the current ratio to stop matching instead,
+   * then for the new one.
+   */
+  private watchDpr(): void {
+    this.dprQuery?.removeEventListener("change", this.onDpr);
+    const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 0;
+    this.dprQuery = typeof matchMedia === "function" && ratio > 0 ? matchMedia(`(resolution: ${ratio}dppx)`) : null;
+    this.dprQuery?.addEventListener("change", this.onDpr);
   }
 
   private look(scene: Scene): Look {
