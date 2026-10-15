@@ -181,3 +181,68 @@ async fn a_rejected_exact_lookup_still_searches() {
     server.await.unwrap();
     assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
 }
+#[test]
+fn null_fields_decode_to_values_matching_rejects() {
+    let record: Record = serde_json::from_value(serde_json::json!({
+        "id": 7,
+        "trackName": null,
+        "artistName": null,
+        "albumName": null,
+        "duration": null,
+        "instrumental": null,
+        "plainLyrics": null,
+        "syncedLyrics": null,
+    }))
+    .unwrap();
+    assert_eq!(
+        (record.track_name.as_str(), record.artist_name.as_str()),
+        ("", "")
+    );
+    assert!(record.duration.is_nan() && !record.instrumental);
+    assert!(matching::best(&track(), std::slice::from_ref(&record)).is_none());
+    let missing: Record = serde_json::from_value(serde_json::json!({ "id": 8 })).unwrap();
+    assert!(missing.duration.is_nan() && missing.album_name.is_empty());
+    // NaN goes back out as null, so a record survives a round trip.
+    let text = serde_json::to_string(&record).unwrap();
+    assert!(text.contains("\"duration\":null"));
+    assert!(serde_json::from_str::<Record>(&text)
+        .unwrap()
+        .duration
+        .is_nan());
+}
+#[tokio::test]
+async fn a_null_or_malformed_search_record_does_not_hide_the_match() {
+    let mut no_length = serde_json::to_value(record()).unwrap();
+    no_length["id"] = 2.into();
+    no_length["duration"] = serde_json::Value::Null;
+    let body = serde_json::json!([no_length, { "id": "not a number" }, record()]);
+    let (client, requests, server) =
+        server(vec![(404, "{}".into()), (200, body.to_string())]).await;
+    let found = client.lookup(&track()).await.unwrap();
+    assert_eq!(found.status, LyricsStatus::Found);
+    assert_eq!(found.synced, record().synced_lyrics);
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    // Only a body that isn't a list at all is an error.
+    let (client, _, server) = self::server(vec![(404, "{}".into()), (200, "{}".into())]).await;
+    assert!(client.lookup(&track()).await.is_err());
+    server.await.unwrap();
+}
+#[tokio::test]
+async fn an_unusable_exact_answer_falls_through_to_search() {
+    let mut no_length = serde_json::to_value(record()).unwrap();
+    no_length["duration"] = serde_json::Value::Null;
+    for exact in [no_length.to_string(), r#"{"id":"not a number"}"#.into()] {
+        let (client, requests, server) = server(vec![
+            (200, exact),
+            (200, serde_json::to_string(&vec![record()]).unwrap()),
+        ])
+        .await;
+        assert_eq!(
+            client.lookup(&track()).await.unwrap().status,
+            LyricsStatus::Found
+        );
+        server.await.unwrap();
+        assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
+    }
+}

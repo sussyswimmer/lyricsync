@@ -2,24 +2,53 @@ use super::{empty, matching, Provider, Track};
 use crate::contract::{Lyrics, LyricsSource, LyricsStatus};
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode, Url};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// LRCLIB answers HTTP 400 for a duration under one second.
 const MIN_DURATION_MS: f64 = 1000.0;
 pub const USER_AGENT: &str = "Undertone/0.1 (+https://github.com/sussyswimmer/lyricsync)";
+/// One LRCLIB record. Some records carry `null` where a value belongs (seen for `duration`), so
+/// every field but the id tolerates it: a missing or null name is empty, a duration NaN (which
+/// `matching` never accepts, and which serializes back to null) and `instrumental` false.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
     pub id: u64,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub track_name: String,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub artist_name: String,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub album_name: String,
+    #[serde(default = "unknown_duration", deserialize_with = "null_as_nan")]
     pub duration: f64,
+    #[serde(default, deserialize_with = "null_as_default")]
     pub instrumental: bool,
     pub plain_lyrics: Option<String>,
     pub synced_lyrics: Option<String>,
+}
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+fn unknown_duration() -> f64 {
+    f64::NAN
+}
+fn null_as_nan<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::NAN))
+}
+/// A search answer's records, without the ones that don't decode: one malformed record must not
+/// throw away the good match next to it.
+pub fn records(values: Vec<serde_json::Value>) -> Vec<Record> {
+    values
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect()
 }
 impl Record {
     pub fn into_lyrics(&self, key: &str) -> Lyrics {
@@ -117,6 +146,7 @@ impl LrcLib {
             .map(Some)
             .map_err(|e| format!("invalid LRCLIB JSON: {e}"))
     }
+    /// A body that isn't a JSON array is still an error.
     async fn search(&self, track: &Track, title: &str) -> Result<Vec<Record>, String> {
         self.json(
             "search",
@@ -127,7 +157,7 @@ impl LrcLib {
             false,
         )
         .await
-        .map(|value| value.unwrap_or_default())
+        .map(|values| records(values.unwrap_or_default()))
     }
 }
 #[async_trait]
@@ -144,8 +174,9 @@ impl Provider for LrcLib {
         {
             return Ok(empty(&track.key, LyricsStatus::NotFound));
         }
+        // An exact answer that isn't a usable record counts as a miss: search still gets its turn.
         let exact: Option<Record> = self
-            .json(
+            .json::<serde_json::Value>(
                 "get",
                 &[
                     ("track_name", track.title.clone()),
@@ -155,7 +186,8 @@ impl Provider for LrcLib {
                 ],
                 true,
             )
-            .await?;
+            .await?
+            .and_then(|value| serde_json::from_value(value).ok());
         if let Some(record) = exact {
             if matching::best(track, std::slice::from_ref(&record)).is_some() {
                 return Ok(record.into_lyrics(&track.key));
