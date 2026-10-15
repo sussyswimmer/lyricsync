@@ -30,9 +30,10 @@ export function withDefaults(settings: Settings): Settings {
 }
 
 /**
- * Reset to defaults: everything but `version`, per-song offsets (those go through `set_track_offset`),
- * and the two switches that aren't about how lyrics look: resetting must neither turn the lyrics back
- * on (or off) nor add or remove the login item. The shortcuts are reset, switch and bindings.
+ * Reset to defaults: everything but `version`, per-song offsets (kept, unless Reset also forgets them
+ * with its own `trackOffsetsMs: {}`), and the two switches that aren't about how lyrics look:
+ * resetting must neither turn the lyrics back on (or off) nor add or remove the login item. The
+ * shortcuts are reset, switch and bindings.
  */
 export function defaultsPatch(): Partial<Settings> {
   const patch: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);

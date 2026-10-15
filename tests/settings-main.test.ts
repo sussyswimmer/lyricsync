@@ -313,6 +313,25 @@ describe("settings window: Reset to defaults", () => {
     const patch = sent?.["patch"] as Partial<Settings>;
     expect(patch).not.toHaveProperty("enabled");
     expect(patch).not.toHaveProperty("launchAtLogin");
+    expect(patch).not.toHaveProperty("trackOffsetsMs");
     expect(patch).toMatchObject({ mode: "arc", shortcuts: DEFAULT_SETTINGS.shortcuts });
+  });
+
+  it("with Also clear sync, sends one patch that empties the map, not one set_track_offset per song", async () => {
+    const core = scriptedBridge({
+      get_settings: () => Promise.resolve({ ...structuredClone(DEFAULT_SETTINGS), size: 90, trackOffsetsMs: { "a|one|x|200": 150, "b|two|y|180": -100 } }),
+    });
+    const root = await boot(core);
+    root.withText("Reset to defaults…").click();
+    const forget = root.one("check");
+    expect(forget.textContent).toBe("Also clear sync for 2 songs");
+    const box = forget.children[0] as FakeElement;
+    box.checked = true;
+    root.withText("Reset").click();
+    await settle();
+    expect(core.calls("set_track_offset")).toEqual([]);
+    const sent = core.calls("update_settings");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.["patch"]).toMatchObject({ size: DEFAULT_SETTINGS.size, trackOffsetsMs: {} });
   });
 });

@@ -148,8 +148,8 @@ pub fn merge_shortcuts(current: &Shortcuts, patch: &Value) -> Shortcuts {
 }
 
 /// `update_settings`: a shallow top-level merge, validated field by field. Anything that isn't an
-/// object changes nothing. `trackOffsetsMs` replaces the whole map (the settings window never
-/// sends it; per-song changes go through `with_track_offset`).
+/// object changes nothing. `trackOffsetsMs` replaces the whole map (the settings window sends it
+/// only as `{}`, to clear every song on Reset; per-song changes go through `with_track_offset`).
 pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
     let mut next = current.clone();
     next.version = SETTINGS_VERSION;

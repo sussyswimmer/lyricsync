@@ -134,11 +134,11 @@ async function boot(host: HTMLElement): Promise<void> {
       sync.editNow(patch);
     },
     setTrackOffset: (key, ms) => sync.setTrackOffset(key, ms),
+    // One save either way. Forgetting every song's sync replaces the whole map, which is the intent, so
+    // it goes in the same patch rather than as one set_track_offset (and one settings.json write) per song.
     reset: (forgetSongs) => {
-      const offsets = Object.entries(view.trackOffsetsMs);
-      sync.edit(defaultsPatch());
+      sync.edit(forgetSongs ? { ...defaultsPatch(), trackOffsetsMs: {} } : defaultsPatch());
       sync.flush();
-      if (forgetSongs) for (const [key, ms] of offsets) if (ms !== 0) sync.setTrackOffset(key, 0);
     },
     suspendShortcuts,
   });
