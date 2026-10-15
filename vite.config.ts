@@ -11,6 +11,9 @@ export default defineConfig({
     // Never inline fonts as data: URLs. The app's CSP (default-src 'self', no font-src) refuses them,
     // and small Fontsource subsets (Cyrillic Extended, Vietnamese) would fall back to system faces.
     assetsInlineLimit: (file: string) => (/\.(woff2?|ttf|otf)$/i.test(file) ? false : undefined),
+    // The one large chunk is THIRD_PARTY_NOTICES.txt (about 750 kB of license text), loaded only
+    // when Settings › Licenses opens. Every chunk the pages load at startup stays far below this.
+    chunkSizeWarningLimit: 1024,
     rollupOptions: { input: {
       overlay: fileURLToPath(new URL("./index.html", import.meta.url)),
       settings: fileURLToPath(new URL("./settings.html", import.meta.url)),

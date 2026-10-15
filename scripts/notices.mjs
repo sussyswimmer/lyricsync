@@ -43,7 +43,7 @@ function readJson(path) {
 }
 
 function rule(title) {
-  return `${"=".repeat(78)}\n${title}\n${"=".repeat(78)}`;
+  return `${"=".repeat(48)}\n${title}\n${"=".repeat(48)}`;
 }
 
 function fonts() {

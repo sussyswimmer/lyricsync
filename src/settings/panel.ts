@@ -53,7 +53,12 @@ export interface PanelOptions {
   platform?: Platform;
   /** the keyboard layout, read on Windows as the window opens, as it comes to the front and as a shortcut row starts listening. Default: the engine's own. */
   keyLayout?: () => Promise<KeyLayout | null>;
+  /** the third-party notices Licenses shows. Default: THIRD_PARTY_NOTICES.txt, loaded on first open. */
+  licenses?: () => Promise<string>;
 }
+
+/** THIRD_PARTY_NOTICES.txt (scripts/notices.mjs), in its own chunk: most sessions never open it. */
+const loadNotices = (): Promise<string> => import("../../THIRD_PARTY_NOTICES.txt?raw").then((m) => m.default);
 
 type ColorKey = keyof Settings["colors"];
 
@@ -152,6 +157,8 @@ export class SettingsPanel {
   private readonly actions: PanelActions;
   private readonly platform: Platform;
   private readonly keyLayout: (() => Promise<KeyLayout | null>) | undefined;
+  private readonly loadLicenses: () => Promise<string>;
+  private licenses: HTMLDialogElement | null = null;
   private state: PanelState | null = null;
   private readonly renderers: ((state: PanelState) => void)[] = [];
   private readonly status: HTMLElement;
@@ -163,6 +170,7 @@ export class SettingsPanel {
     this.actions = actions;
     this.platform = options.platform ?? detectPlatform(typeof navigator === "undefined" ? undefined : navigator);
     this.keyLayout = options.keyLayout;
+    this.loadLicenses = options.licenses ?? loadNotices;
     this.el = h("div", "panel");
     this.status = h("p", "sr-only");
     this.status.setAttribute("role", "status");
@@ -768,7 +776,43 @@ export class SettingsPanel {
 
   private footer(): HTMLElement {
     const el = h("footer", "foot");
-    el.append(h("span", "foot-brand", "Undertone"), h("span", "", "Lyrics from LRCLIB"));
+    const licenses = h("button", "link-btn foot-link", "Licenses");
+    licenses.type = "button";
+    licenses.addEventListener("click", () => this.showLicenses(licenses));
+    el.append(h("span", "foot-brand", "Undertone"), h("span", "foot-item", "Lyrics from LRCLIB"), licenses);
     return el;
+  }
+
+  /**
+   * The fonts' and libraries' notices, which their licenses ask every copy to carry: a modal dialog
+   * over the window (Esc or Close returns to the Licenses button). The text loads on first open.
+   */
+  private showLicenses(opener: HTMLElement): void {
+    let dialog = this.licenses;
+    if (!dialog) {
+      const box = h("dialog", "licenses");
+      const titleId = nextId("licenses-title");
+      box.setAttribute("aria-labelledby", titleId);
+      const head = h("div", "licenses-head");
+      const title = h("h2", "licenses-title", "Licenses");
+      title.id = titleId;
+      const close = h("button", "btn", "Close");
+      close.type = "button";
+      close.addEventListener("click", () => box.close());
+      head.append(title, close);
+      const text = h("pre", "licenses-text", "Loading…");
+      // A scrolling region the keyboard can reach and scroll.
+      text.tabIndex = 0;
+      text.setAttribute("aria-label", "License texts");
+      box.append(head, hint("Undertone includes these fonts and libraries, each under the license shown with it."), text);
+      box.addEventListener("close", () => opener.focus());
+      this.loadLicenses().then(
+        (notices) => setText(text, notices),
+        () => setText(text, "The license texts couldn't be loaded. They're also in THIRD_PARTY_NOTICES.txt, next to the app."),
+      );
+      this.el.append(box);
+      this.licenses = dialog = box;
+    }
+    if (!dialog.open) dialog.showModal();
   }
 }

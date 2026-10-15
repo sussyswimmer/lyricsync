@@ -1204,9 +1204,83 @@ html.is-scrolled .top {
   font-weight: 600;
 }
 
-.foot-brand::after {
+.foot-brand::after,
+.foot-item::after {
   content: " \00b7";
   font-weight: 400;
+}
+
+.foot-link {
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.foot-link:hover {
+  color: var(--text);
+}
+
+/* Licenses: the third-party notices, in a modal over the whole window. */
+.licenses {
+  width: calc(100vw - 24px);
+  max-width: 560px;
+  height: calc(100vh - 48px);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--card-shadow), 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.licenses[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.licenses::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.licenses-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px 0 14px;
+}
+
+.licenses-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.licenses > .hint {
+  margin: 4px 14px 10px;
+}
+
+.licenses-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 14px 14px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font: 10.5px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll) transparent;
+}
+
+.licenses-text:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 /* ---------- reduced motion ---------- */
