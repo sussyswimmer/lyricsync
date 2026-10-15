@@ -297,9 +297,10 @@ export class SettingsPanel {
       enabled.set(on);
       setText(enabledCaption, on ? "Shown on your desktop, under your windows." : this.offCaption(s));
       login.set(s.settings.launchAtLogin);
+      // The Mac pane is "Login Items & Extensions" since macOS 15 and "Login Items" on 14: this reads right on both.
       const where =
         this.platform === "mac"
-          ? " Try again, or check System Settings › General › Login Items."
+          ? " Try again, or check Login Items in System Settings › General."
           : this.platform === "windows"
             ? " Try again, or check Settings › Apps › Startup."
             : " Try again.";

@@ -188,7 +188,7 @@ describe("General: lyrics on the desktop and Launch at login", () => {
     expect(note.getAttribute("role")).toBe("status");
     expect(note.textContent).toBe("");
     p.rerender({ loginError: true });
-    expect(note.textContent).toBe("Couldn't change Undertone's login item. Try again, or check System Settings › General › Login Items.");
+    expect(note.textContent).toBe("Couldn't change Undertone's login item. Try again, or check Login Items in System Settings › General.");
     p.rerender({ loginError: false });
     expect(note.textContent).toBe("");
     const win = mount("windows");
