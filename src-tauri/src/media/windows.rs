@@ -1,7 +1,7 @@
 //! SMTC reads and subscriptions run on Tauri's Tokio runtime, never on the window thread.
 use super::{
     artwork, epoch_ms, runtime::Backend, select_candidate, track_key, windows_sample_time,
-    Announced, Candidate, KeyHalves, MediaSource, Presence, RawTrack, Settle,
+    Announced, ArtCache, ArtKey, Candidate, KeyHalves, MediaSource, Presence, RawTrack, Settle,
 };
 use crate::contract::Source;
 use async_trait::async_trait;
@@ -37,19 +37,12 @@ pub struct WindowsSource {
     published: Arc<Notify>,
     announcements: Arc<Announcements>,
     settle: Mutex<Settle>,
-    art_generation: Arc<AtomicU64>,
     art: Arc<Mutex<ArtCache>>,
     art_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     disconnected: AtomicBool,
     last_error: Mutex<Option<String>>,
     /// Whether the last snapshot found any media session.
     presence: Mutex<Presence>,
-}
-#[derive(Default)]
-struct ArtCache {
-    key: Option<(usize, String, u64)>,
-    value: Option<String>,
-    retry_after: Option<Instant>,
 }
 /// Metadata and timeline changes announced by any session, counted for `Settle`.
 #[derive(Default)]
@@ -69,11 +62,14 @@ impl Announcements {
 struct Read {
     track: RawTrack,
     halves: KeyHalves,
-    art_key: (usize, String, u64),
+    art_key: ArtKey,
     thumbnail: Option<IRandomAccessStreamReference>,
 }
 struct Subscription {
     session: Session,
+    /// How many metadata changes this session has announced, for its `ArtKey`. Counted per
+    /// session, so another app's changes never make this one's artwork be fetched again.
+    generation: Arc<AtomicU64>,
     media: Option<i64>,
     playback: Option<i64>,
     timeline: Option<i64>,
@@ -133,7 +129,6 @@ impl WindowsSource {
             published: Arc::new(Notify::new()),
             announcements: Arc::default(),
             settle: Mutex::new(Settle::default()),
-            art_generation: Arc::new(AtomicU64::new(0)),
             art: Arc::new(Mutex::new(ArtCache::default())),
             art_task: Mutex::new(None),
             disconnected: AtomicBool::new(false),
@@ -165,6 +160,7 @@ impl WindowsSource {
             }
             let mut sub = Subscription {
                 session: session.clone(),
+                generation: Arc::default(),
                 media: None,
                 playback: None,
                 timeline: None,
@@ -172,7 +168,7 @@ impl WindowsSource {
             let wake = self.notify.clone();
             let published = self.published.clone();
             let announcements = self.announcements.clone();
-            let generation = self.art_generation.clone();
+            let generation = sub.generation.clone();
             sub.media = Some(session.MediaPropertiesChanged(&TypedEventHandler::new(
                 move |_, _| {
                     announcements.metadata.fetch_add(1, Ordering::AcqRel);
@@ -324,8 +320,8 @@ impl WindowsSource {
             return Ok(None);
         };
         let (session, app_id) = &active_sessions[selected];
-        // Capture invalidation generation before the async metadata read, so changes during it are retried next time.
-        let generation = self.art_generation.load(Ordering::Acquire);
+        // Counted before the async metadata read, so a change during it is fetched again next time.
+        let generation = self.generation(session);
         let properties = session.TryGetMediaPropertiesAsync()?.await?;
         let timeline = session.GetTimelineProperties()?;
         let status = session.GetPlaybackInfo()?.PlaybackStatus()?;
@@ -338,11 +334,11 @@ impl WindowsSource {
         let title = properties.Title()?.to_string();
         let artist = properties.Artist()?.to_string();
         let album = properties.AlbumTitle()?.to_string();
-        let art_key = (
-            session.as_raw() as usize,
-            track_key(&artist, &title, &album, duration_ms),
+        let art_key = ArtKey {
+            session: session.as_raw() as usize,
+            track_key: track_key(&artist, &title, &album, duration_ms),
             generation,
-        );
+        };
         Ok(Some(Read {
             halves: KeyHalves::new(app_id, &artist, &title, &album, duration_ms),
             art_key,
@@ -364,23 +360,29 @@ impl WindowsSource {
             },
         }))
     }
+    /// The metadata changes `session` has announced so far.
+    fn generation(&self, session: &Session) -> u64 {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|subscription| subscription.session == *session)
+            .map_or(0, |subscription| {
+                subscription.generation.load(Ordering::Acquire)
+            })
+    }
     fn artwork(
         &self,
-        key: (usize, String, u64),
+        key: ArtKey,
         thumbnail: Option<IRandomAccessStreamReference>,
     ) -> Option<String> {
-        {
-            let mut cache = self.art.lock().unwrap_or_else(|e| e.into_inner());
-            if cache.key.as_ref() == Some(&key)
-                && cache.retry_after.is_none_or(|time| Instant::now() < time)
-            {
-                return cache.value.clone();
-            }
-            *cache = ArtCache {
-                key: Some(key.clone()),
-                value: None,
-                retry_after: None,
-            };
+        let (value, fetch) = self
+            .art
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .lookup(&key, Instant::now());
+        if !fetch {
+            return value;
         }
         let thumbnail = thumbnail
             .as_ref()
@@ -400,20 +402,17 @@ impl WindowsSource {
                     .map_err(|e| e.to_string())?
             })
             .await;
-            let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-            // A late decode may complete after a track switch; never attach it to the new song.
-            if cache.key.as_ref() != Some(&key) {
-                return;
-            }
-            match result {
-                Ok(Ok(value)) => {
-                    cache.value = Some(value);
-                    wake.notify_one();
-                }
-                _ => cache.retry_after = Some(Instant::now() + Duration::from_secs(10)),
+            let changed = cache.lock().unwrap_or_else(|e| e.into_inner()).fetched(
+                &key,
+                result.ok().and_then(Result::ok),
+                Instant::now(),
+            );
+            if changed {
+                wake.notify_one();
             }
         }));
-        None
+        // Until the fetch lands: the song's current picture, or none for a new song.
+        value
     }
 }
 #[async_trait]

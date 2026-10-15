@@ -273,6 +273,72 @@ impl Settle {
     }
 }
 
+/// The artwork an SMTC read asks for: its session (the session object's address), its trackKey,
+/// and how many metadata changes that session had announced before the read. A player can publish
+/// a song's thumbnail after its title, so each announcement means the picture may have changed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtKey {
+    pub session: usize,
+    pub track_key: String,
+    pub generation: u64,
+}
+impl ArtKey {
+    fn same_song(&self, other: &ArtKey) -> bool {
+        self.session == other.session && self.track_key == other.track_key
+    }
+}
+
+/// The SMTC adapter's artwork: the picture last fetched for one session's song. While that song
+/// announces new metadata, or a failed fetch is retried, its picture stays published until a fetch
+/// brings a new one, instead of blanking while the fetch runs. (A song whose thumbnail comes after
+/// its title may so keep showing the thumbnail read with the title a moment longer.)
+#[derive(Debug, Default)]
+pub struct ArtCache {
+    key: Option<ArtKey>,
+    value: Option<String>,
+    retry_after: Option<Instant>,
+}
+impl ArtCache {
+    /// A failed fetch is tried again after this long, if the song is still read.
+    pub const RETRY: Duration = Duration::from_secs(10);
+
+    /// The picture to publish for a read of `key`, and whether to start a fetch for it.
+    pub fn lookup(&mut self, key: &ArtKey, now: Instant) -> (Option<String>, bool) {
+        if let Some(cached) = self.key.as_ref() {
+            let retry_due = self.retry_after.is_some_and(|time| now >= time);
+            if cached == key && !retry_due {
+                return (self.value.clone(), false);
+            }
+            if !cached.same_song(key) {
+                self.value = None;
+            }
+        }
+        self.key = Some(key.clone());
+        self.retry_after = None;
+        (self.value.clone(), true)
+    }
+
+    /// A fetch started by `lookup(key)` ended with `result` (`None` when it failed). Returns
+    /// whether the picture to publish changed. A late result for a key that is no longer the
+    /// latest (a decode finishing after a track switch) is dropped.
+    pub fn fetched(&mut self, key: &ArtKey, result: Option<String>, now: Instant) -> bool {
+        if self.key.as_ref() != Some(key) {
+            return false;
+        }
+        match result {
+            Some(value) if self.value.as_ref() != Some(&value) => {
+                self.value = Some(value);
+                true
+            }
+            Some(_) => false,
+            None => {
+                self.retry_after = Some(now + Self::RETRY);
+                false
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Update {
     pub now_playing: Option<NowPlaying>,
@@ -709,6 +775,80 @@ mod tests {
         };
         settle.give_up(same_length, during, t0 + Settle::WAIT);
         assert!(!settle.admit(&halves("Glass Harbor", 200_000.0), during, t0 + ms(1000)));
+    }
+    fn art_key(session: usize, title: &str, generation: u64) -> ArtKey {
+        ArtKey {
+            session,
+            track_key: track_key("Demo Artist", title, "Demo Album", 180_000.0),
+            generation,
+        }
+    }
+    #[test]
+    fn artwork_is_fetched_once_per_read_key_and_kept_for_it() {
+        let t0 = Instant::now();
+        let mut art = ArtCache::default();
+        let first = art_key(1, "Paper Lantern", 0);
+        // A new song: fetch, with nothing to show meanwhile; reads while it runs don't refetch.
+        assert_eq!(art.lookup(&first, t0), (None, true));
+        assert_eq!(art.lookup(&first, t0), (None, false));
+        assert!(art.fetched(&first, Some("cover-a".into()), t0));
+        assert_eq!(art.lookup(&first, t0), (Some("cover-a".into()), false));
+        // Another song, or the same song in another session, starts over with no picture.
+        for other in [
+            art_key(1, "Glass Harbor", 0),
+            art_key(2, "Paper Lantern", 0),
+        ] {
+            let mut art = ArtCache::default();
+            art.lookup(&first, t0);
+            art.fetched(&first, Some("cover-a".into()), t0);
+            assert_eq!(art.lookup(&other, t0), (None, true), "{other:?}");
+        }
+    }
+    #[test]
+    fn new_metadata_for_the_same_song_keeps_its_cover_until_a_fetch_replaces_it() {
+        let t0 = Instant::now();
+        let mut art = ArtCache::default();
+        let first = art_key(1, "Paper Lantern", 0);
+        art.lookup(&first, t0);
+        art.fetched(&first, Some("cover-a".into()), t0);
+        // The song announced metadata (a thumbnail published after the title): fetch again, and
+        // keep publishing the cover it has instead of null.
+        let announced = art_key(1, "Paper Lantern", 1);
+        assert_eq!(art.lookup(&announced, t0), (Some("cover-a".into()), true));
+        assert_eq!(art.lookup(&announced, t0), (Some("cover-a".into()), false));
+        // The same picture again changes nothing; a new one replaces it.
+        assert!(!art.fetched(&announced, Some("cover-a".into()), t0));
+        assert!(art.fetched(&announced, Some("cover-b".into()), t0));
+        assert_eq!(art.lookup(&announced, t0), (Some("cover-b".into()), false));
+        // A failed refresh keeps the cover too.
+        let again = art_key(1, "Paper Lantern", 2);
+        assert_eq!(art.lookup(&again, t0), (Some("cover-b".into()), true));
+        assert!(!art.fetched(&again, None, t0));
+        assert_eq!(art.lookup(&again, t0), (Some("cover-b".into()), false));
+    }
+    #[test]
+    fn a_failed_fetch_is_retried_later_and_late_results_are_dropped() {
+        let t0 = Instant::now();
+        let mut art = ArtCache::default();
+        let first = art_key(1, "Paper Lantern", 0);
+        art.lookup(&first, t0);
+        assert!(!art.fetched(&first, None, t0));
+        // Not before RETRY, then once, in the background.
+        let soon = t0 + ArtCache::RETRY - Duration::from_millis(1);
+        assert_eq!(art.lookup(&first, soon), (None, false));
+        assert_eq!(art.lookup(&first, t0 + ArtCache::RETRY), (None, true));
+        assert_eq!(art.lookup(&first, t0 + ArtCache::RETRY), (None, false));
+        // A fetch that ends after the next song was read never lands on it, nor does one for an
+        // older announcement of the same song.
+        let next = art_key(1, "Glass Harbor", 1);
+        art.lookup(&next, t0);
+        assert!(!art.fetched(&first, Some("cover-a".into()), t0));
+        assert_eq!(art.lookup(&next, t0), (None, false));
+        let newer = art_key(1, "Glass Harbor", 2);
+        art.lookup(&newer, t0);
+        assert!(!art.fetched(&next, Some("stale".into()), t0));
+        assert!(art.fetched(&newer, Some("cover-b".into()), t0));
+        assert_eq!(art.lookup(&newer, t0), (Some("cover-b".into()), false));
     }
     #[test]
     fn malformed_snapshots_are_rejected_and_position_is_bounded() {
