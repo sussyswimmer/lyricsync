@@ -8,7 +8,13 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// LRCLIB answers HTTP 400 for a duration under one second.
 const MIN_DURATION_MS: f64 = 1000.0;
-pub const USER_AGENT: &str = "Undertone/0.1 (+https://github.com/sussyswimmer/lyricsync)";
+/// Also sent for Spotify artwork. The version is Cargo's, which a test keeps equal to
+/// tauri.conf.json's (the installers') and package.json's.
+pub const USER_AGENT: &str = concat!(
+    "Undertone/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/sussyswimmer/lyricsync)"
+);
 /// One LRCLIB record. Some records carry `null` where a value belongs (seen for `duration`), so
 /// every field but the id tolerates it: a missing or null name is empty, a duration NaN (which
 /// `matching` never accepts, and which serializes back to null) and `instrumental` false.

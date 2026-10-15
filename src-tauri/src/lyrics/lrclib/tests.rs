@@ -182,6 +182,20 @@ async fn a_rejected_exact_lookup_still_searches() {
     assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
 }
 #[test]
+fn the_user_agent_and_every_manifest_carry_one_version() {
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(USER_AGENT.starts_with(&format!("Undertone/{version} (+https://")));
+    // A release bumps all three: tauri.conf.json names the installers, package.json the frontend,
+    // and Cargo.toml the user agent and the --diagnose header.
+    for (file, text) in [
+        ("tauri.conf.json", include_str!("../../../tauri.conf.json")),
+        ("package.json", include_str!("../../../../package.json")),
+    ] {
+        let manifest: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(manifest["version"], version, "{file}");
+    }
+}
+#[test]
 fn null_fields_decode_to_values_matching_rejects() {
     let record: Record = serde_json::from_value(serde_json::json!({
         "id": 7,
