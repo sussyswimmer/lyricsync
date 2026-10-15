@@ -286,7 +286,7 @@ export class LyricStage {
     if (!scene?.mode || !scene.cues) return false;
     const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused };
     const last = this.lastCue;
-    if (last && cue.line !== last.line && scene.mode.crossfadeLines) this.ghost(scene);
+    if (last && cue.line !== last.line && scene.mode.crossfades(cue)) this.ghost(scene);
     this.lastCue = cue;
     return scene.mode.paint(cue);
   }

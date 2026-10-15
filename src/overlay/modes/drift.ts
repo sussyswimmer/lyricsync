@@ -111,19 +111,21 @@ export class DriftMode implements ModeRenderer {
   private from = 0;
   private target = -1;
   private startedAt = 0;
-  /** whether the last paint was during playback */
-  private running = true;
 
   constructor(depth: number) {
     this.depth = depth;
   }
 
   /**
-   * The stage crossfades line changes under reduced motion, and while paused: a glide needs frames,
-   * and none follow a paused paint, so Drift cuts and the crossfade covers it.
+   * Drift cuts instead of gliding, and the stage crossfades the cut, under reduced motion; while paused
+   * (a glide needs frames, and none follow a paused paint); and on a jump further than MAX_GLIDE (a
+   * seek, a repeated song starting over). Not when the song ends: the stack fades out by itself.
    */
-  get crossfadeLines(): boolean {
-    return this.look ? !this.look.motion || !this.running : false;
+  crossfades(next: Cue): boolean {
+    const look = this.look;
+    if (!look) return false;
+    if (!look.motion || !next.running) return true;
+    return next.line >= 0 && this.target >= 0 && Math.abs(next.line - this.shown) > MAX_GLIDE;
   }
 
   build(host: HTMLElement, lines: readonly Line[], look: Look): void {
@@ -173,7 +175,6 @@ export class DriftMode implements ModeRenderer {
     const look = this.look;
     const box = this.box;
     if (!look || !box) return false;
-    this.running = cue.running;
     put(box, "opacity", cue.line < 0 ? "0" : "1");
     if (cue.line < 0) return false;
 

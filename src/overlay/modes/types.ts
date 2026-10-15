@@ -36,6 +36,9 @@ export interface ModeRenderer {
   paint(cue: Cue): boolean;
   restyle?(look: Look): void;
   destroy(): void;
-  /** True when the stage should crossfade the old line out as the focus line changes (modes that redraw per line). */
-  readonly crossfadeLines: boolean;
+  /**
+   * True when the stage should crossfade the old line out as the focus line changes to `next`'s, for
+   * a change the mode doesn't animate itself. Asked before the paint that shows `next`.
+   */
+  crossfades(next: Cue): boolean;
 }

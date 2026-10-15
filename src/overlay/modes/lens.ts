@@ -297,7 +297,7 @@ export class LensMode implements ModeRenderer {
   private generation = 0;
 
   /** The stage crossfades line changes only under reduced motion; otherwise Lens moves its lines itself (see mount). */
-  get crossfadeLines(): boolean {
+  crossfades(): boolean {
     return this.look ? !this.look.motion : true;
   }
 

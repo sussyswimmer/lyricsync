@@ -244,7 +244,7 @@ describe("Drift while paused", () => {
     const { mode, rows } = drift();
     mode.paint(cue(1, 5000));
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfadeLines).toBe(true);
+    expect(mode.crossfades(cue(2, 10_000, false, true))).toBe(true);
     expect(mode.paint(cue(2, 10_000, false, true))).toBe(false);
     expect(scaleOf(rows[2])).toBe(1);
     expect(yOf(rows[2])).toBe(0);
@@ -257,11 +257,42 @@ describe("Drift while paused", () => {
   it("glides again (no stage crossfade) once playing", () => {
     const { mode } = drift();
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfadeLines).toBe(true);
+    expect(mode.crossfades(cue(2, 12_500, false))).toBe(true);
     mode.paint(cue(1, 5016));
-    expect(mode.crossfadeLines).toBe(false);
+    expect(mode.crossfades(cue(2, 12_500))).toBe(false);
     clock += 16;
     expect(mode.paint(cue(2, 12_500))).toBe(true);
+  });
+});
+
+// Regression (drift-seek-cut): a jump of more than three lines while playing cut the whole stack in
+// one frame, where Arc and Lens fade a seek out and in.
+describe("Drift on a seek while playing", () => {
+  it("has the stage crossfade a jump of more than three lines, and glides a step", () => {
+    const { mode } = drift(1, lookFor(), EIGHT);
+    mode.paint(cue(1, 3500));
+    expect(mode.crossfades(cue(2, 5500))).toBe(false);
+    expect(mode.crossfades(cue(4, 9500))).toBe(false);
+    expect(mode.crossfades(cue(5, 11_500))).toBe(true);
+    // a repeated song starting over
+    mode.paint(cue(7, 15_500));
+    expect(mode.crossfades(cue(0, 500, true, true))).toBe(true);
+    // the stack fades out by itself after the last line
+    expect(mode.crossfades(cue(-1, 19_000))).toBe(false);
+  });
+
+  it("leaves a fading copy of the old line on the stage for a jump, none for a step", () => {
+    const { stage: s, root } = stage();
+    s.show({ kind: "lyrics", timeline: { lines: EIGHT, unsynced: false } }, "a");
+    const ghosts = (): number => root.children.filter((c) => c.classList.contains("ut-ghost")).length;
+    clock += 1000;
+    s.render(1500);
+    clock += 16;
+    s.render(3500);
+    expect(ghosts()).toBe(0);
+    clock += 600;
+    s.render(13_500);
+    expect(ghosts()).toBe(1);
   });
 });
 

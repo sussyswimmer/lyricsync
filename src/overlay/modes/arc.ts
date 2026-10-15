@@ -306,7 +306,7 @@ export class ArcMode implements ModeRenderer {
   private lastCue: Cue | null = null;
 
   /** The stage crossfades line changes only under reduced motion; otherwise Arc moves its lines itself. */
-  get crossfadeLines(): boolean {
+  crossfades(): boolean {
     return this.look ? !this.look.motion : true;
   }
 
