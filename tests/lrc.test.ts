@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LAST_LINE_MS, parseLrc, type Line } from "../src/core/lrc";
+import { LAST_LINE_MS, lrcShape, parseLrc, stripLrc, type Line } from "../src/core/lrc";
 import { LINE_GAP_MS, splitWords, timeWords } from "../src/core/timing";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
@@ -268,6 +268,21 @@ describe("parseLrc: word tags", () => {
       ["a ", 9000, 9400],
       ["b", 9400, 10_000],
     ]);
+  });
+});
+
+describe("lrcShape", () => {
+  it("counts timed lyric rows, their distinct stamps and untimed text rows", () => {
+    expect(lrcShape(neonMonsoon)).toEqual({ timedLyricRows: 8, distinctLyricStamps: 8, untimedTextRows: 0 });
+    const raw = "﻿[ti:Thing]\r\n[00:01.00][00:30.00]Chorus\r\n[00:01.00]<00:01.00>Again\r\n[00:05.00]\r\nloose words\r\n\r\n[00:75.00]bad stamp\r\nwords [00:09.00]";
+    expect(lrcShape(raw)).toEqual({ timedLyricRows: 2, distinctLyricStamps: 2, untimedTextRows: 1 });
+  });
+});
+
+describe("stripLrc", () => {
+  it("keeps each row's text, without stamps, word tags or metadata", () => {
+    const raw = "[ar:Demo]\n[00:01.00][00:30.00]Chorus <00:01.50>line\r\n\n[00:75.00]bad stamp\nloose  words\n[offset:+100]";
+    expect(stripLrc(raw)).toBe("Chorus line\n\nbad stamp\nloose words");
   });
 });
 

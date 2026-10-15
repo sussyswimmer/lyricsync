@@ -26,6 +26,10 @@ const TAG_SLACK_MS = 1000;
 const STAMP = /^\[\s*(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\s*\]/u;
 const WORD_TAG = /<\s*(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\s*>/gu;
 const META = /^\[\s*([a-z#][\w#-]*)\s*:(.*)\]\s*$/iu;
+/** Anything stamp-like, valid or not, anywhere in a row. */
+const ANY_STAMP = /\[\s*\d{1,3}:\d{1,2}/u;
+/** Stamp-like brackets at the start of a row, valid or not. */
+const LEADING_STAMPS = /^(?:\s*\[\s*\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\s*\])+/u;
 
 interface Mark {
   /** position in the normalized line text */
@@ -61,6 +65,10 @@ function readStamps(raw: string): { stamps: number[]; body: string } | null {
     rest = rest.slice(m[0].length).trimStart();
   }
   return stamps.length > 0 ? { stamps, body: rest } : null;
+}
+
+function rowsOf(raw: string): string[] {
+  return raw.replace(/^﻿/u, "").split(/\r\n|\r|\n/u);
 }
 
 /** Strips word tags and normalizes spaces, remembering where each tag sat in the clean text. */
@@ -148,7 +156,7 @@ function wordsFor(entry: Entry, end: number): Word[] {
  * never runs past `durationMs`.
  */
 export function parseLrc(raw: string, durationMs: number): Line[] {
-  const rows = raw.replace(/^\uFEFF/u, "").split(/\r\n|\r|\n/u);
+  const rows = rowsOf(raw);
   const offset = readOffset(rows);
 
   const entries: Entry[] = [];
@@ -187,4 +195,41 @@ export function parseLrc(raw: string, durationMs: number): Line[] {
     const end = Math.max(entry.start, Math.min(natural, limit));
     return { start: entry.start, end, text: entry.text, words: entry.text === "" ? [] : wordsFor(entry, end) };
   });
+}
+
+/** How an LRC file's text is timed, for telling usable timing from timing that would hold one line all song. */
+export interface LrcShape {
+  /** rows with a stamp and some text */
+  timedLyricRows: number;
+  /** distinct stamps among those rows */
+  distinctLyricStamps: number;
+  /** rows with text and no stamp anywhere, metadata left out */
+  untimedTextRows: number;
+}
+
+export function lrcShape(raw: string): LrcShape {
+  let timedLyricRows = 0;
+  let untimedTextRows = 0;
+  const stamps = new Set<number>();
+  for (const row of rowsOf(raw)) {
+    const line = row.trim();
+    if (line === "" || META.test(line)) continue;
+    const stamped = readStamps(line);
+    if (stamped) {
+      if (readBody(stamped.body).text === "") continue;
+      timedLyricRows++;
+      for (const stamp of stamped.stamps) stamps.add(stamp);
+    } else if (!ANY_STAMP.test(line)) {
+      untimedTextRows++;
+    }
+  }
+  return { timedLyricRows, distinctLyricStamps: stamps.size, untimedTextRows };
+}
+
+/** The text of an LRC file as plain lyrics, one row per line: stamps, word tags and metadata rows removed. */
+export function stripLrc(raw: string): string {
+  return rowsOf(raw)
+    .filter((row) => !META.test(row.trim()))
+    .map((row) => readBody(row.replace(LEADING_STAMPS, "")).text)
+    .join("\n");
 }

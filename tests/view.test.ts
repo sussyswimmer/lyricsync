@@ -84,6 +84,44 @@ describe("viewFor: found", () => {
     expect(view.kind === "lyrics" && view.timeline.unsynced).toBe(true);
   });
 
+  // Regression (degenerate-synced): the parser keeps the first line of a stamp and skips unstamped
+  // rows, so LRC with every row on one stamp, or with one stamped row over untimed text, held a single
+  // line on screen for the whole song while the plain lyrics went unused.
+  describe("synced LRC whose timing would hold one line all song", () => {
+    const FOUR = "First line here\nSecond line here\nThird line here\nFourth line here";
+
+    it("paces the plain lyrics when every row sits on one stamp", () => {
+      const synced = FOUR.split("\n").map((t) => `[00:00.00]${t}`).join("\n");
+      expect(viewFor(lyrics("found", { synced, plain: FOUR }), DURATION)).toEqual({ kind: "lyrics", timeline: pacePlain(FOUR, DURATION) });
+    });
+
+    it("paces the LRC's own text when only its first row is timed and there are no plain lyrics", () => {
+      // "[00:12.00]First line here", then three rows with no stamp
+      const synced = `[ar:Demo Artist]\n[00:12.00]${FOUR}`;
+      const view = viewFor(lyrics("found", { synced }), DURATION);
+      expect(view).toEqual({ kind: "lyrics", timeline: pacePlain(FOUR, DURATION) });
+      expect(view.kind === "lyrics" && view.timeline.unsynced).toBe(true);
+    });
+
+    it("keeps translated LRCs synced, with two or three rows on every stamp", () => {
+      for (const rows of [2, 3]) {
+        const synced = [1, 2, 3, 4]
+          .map((n) => Array.from({ length: rows }, (_, r) => `[00:0${2 * n}.00]line ${n} row ${r + 1}`).join("\n"))
+          .join("\n");
+        const view = viewFor(lyrics("found", { synced, plain: FOUR }), DURATION);
+        expect(view, `${rows} rows`).toEqual({ kind: "lyrics", timeline: { lines: parseLrc(synced, DURATION), unsynced: false } });
+        expect(view.kind === "lyrics" && view.timeline.lines.map((l) => l.text)).toEqual(["line 1 row 1", "line 2 row 1", "line 3 row 1", "line 4 row 1"]);
+      }
+    });
+
+    it("keeps a short song synced, and a song with a few untimed credit rows", () => {
+      const short = "[00:01.00]only line\n[00:03.00]and another";
+      expect(viewFor(lyrics("found", { synced: short, plain: FOUR }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: false } });
+      const credits = `Words and music by nobody in particular\n${neonMonsoon}`;
+      expect(viewFor(lyrics("found", { synced: credits }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: false } });
+    });
+  });
+
   it("is not-found when nothing usable is left", () => {
     expect(viewFor(lyrics("found"), DURATION)).toEqual({ kind: "not-found" });
     expect(viewFor(lyrics("found", { synced: "", plain: "" }), DURATION)).toEqual({ kind: "not-found" });
