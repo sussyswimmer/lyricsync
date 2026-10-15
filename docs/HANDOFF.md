@@ -204,3 +204,74 @@ Known gaps:
 Not verified: registration, conflicts, suspend and resume, the login item, and hiding the overlays when lyrics are off, all on a real Mac and PC.
 Needs from Codex: nothing.
 Contract: v3 (additive: `Settings.enabled`, `launchAtLogin`, `shortcuts`; `ShortcutAction`, `ShortcutState`, `ShortcutsStatus`; `shortcuts-status`, `get_shortcuts_status`, `suspend_shortcuts`).
+
+## 2026-10-15 · Claude Code · Fixes from the field-readiness audit
+Done: an audit of the code and docs in 8 areas (known gaps, docs drift, overlay, Settings window, Rust media and lyrics, Rust shell, SPEC compliance, visual QA) found 66 verified findings. Six groups fixed them on `claude/friendly-mayer-shv80u` (`git log 76a086d..HEAD`), and a docs pass brought every doc up to date.
+- **Desktop layer:**
+  - Windows: `windows.manifest` declares Windows 8 to 11. Windows lets an app make a layered child window only then, so before this the overlay likely failed to attach on every real PC.
+  - macOS: overlays can't be hidden, so ⌘H in Settings or Hide Others in another app no longer takes the lyrics away.
+  - Overlays cover each display's work area, clear of the menu bar, notch, Dock and taskbar, so Height 0% and 100% stay readable. Size still counts the whole screen.
+  - `--desktop-layer-test` follows the lyrics switch again. Settings can't be maximized or go full screen, and stops at 560 px wide.
+  - Webviews may only listen to events (no more `core:default`), so a page can't forge `settings-changed` or `now-playing` for the others. Rust tests check command, argument and event names against `src/bridge/types.ts`.
+- **App shell:**
+  - A runtime log, `undertone.log` (macOS `~/Library/Logs/com.undertone.desktop`, Windows `%LOCALAPPDATA%\com.undertone.desktop\logs`), never with lyric text. Setup failures, panics and every failure message go there (the debug flags' output stays on stderr), and `--diagnose` ends with its last 60 lines.
+  - `settings.rs` writes `settings.json` itself (temp file, fsync, rename) in the format tauri-plugin-store used, which is gone. An unreadable file is moved to `settings.corrupt-<secs>.json` instead of overwritten.
+  - Settings opens on the first launch, and when the saved settings were lost.
+  - macOS Launch at login follows System Settings' Allow in the Background (`login_item.rs`, `SMAppService.statusForLegacyURL`). Turning it on while that's off is refused, and System Settings opens at Login Items.
+  - LRCLIB and Spotify artwork use the OS proxy settings (not PAC or WPAD).
+  - `THIRD_PARTY_NOTICES.txt` (fonts, JavaScript and crates; `scripts/notices.mjs`, checked by CI) ships next to the app, and **Settings › Licenses** shows it.
+- **Overlay:**
+  - Arc shrinks a long line until it fits its curve: no more words off the screen edges.
+  - Lens keeps the next line on screen at Height 95% and up.
+  - Busy frames (Lens following a word, Drift glides) start at least 8.6 ms apart: every frame up to 100 Hz, about 60 fps at 120 Hz, 72 at 144 Hz.
+  - Synced LRC whose timing would hold one line all song is paced like plain lyrics. One stray word tag no longer discards a line's word timing.
+  - Chinese, Japanese and Korean lyrics are set in their own language's system faces, chosen once per song.
+  - Drift and Stack crossfade a jump of more than three lines. The stage re-snaps when the pixel ratio changes. The not-found chip is at least 5.4:1 over white. Drift rows balance their wraps.
+  - `pnpm coverage` enforces 90% on `lrc.ts`, `timing.ts` and `clock.ts`, and CI runs it.
+- **Settings window:**
+  - A command reply no longer overwrites a newer `settings-changed` echo.
+  - The recorder turns down Find, New, Open, Print, New tab and Redo everywhere, Ctrl+Y on Windows, and ⌘H, ⌘M, ⌘, ⌘` and F21–F24 on a Mac. On Windows it warns when the keyboard layout may put a saved `[` or `]` on another key.
+  - In the app: no browser context menu, reload, print or find. Light mode states reach 3:1, and Windows Contrast themes show the selection, switches and sliders.
+  - The font picker says when a face draws Vietnamese accents in a system font. Reset with "Also clear sync" is one save. A refused Launch at login is announced once.
+  - Mock: S opens Settings, and `?loginItem=refuse` refuses Launch at login. `tests/settings-sync.test.ts` covers the save logic.
+- **Now playing:**
+  - Artwork is a JPEG of at most 160 px (a PNG when the cover is see-through): about 8 KB per `now-playing` event instead of about 200 KB. This replaces the PNG of at most 300 px that earlier entries describe.
+  - Windows: another app's metadata change no longer blanks the cover.
+  - macOS: a player that is still launching isn't read, so it can't stall the main thread for 2 s. AppleScript numbers in Arabic and Persian formats parse.
+- **Lyrics:**
+  - A transient failure (network, timeout, 5xx, 429) is asked again once after `Retry-After`, then retried quietly after 5, 20 and 60 s on the current track. The lyrics appear when one try works, with no second loading view.
+  - A lookup for a song the user already skipped sends no request. A null or malformed LRCLIB record is skipped. Artist credits match as sets, and "(with X)" is stripped from titles.
+  - A plain-only result older than 30 days is rechecked quietly when the song plays, and upgrades live to synced lyrics.
+  - The user agent carries Cargo's version, and a test keeps `tauri.conf.json`, `package.json` and `Cargo.toml` on one version.
+- **Docs:**
+  - README, SPEC, INSTALL, USER_GUIDE, DESKTOP_LAYER, NOW_PLAYING and LYRICS match the code.
+  - New `docs/ACCEPTANCE.md`: numbered real-machine steps per OS for contract v3, for the Definition of done's CPU, sync and latency lines, and for this session's fixes.
+  - SPEC's ownership section records that Claude Code owns the whole repo since 2026-10-06.
+  - `tests/regress-docs.test.ts` now checks every Markdown file at the root and in docs/, that a present-tense "contract is vN" names `CONTRACT_VERSION`, that every command-line flag is documented outside this log, and that SPEC names every command and event.
+  - The `yPos` comment in both contract files now says work area.
+Tests: 758 vitest (24 files), 234 Rust (1 ignored: the live LRCLIB probe). `pnpm build` is clean.
+Decisions you can reverse:
+- Settings keeps its taskbar button on Windows while it is open. SPEC, README and INSTALL now say so.
+- macOS Launch at login keeps the autostart plugin's LaunchAgent and reads its real state, instead of moving to `SMAppService.mainApp`.
+- Arc shrinks long lines to fit. This reverses the C6 departure ("55% at most, then lets them run off the edges").
+- Busy frames are capped near 60 fps on high-refresh displays (`BUSY_FRAME_MS` in `overlay/controller.ts`). C8 said the loop sleeps between word boundaries, which didn't hold for Lens.
+- Undertone writes `settings.json` itself instead of through tauri-plugin-store.
+- Overlays are framed to the work area, so `yPos` is a share of the work area.
+Known gaps (the previous entry's list, updated):
+- Closed, pending a Mac: turning Undertone off under Allow in the Background is now visible to the app.
+- Narrowed: on non-US Windows layouts the default `[` and `]` may still sit on other keys, but Settings now warns under them (Latin layouts; others keep the US keys).
+- Narrowed: F21–F24 still can't be registered on macOS, but the recorder now turns them down there.
+- New: shortcut conflicts are rarely reported on macOS, and shortcuts inside another app are never detected (the docs now say so). A login item left pointing at a moved or deleted app can still show as on. An older echo landing after a write was sent can show an old value until the write's own echo; a full fix needs a revision number in the contract. PAC and WPAD proxies aren't supported.
+Not verified: none of this session's changes has run on a real Mac or PC. `docs/ACCEPTANCE.md` has the steps. The ones most likely to surprise:
+- Windows: the overlay attaches with the new manifest (`layered yes`, no `SetLayeredWindowAttributes` error) and follows the taskbar's work area. WebView2 honors the browser-key guard, `navigator.keyboard.getLayoutMap` and the Contrast-theme styles.
+- macOS: ⌘H and ⌥⌘H keep the lyrics, and whether ⌘H and ⌘M reach the recorder at all. The overlay re-frames when the Dock moves or resizes (if AppKit sends no screen-parameters notice then, only at the next wake or Space change). ServiceManagement links, and `statusForLegacyURL` reports Allow in the Background. `isFinishedLaunching` turns true for Spotify and Music. Whether AppleScript writes Arabic-Indic digits at all.
+- Both: release builds write the log; the first launch opens and focuses Settings; a corrupt `settings.json` is moved aside; the pages work with only the listen permissions; JPEG covers render; Lens CPU on 120 and 144 Hz and ProMotion displays; the CJK faces; Size on a secondary display; the quiet retry after sleep and wake; the system proxy.
+- Still from before: the Definition of done's CPU budget, ±150 ms sync and 1 s latency, the v3 shortcut and login-item checks, and the re-run of `--overlay-probe` for the covered-overlay fix.
+Follow-ups, not done:
+1. macOS: hide the app when Settings closes, so focus goes back to the previous app (audit finding 26). Needs a Mac to check.
+2. Refresh a moved app's login-item path at startup (finding 47), with a guard against translocated and disk-image paths.
+3. `--diagnose`: read a macOS player only once it has finished launching, and treat an exact `/api/get` answer that isn't a usable record as a miss, as the app does (its search already skips malformed records). It also prints the stored `launchAtLogin`, not the live login item.
+4. `release.yml`: also compare the tag with `Cargo.toml`'s and `package.json`'s versions (cargo test already fails when the three disagree).
+5. macOS: detect clashes with system shortcuts (HIToolbox `CopySymbolicHotKeys`).
+Needs from Codex: nothing.
+Contract: unchanged (v3). Only the `yPos` comment changed, in both files.
