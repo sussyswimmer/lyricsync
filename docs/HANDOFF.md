@@ -281,7 +281,7 @@ Not verified: none of this session's changes has run on a real Mac or PC. `docs/
 Follow-ups, not done:
 1. macOS: hide the app when Settings closes, so focus goes back to the previous app (audit finding 26). Needs a Mac to check.
 2. Refresh a moved app's login-item path at startup (finding 47), with a guard against translocated and disk-image paths.
-3. `--diagnose`: read a macOS player only once it has finished launching, and treat an exact `/api/get` answer that isn't a usable record as a miss, as the app does (its search already skips malformed records). It also prints the stored `launchAtLogin`, not the live login item.
+3. `--diagnose`: done on 2026-10-16 for the first two parts (`diagnose.rs`, two new tests). A macOS player whose newest process hasn't finished launching is listed as "running; still launching, not read" and gets no Apple event, with the app's 10 s grace counted from its launch date. An exact `/api/get` answer that isn't a usable record is logged as "unusable record, searching" and search runs, as in the app. Still open: it prints the stored `launchAtLogin`, not the live login item.
 4. `release.yml`: also compare the tag with `Cargo.toml`'s and `package.json`'s versions (cargo test already fails when the three disagree).
 5. macOS: detect clashes with system shortcuts (HIToolbox `CopySymbolicHotKeys`).
 Needs from Codex: nothing.
