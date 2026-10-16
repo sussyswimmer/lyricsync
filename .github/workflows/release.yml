@@ -31,13 +31,21 @@ jobs:
       release-id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v7
+      # The installers take their version from tauri.conf.json, the user agent and --diagnose from
+      # Cargo.toml, and the frontend from package.json: all three must name the tag.
       - name: Check the tag matches the app version
         run: |
-          version=$(jq -r .version src-tauri/tauri.conf.json)
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in src-tauri/tauri.conf.json"
-            exit 1
-          fi
+          failed=0
+          check() {
+            if [ "$GITHUB_REF_NAME" != "v$2" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match version $2 in $1"
+              failed=1
+            fi
+          }
+          check src-tauri/tauri.conf.json "$(jq -r .version src-tauri/tauri.conf.json)"
+          check package.json "$(jq -r .version package.json)"
+          check src-tauri/Cargo.toml "$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          exit "$failed"
       - name: Create or reuse the draft
         id: draft
         env:
