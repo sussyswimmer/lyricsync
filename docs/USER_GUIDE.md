@@ -43,6 +43,7 @@ Undertone adds itself to the apps your system starts at login. If the system ref
 
 - On Windows it's listed in **Settings › Apps › Startup**. If you turn it off there, this switch follows the next time you open Settings, point at the tray icon, or start Undertone.
 - On a Mac it's listed under **Allow in the Background** in **System Settings › General › Login Items & Extensions** (just **Login Items** on macOS 14). This switch follows it: turned off there, the switch shows off the next time you open Settings or point at the menu bar icon. Turning the switch on while Undertone is off there doesn't work: the note appears and System Settings opens at Login Items. Allow Undertone there, and the switch turns on the next time you open Settings or point at the menu bar icon.
+- If you move Undertone to another folder, open it once from its new place: it points the login item there, so it keeps starting at login. It leaves the login item alone while it runs from somewhere it won't be at your next login: a disk image, a Mac app still in the folder you downloaded it to (macOS runs it from a temporary copy until you move it), or on Windows an `undertone.exe` opened straight from a zip file.
 
 ## Style
 

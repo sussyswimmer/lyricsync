@@ -70,12 +70,18 @@ Both OSes, with the installed app:
 4. Turn it off, turn it on again, and point at the menu bar icon right away: the switch stays on (a plist macOS hasn't seen yet doesn't count as off).
 5. Run `chmod a-w ~/Library/LaunchAgents`, remove the plist first if it's there, and turn the switch on: it snaps back with the note. Undo with `chmod u+w ~/Library/LaunchAgents`.
 6. Turn it off from the menu: the plist is gone.
+7. Turn it on, quit Undertone, move `Undertone.app` from Applications to another folder (`~/Applications`, say) and open it there. `plutil -p ~/Library/LaunchAgents/Undertone.plist` shows the new path under `ProgramArguments`, the log has a line `launch at login: the login item started …; it now starts …`, and macOS may announce the background item once. Quit and open it again: no new log line, no new notice. Log out and back in: Undertone starts. Move it back to Applications and open it there to undo.
+8. With the switch on, quit Undertone, mount the `.dmg` and open Undertone from the disk image. The plist keeps its path, and the log says `… left as is while this one runs from a mounted disk image` (or `an App Translocation path`, where macOS runs a downloaded copy that was never moved). Quit it and eject the disk image.
+9. Run `--diagnose`. Under **Settings**, `login item:` names the plist, `starts` its path and `System Settings: Enabled`. After step 2 it says `Requires approval`; after step 6, `none`.
 
 ### Windows
 
 1. Turn on **Launch at login** in Settings. The Run key has a value `Undertone` with the path of `undertone.exe`. Sign out and back in: Undertone starts without a window.
 2. Turn Undertone off in **Settings › Apps › Startup** (or Task Manager's **Startup apps**). Open Settings, or point at the tray icon: the switch and the menu item show off.
 3. Turn it off from the tray menu: the Run value is gone.
+4. Turn it on and quit Undertone. Copy `undertone.exe` to another folder and start the copy: the Run value now holds the copy's path, and the log has a line `launch at login: the login item started …; it now starts …`. Start it again: no new line. Quit, then start the installed Undertone: the value points back at it.
+5. With the switch on, put `undertone.exe` in a zip, open the zip in Explorer and double-click the exe there, so it runs from the temp folder. The Run value keeps its path, and the log says `… left as is while this one runs from the temp folder`.
+6. Run `--diagnose`. Under **Settings**, `login item:` names `HKCU\…\Run › Undertone`, `starts` the path of `undertone.exe` and `Task Manager: enabled`. After step 2 it says `disabled`; after step 3, `none`.
 
 ## 5. Lyrics off, and the desktop layer after this session's fixes
 

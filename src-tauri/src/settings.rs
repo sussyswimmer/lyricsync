@@ -477,17 +477,74 @@ pub mod runtime {
             }
         }
     }
+    /// The plugin's LaunchAgent plist (`crate::login_item`).
+    #[cfg(target_os = "macos")]
+    fn plist(app: &AppHandle) -> Result<PathBuf, String> {
+        app.path()
+            .home_dir()
+            .map(|home| crate::login_item::legacy_plist(&home, &app.package_info().name))
+            .map_err(|e| e.to_string())
+    }
     /// What macOS does with the plugin's LaunchAgent plist (`crate::login_item`).
     #[cfg(target_os = "macos")]
     fn login_item_status(app: &AppHandle) -> isize {
-        match app.path().home_dir() {
-            Ok(home) => crate::login_item::native::status(&crate::login_item::legacy_plist(
-                &home,
-                &app.package_info().name,
-            )),
+        match plist(app) {
+            Ok(plist) => crate::login_item::native::status(&plist),
             Err(error) => {
                 applog!("launch at login: {error}");
                 crate::login_item::NOT_FOUND
+            }
+        }
+    }
+    /// The program the OS login item starts: the plist's on macOS, the Run value's on Windows.
+    /// `None` when there is no item, or (logged) when it can't be read.
+    fn login_item_program(app: &AppHandle) -> Option<String> {
+        #[cfg(target_os = "macos")]
+        let program = plist(app).and_then(|plist| crate::login_item::read_plist_program(&plist));
+        #[cfg(target_os = "windows")]
+        let program = crate::login_item::native::run_value(&app.package_info().name)
+            .map(|value| value.and_then(|(_, command)| crate::login_item::run_program(&command)));
+        program.unwrap_or_else(|error| {
+            applog!("launch at login: the login item's program: {error}");
+            None
+        })
+    }
+    /// A login item turned on before Undertone was moved still starts the old path: nothing, at
+    /// login, while it reads as on. Turning it on again makes the plugin write this copy's path
+    /// (`crate::login_item::refresh`), never while this copy runs from a temporary place.
+    fn refresh_login_item(app: &AppHandle, launch_at_login: bool) {
+        // Off: no item to point anywhere, so nothing to read.
+        if !launch_at_login {
+            return;
+        }
+        let here = match crate::login_item::Here::current() {
+            Ok(here) => here,
+            Err(error) => {
+                applog!("launch at login: {error}");
+                return;
+            }
+        };
+        let stored = login_item_program(app);
+        let os = std::env::consts::OS;
+        match crate::login_item::refresh(os, launch_at_login, stored.as_deref(), &here) {
+            crate::login_item::Refresh::Keep => {}
+            crate::login_item::Refresh::Temporary(place) => applog!(
+                "launch at login: the login item starts another copy of Undertone; left as is \
+                 while this one runs from {place}"
+            ),
+            crate::login_item::Refresh::Rewrite => {
+                let enabled = app
+                    .try_state::<AutoLaunchManager>()
+                    .ok_or_else(|| "unavailable".to_owned())
+                    .and_then(|launcher| launcher.enable().map_err(|e| e.to_string()));
+                match enabled {
+                    Ok(()) => applog!(
+                        "launch at login: the login item started {}; it now starts {}",
+                        stored.unwrap_or_default(),
+                        here.program
+                    ),
+                    Err(error) => applog!("launch at login: not pointed at this copy: {error}"),
+                }
             }
         }
     }
@@ -520,7 +577,8 @@ pub mod runtime {
     /// Loads stored settings into AppState before any window or service reads them, migrated to
     /// the current shape, with `launchAtLogin` taken from the OS login item (the user may have
     /// removed it while Undertone wasn't running), and written back when either changed them. A
-    /// missing file starts from the defaults; an unusable one is moved aside first
+    /// login item that's on is pointed at this copy if Undertone was moved (`refresh_login_item`).
+    /// A missing file starts from the defaults; an unusable one is moved aside first
     /// (`super::open`). An unknown data dir is logged and doesn't stop the app. The autostart
     /// plugin is set up before the app's setup, so it can be read here. True when Settings should
     /// open on this launch (`Opened::show_settings`): the first one, or the settings were lost.
@@ -543,6 +601,7 @@ pub mod runtime {
         };
         let mut settings = opened.settings;
         let adopted = super::adopt_login_item(&mut settings, login_item(app));
+        refresh_login_item(app, settings.launch_at_login);
         if opened.rewrite || adopted {
             persist(app, &settings);
         }
@@ -1526,6 +1585,38 @@ mod tests {
         assert!(!adopt_login_item(&mut settings, None), "unknown keeps it");
         assert!(adopt_login_item(&mut settings, Some(false)));
         assert_eq!(settings, defaults());
+    }
+
+    #[test]
+    fn startup_points_a_login_item_that_is_on_at_this_copy() {
+        // A login item turned on before Undertone was moved starts nothing at login. `install`
+        // adopts the item's state first, so only an item that is on is pointed here, and turns it
+        // on again through the plugin only when `login_item::refresh` finds another copy.
+        let source = include_str!("settings.rs").replace("\r\n", "\n"); // a Windows checkout has CRLF
+        let body = |signature: &str| {
+            let start = source
+                .find(&format!("\n{signature} {{\n"))
+                .expect(signature);
+            &source[start..start + source[start..].find("\n    }\n").unwrap()]
+        };
+        let install = body("    pub fn install(app: &AppHandle) -> Result<bool, String>");
+        let order = [
+            "super::adopt_login_item(&mut settings, login_item(app));",
+            "refresh_login_item(app, settings.launch_at_login);",
+            "INSTALLED.store(true, Ordering::Release);",
+        ]
+        .map(|step| install.find(step).expect(step));
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+        let refresh = body("    fn refresh_login_item(app: &AppHandle, launch_at_login: bool)");
+        let decided = refresh
+            .find("crate::login_item::refresh(os, launch_at_login, stored.as_deref(), &here)")
+            .expect("decided by login_item::refresh");
+        let rewrite = refresh
+            .find("crate::login_item::Refresh::Rewrite => {")
+            .expect("a rewrite arm");
+        let enable = refresh.find("launcher.enable()").expect("enabled again");
+        assert!(decided < rewrite && rewrite < enable);
+        assert_eq!(refresh.matches(".enable()").count(), 1);
     }
 
     /// The mock bridge's `mergeSettings` runs the same cases (`tests/accelerator.test.ts`).

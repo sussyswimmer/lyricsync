@@ -21,6 +21,7 @@ desktop = [
     "dep:tauri-plugin-global-shortcut",
     "dep:windows-sys",
     "dep:windows",
+    "dep:windows-registry",
     "dep:objc2",
     "dep:objc2-foundation",
     "dep:objc2-app-kit",
@@ -104,6 +105,8 @@ strip = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", optional = true, features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 windows = { version = "0.62", optional = true, features = ["Foundation", "Media_Control", "Storage_Streams"] }
+# Launch at login: the Run value the autostart plugin wrote, and Task Manager's state (login_item.rs).
+windows-registry = { version = "0.6", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "net"] }

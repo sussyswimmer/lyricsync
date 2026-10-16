@@ -1,7 +1,7 @@
 //! X7 `undertone --diagnose`: the first thing to run when something breaks. It prints what
 //! Undertone sees right now (version and OS, media sources, the current track and its LRCLIB
-//! match, settings, the lyrics cache, displays and the desktop layer) without starting the app,
-//! then the running app's recent log, and saves the same text to
+//! match, settings and the login item, the lyrics cache, displays and the desktop layer) without
+//! starting the app, then the running app's recent log, and saves the same text to
 //! `undertone-diagnose-<timestamp>.txt` in the temp dir.
 //!
 //! Each section is gathered on its own and degrades to "unavailable: <reason>". Nothing here may
@@ -16,6 +16,7 @@ use crate::{
         CONTRACT_VERSION,
     },
     desktop_layer::geometry::Rect,
+    login_item::{self, Here, Refresh, StartupApproved},
     lyrics::{
         cache::Cache,
         empty,
@@ -131,7 +132,11 @@ fn write_report(dir: &Path, env: Env<'_>, echo: &mut dyn FnMut(&str)) -> (i32, O
         (Err(error), _) => Err(format!("no current track ({error})")),
     };
     out.emit(&lyrics_section(&lyrics, now_secs));
-    out.emit(&settings_section(&settings_path, &stored));
+    out.emit(&settings_section(
+        &settings_path,
+        &stored,
+        &native::login_item(),
+    ));
     out.emit(&cache_section(&data_dir.map(|dir| {
         let path = dir.join("lyrics");
         let contents = scan_cache(&path);
@@ -767,6 +772,7 @@ pub fn read_settings(path: &Path) -> StoredSettings {
 pub fn settings_section(
     path: &Result<PathBuf, String>,
     stored: &Result<StoredSettings, String>,
+    login_item: &Result<LoginItem, String>,
 ) -> Section {
     let body = path.as_ref().map_err(Clone::clone).and_then(|path| {
         let stored = stored.as_ref().map_err(Clone::clone)?;
@@ -787,7 +793,11 @@ pub fn settings_section(
         let effective = serde_json::to_value(stored.effective())
             .map_err(|error| format!("settings: {error}"))?;
         let mut lines = vec![field("file", path.display()), field("state", state)];
-        lines.extend(switch_lines(&stored.effective(), cfg!(target_os = "macos")));
+        lines.extend(switch_lines(
+            &stored.effective(),
+            cfg!(target_os = "macos"),
+            login_item,
+        ));
         // What is on disk, when it differs from what Undertone runs with.
         if let StoredSettings::Loaded {
             current: false,
@@ -805,9 +815,14 @@ pub fn settings_section(
     Section::new("Settings", body)
 }
 
-/// Lyrics on or off, launch at login, and the shortcuts, ahead of the full settings. Whether
-/// another app holds a key combination only the running app can tell (Settings › Shortcuts).
-pub fn switch_lines(settings: &Settings, macos: bool) -> Vec<String> {
+/// Lyrics on or off, launch at login with the OS login item as it is now, and the shortcuts,
+/// ahead of the full settings. Whether another app holds a key combination only the running app
+/// can tell (Settings › Shortcuts).
+pub fn switch_lines(
+    settings: &Settings,
+    macos: bool,
+    login_item: &Result<LoginItem, String>,
+) -> Vec<String> {
     let lyrics = if settings.enabled {
         "on"
     } else {
@@ -824,15 +839,16 @@ pub fn switch_lines(settings: &Settings, macos: bool) -> Vec<String> {
                 "off"
             },
         ),
-        field(
-            "shortcuts",
-            if shortcuts.enabled {
-                "on"
-            } else {
-                "off (the bindings below are kept)"
-            },
-        ),
     ];
+    lines.extend(login_item_lines(login_item, settings.launch_at_login));
+    lines.push(field(
+        "shortcuts",
+        if shortcuts.enabled {
+            "on"
+        } else {
+            "off (the bindings below are kept)"
+        },
+    ));
     // Planned as if on, so a binding this OS can't use shows even while shortcuts are off.
     let planned = plan(
         &Shortcuts {
@@ -854,6 +870,101 @@ pub fn switch_lines(settings: &Settings, macos: bool) -> Vec<String> {
             ShortcutAction::NudgeLater => "  later",
         };
         lines.push(field(name, text));
+    }
+    lines
+}
+
+/// The OS login item as it is right now (`crate::login_item`), which Undertone adopts on start.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoginItem {
+    /// `std::env::consts::OS`: how its program path compares.
+    pub os: &'static str,
+    /// Where the OS keeps it: the LaunchAgent plist, or the Run value.
+    pub place: String,
+    /// The program it starts; `Ok(None)` when there is no item.
+    pub program: Result<Option<String>, String>,
+    /// Whether the OS lets it run.
+    pub approval: Result<Approval, String>,
+    /// This copy of Undertone, which it should start.
+    pub here: Result<Here, String>,
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Approval {
+    /// macOS: `SMAppService.statusForLegacyURL`.
+    Status(isize),
+    /// Windows: Task Manager's StartupApproved entries.
+    Startup(StartupApproved),
+}
+impl LoginItem {
+    /// Whether Undertone reads it as on, as `settings::runtime` does; `None` when it can't tell.
+    pub fn is_on(&self) -> Option<bool> {
+        let exists = !matches!(self.program, Ok(None));
+        match self.approval {
+            Ok(Approval::Status(status)) => Some(login_item::is_on(exists, status)),
+            Ok(Approval::Startup(state)) => Some(exists && state != StartupApproved::Disabled),
+            Err(_) => None,
+        }
+    }
+}
+/// The login item under the stored switch: where it is and what it starts, whether the OS lets it
+/// run, and what Undertone changes on start (the switch to match it, the item to start this copy).
+pub fn login_item_lines(item: &Result<LoginItem, String>, launch_at_login: bool) -> Vec<String> {
+    let item = match item {
+        Ok(item) => item,
+        Err(error) => return vec![field("login item", format!("unknown: {error}"))],
+    };
+    let mut lines = match &item.program {
+        Ok(None) => vec![field("login item", format!("none (no {})", item.place))],
+        Ok(Some(program)) => vec![
+            field("login item", &item.place),
+            field("", format!("starts {program}")),
+        ],
+        Err(error) => vec![
+            field("login item", &item.place),
+            field("", format!("its program can't be read: {error}")),
+        ],
+    };
+    lines.push(field(
+        "",
+        match &item.approval {
+            Ok(Approval::Status(status)) => {
+                format!("System Settings: {}", login_item::status_name(*status))
+            }
+            Ok(Approval::Startup(StartupApproved::NoEntry)) => {
+                "Task Manager: no entry (Windows starts it)".into()
+            }
+            Ok(Approval::Startup(StartupApproved::Enabled)) => "Task Manager: enabled".into(),
+            Ok(Approval::Startup(StartupApproved::Disabled)) => {
+                "Task Manager: disabled (Settings › Apps › Startup)".into()
+            }
+            Err(error) => format!("whether it runs: unknown: {error}"),
+        },
+    ));
+    let Some(on) = item.is_on() else {
+        return lines;
+    };
+    if on != launch_at_login {
+        let state = if on { "on" } else { "off" };
+        lines.push(field(
+            "",
+            format!("on start Undertone turns launch at login {state} to match"),
+        ));
+    }
+    if let (Ok(Some(program)), Ok(here)) = (&item.program, &item.here) {
+        match login_item::refresh(item.os, on, Some(program), here) {
+            Refresh::Keep => {}
+            Refresh::Rewrite => lines.push(field(
+                "",
+                format!(
+                    "another copy: on start Undertone points it at {}",
+                    here.program
+                ),
+            )),
+            Refresh::Temporary(place) => lines.push(field(
+                "",
+                format!("another copy, left as is while this one runs from {place}"),
+            )),
+        }
     }
     lines
 }
@@ -1124,14 +1235,22 @@ pub fn file_stamp(secs: u64) -> String {
 
 /// The bundle identifier from tauri.conf.json, which names the app data dir.
 pub fn identifier() -> Result<String, String> {
+    config_text("identifier")
+}
+/// The product name from tauri.conf.json, which names the login item (the app's
+/// `package_info().name`, which the autostart plugin uses).
+pub fn product_name() -> Result<String, String> {
+    config_text("productName")
+}
+fn config_text(key: &str) -> Result<String, String> {
     let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
         .map_err(|error| format!("tauri.conf.json: {error}"))?;
     config
-        .get("identifier")
-        .and_then(|id| id.as_str())
-        .filter(|id| !id.is_empty())
+        .get(key)
+        .and_then(|text| text.as_str())
+        .filter(|text| !text.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| "tauri.conf.json has no identifier".into())
+        .ok_or_else(|| format!("tauri.conf.json has no {key}"))
 }
 /// Tauri's `app_data_dir` without an app: the OS data dir (`dirs::data_dir`) joined with the
 /// bundle identifier. Windows: the roaming AppData; macOS: `~/Library/Application Support`.
@@ -1439,12 +1558,13 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 mod native {
     use super::{
-        field, now_playing, session_line, smtc_source, windows_version, Display, Media,
-        RuntimeResult, SmtcSession, MEDIA_TIMEOUT,
+        field, now_playing, session_line, smtc_source, windows_version, Approval, Display,
+        LoginItem, Media, RuntimeResult, SmtcSession, MEDIA_TIMEOUT,
     };
     use crate::{
         contract::NowPlaying,
         desktop_layer::{self, geometry::Rect},
+        login_item::{self, Here},
         media::{epoch_ms, select_candidate, windows_sample_time, Candidate, RawTrack},
     };
     use std::{
@@ -1642,6 +1762,30 @@ mod native {
             return "Windows (version unknown)".into();
         }
         windows_version(info.major, info.minor, info.build)
+    }
+
+    /// The Run value the autostart plugin wrote, and Task Manager's state for it.
+    pub fn login_item() -> Result<LoginItem, String> {
+        let app = super::product_name()?;
+        let run = login_item::native::run_value(&app);
+        let hive = match &run {
+            Ok(Some((hive, _))) => *hive,
+            _ => "HKCU",
+        };
+        Ok(LoginItem {
+            os: "windows",
+            place: format!(r"{hive}\{} › {app}", login_item::RUN_KEY),
+            program: run.and_then(|value| {
+                value
+                    .map(|(_, command)| {
+                        login_item::run_program(&command)
+                            .ok_or_else(|| format!("{command:?} names no program"))
+                    })
+                    .transpose()
+            }),
+            approval: login_item::native::startup_approved(&app).map(Approval::Startup),
+            here: Here::current(),
+        })
     }
 
     pub fn media(runtime: &RuntimeResult) -> Media {
@@ -1993,12 +2137,16 @@ mod native {
 /// NSAppleScript are used directly, without the app's main-thread hop.
 #[cfg(all(feature = "desktop", target_os = "macos"))]
 mod native {
-    use super::{field, now_playing, player_line, Display, Media, PlayerInfo, RuntimeResult};
+    use super::{
+        field, now_playing, player_line, Approval, Display, LoginItem, Media, PlayerInfo,
+        RuntimeResult,
+    };
     use crate::{
         desktop_layer::{
             self,
             geometry::{self, Rect},
         },
+        login_item::{self, Here},
         media::{
             applescript::{self, Failure, Player, Reading},
             epoch_ms,
@@ -2050,6 +2198,21 @@ mod native {
                 || "macOS (version unknown)".into(),
                 |text| format!("macOS {text}"),
             )
+        })
+    }
+
+    /// The autostart plugin's LaunchAgent plist, and what macOS does with it.
+    pub fn login_item() -> Result<LoginItem, String> {
+        let home = std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .ok_or("HOME is not set")?;
+        let plist = login_item::legacy_plist(Path::new(&home), &super::product_name()?);
+        Ok(LoginItem {
+            os: "macos",
+            place: plist.display().to_string(),
+            program: login_item::read_plist_program(&plist),
+            approval: Ok(Approval::Status(login_item::native::status(&plist))),
+            here: Here::current(),
         })
     }
 
@@ -2300,7 +2463,7 @@ mod native {
 /// Anything else: the report still covers settings and the lyrics cache.
 #[cfg(not(all(feature = "desktop", any(target_os = "windows", target_os = "macos"))))]
 mod native {
-    use super::{Display, Media, RuntimeResult};
+    use super::{Display, LoginItem, Media, RuntimeResult};
     use std::path::Path;
 
     const UNSUPPORTED: &str = if cfg!(any(target_os = "windows", target_os = "macos")) {
@@ -2325,6 +2488,9 @@ mod native {
         Err(UNSUPPORTED.into())
     }
     pub fn desktop_layer() -> Result<Vec<String>, String> {
+        Err(UNSUPPORTED.into())
+    }
+    pub fn login_item() -> Result<LoginItem, String> {
         Err(UNSUPPORTED.into())
     }
 }
@@ -2828,16 +2994,50 @@ mod tests {
         );
     }
 
+    const PLIST: &str = "/Users/demo/Library/LaunchAgents/Undertone.plist";
+    const MAC_APP: &str = "/Applications/Undertone.app/Contents/MacOS/undertone";
+    const WIN_APP: &str = r"C:\Users\Demo\AppData\Local\Undertone\undertone.exe";
+    const RUN: &str = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run › Undertone";
+
+    /// The login item as `native::login_item` gathers it on a Mac, with this copy at `MAC_APP`.
+    fn mac_item(program: Result<Option<&str>, &str>, status: isize) -> LoginItem {
+        LoginItem {
+            os: "macos",
+            place: PLIST.into(),
+            program: program.map(|p| p.map(str::to_owned)).map_err(str::to_owned),
+            approval: Ok(Approval::Status(status)),
+            here: Ok(Here {
+                program: MAC_APP.into(),
+                temporary: None,
+            }),
+        }
+    }
+    /// The same on a PC, with this copy at `WIN_APP`.
+    fn windows_item(program: Option<&str>, approval: Result<StartupApproved, &str>) -> LoginItem {
+        LoginItem {
+            os: "windows",
+            place: RUN.into(),
+            program: Ok(program.map(str::to_owned)),
+            approval: approval.map(Approval::Startup).map_err(str::to_owned),
+            here: Ok(Here {
+                program: WIN_APP.into(),
+                temporary: None,
+            }),
+        }
+    }
+
     #[test]
     fn the_settings_section_shows_the_path_state_and_effective_values() {
         let path = Ok(PathBuf::from("/data/settings.json"));
-        let text = settings_section(&path, &Ok(StoredSettings::Missing)).render();
+        let none = Ok(mac_item(Ok(None), login_item::NOT_FOUND));
+        let text = settings_section(&path, &Ok(StoredSettings::Missing), &none).render();
         for expected in [
             "file:        /data/settings.json",
             "state:       no file yet: Undertone uses the defaults",
             "lyrics:      on\n",
-            "at login:    off\n",
-            "shortcuts:   on\n",
+            // The live login item right under the stored switch.
+            "at login:    off\n  login item:  none (no /Users/demo/Library/LaunchAgents/\
+             Undertone.plist)\n               System Settings: Not found\n  shortcuts:   on\n",
             "  toggle:    CmdOrCtrl+Alt+Shift+L\n",
             "effective:\n    {\n",
             "\"mode\": \"arc\"",
@@ -2854,34 +3054,36 @@ mod tests {
             current: false,
             stored: serde_json::json!({"size": 999}),
         };
-        let text = settings_section(&path, &Ok(repaired)).render();
+        let text = settings_section(&path, &Ok(repaired), &none).render();
         let stored = text
             .find("  stored:\n    {\n      \"size\": 999\n    }\n")
             .unwrap();
         let effective = text.find("  effective:\n").unwrap();
         assert!(stored < effective, "{text}");
         assert!(text.contains("\"size\": 140.0"));
-        let text =
-            settings_section(&path, &Ok(StoredSettings::Unreadable("not JSON".into()))).render();
+        let unreadable = StoredSettings::Unreadable("not JSON".into());
+        let text = settings_section(&path, &Ok(unreadable), &none).render();
         assert!(text.contains(
             "unusable (not JSON): on start Undertone moves it to settings.corrupt-<time>.json \
              and uses the defaults"
         ));
         let unknown: Result<PathBuf, String> = Err("HOME is not set".into());
         assert_eq!(
-            settings_section(&unknown, &Err("HOME is not set".into())).render(),
+            settings_section(&unknown, &Err("HOME is not set".into()), &none).render(),
             "\n== Settings ==\n  unavailable: HOME is not set\n"
         );
     }
 
     #[test]
     fn the_switches_show_lyrics_login_and_each_binding() {
-        let defaults = switch_lines(&Settings::default(), false).join("\n");
+        let unknown = Err("Undertone's desktop app runs on Windows and macOS only".into());
+        let defaults = switch_lines(&Settings::default(), false, &unknown).join("\n");
         assert_eq!(
             defaults,
             [
                 "lyrics:      on",
                 "at login:    off",
+                "login item:  unknown: Undertone's desktop app runs on Windows and macOS only",
                 "shortcuts:   on",
                 "  toggle:    CmdOrCtrl+Alt+Shift+L",
                 "  earlier:   CmdOrCtrl+Alt+Shift+]",
@@ -2900,10 +3102,11 @@ mod tests {
             },
             ..Settings::default()
         };
-        let mac = switch_lines(&settings, true).join("\n");
+        let item = Ok(mac_item(Ok(Some(MAC_APP)), login_item::ENABLED));
+        let mac = switch_lines(&settings, true, &item).join("\n");
         for expected in [
             "lyrics:      off: hidden on every display",
-            "at login:    launch Undertone",
+            "at login:    launch Undertone\nlogin item:  /Users/demo/Library/LaunchAgents/",
             "shortcuts:   off (the bindings below are kept)",
             "  toggle:    Alt+F22 (not usable on this OS)",
             "  earlier:   none",
@@ -2911,9 +3114,168 @@ mod tests {
         ] {
             assert!(mac.contains(expected), "{expected}\n{mac}");
         }
-        assert!(switch_lines(&settings, false)
+        assert!(switch_lines(&settings, false, &item)
             .join("\n")
             .contains("  toggle:    Alt+F22\n"));
+    }
+
+    #[test]
+    fn the_login_item_shows_where_it_is_what_it_starts_and_what_start_changes() {
+        let moved = "/Users/demo/Downloads/Undertone.app/Contents/MacOS/undertone";
+        let translocated = LoginItem {
+            here: Ok(Here {
+                program: "/private/var/folders/x/T/AppTranslocation/1/d/Undertone.app/x".into(),
+                temporary: Some("an App Translocation path"),
+            }),
+            ..mac_item(Ok(Some(moved)), login_item::ENABLED)
+        };
+        let no_here = LoginItem {
+            here: Err("this program: gone".into()),
+            ..mac_item(Ok(Some(moved)), login_item::ENABLED)
+        };
+        let starts_mac = format!("starts {MAC_APP}");
+        let starts_moved = format!("starts {moved}");
+        let points_here = format!("another copy: on start Undertone points it at {MAC_APP}");
+        let to_off = "on start Undertone turns launch at login off to match";
+        let to_on = "on start Undertone turns launch at login on to match";
+        let none = format!("none (no {RUN})");
+        let starts_win = format!("starts {}", WIN_APP.to_uppercase());
+        for (name, item, launch_at_login, expected) in [
+            (
+                "mac, starts this copy",
+                mac_item(Ok(Some(MAC_APP)), login_item::ENABLED),
+                true,
+                vec![PLIST, &starts_mac, "System Settings: Enabled"],
+            ),
+            (
+                "mac, moved",
+                mac_item(Ok(Some(moved)), login_item::ENABLED),
+                true,
+                vec![
+                    PLIST,
+                    &starts_moved,
+                    "System Settings: Enabled",
+                    &points_here,
+                ],
+            ),
+            (
+                "mac, moved and switch off: start adopts on, then points it here",
+                mac_item(Ok(Some(moved)), login_item::NOT_REGISTERED),
+                false,
+                vec![
+                    PLIST,
+                    &starts_moved,
+                    "System Settings: Not registered",
+                    to_on,
+                    &points_here,
+                ],
+            ),
+            (
+                "mac, translocated",
+                translocated,
+                true,
+                vec![
+                    PLIST,
+                    &starts_moved,
+                    "System Settings: Enabled",
+                    "another copy, left as is while this one runs from an App Translocation path",
+                ],
+            ),
+            (
+                "mac, off in System Settings: nothing to point",
+                mac_item(Ok(Some(moved)), login_item::REQUIRES_APPROVAL),
+                true,
+                vec![
+                    PLIST,
+                    &starts_moved,
+                    "System Settings: Requires approval (turned off under Allow in the Background)",
+                    to_off,
+                ],
+            ),
+            (
+                "mac, no plist",
+                mac_item(Ok(None), login_item::NOT_REGISTERED),
+                true,
+                vec![
+                    "none (no /Users/demo/Library/LaunchAgents/Undertone.plist)",
+                    "System Settings: Not registered",
+                    to_off,
+                ],
+            ),
+            (
+                "mac, unreadable plist",
+                mac_item(Err("names no program"), login_item::ENABLED),
+                true,
+                vec![
+                    PLIST,
+                    "its program can't be read: names no program",
+                    "System Settings: Enabled",
+                ],
+            ),
+            (
+                "mac, this copy unknown",
+                no_here,
+                true,
+                vec![PLIST, &starts_moved, "System Settings: Enabled"],
+            ),
+            (
+                "windows, same path in another case",
+                windows_item(Some(&WIN_APP.to_uppercase()), Ok(StartupApproved::Enabled)),
+                true,
+                vec![RUN, &starts_win, "Task Manager: enabled"],
+            ),
+            (
+                "windows, off in Task Manager",
+                windows_item(Some(WIN_APP), Ok(StartupApproved::Disabled)),
+                true,
+                vec![
+                    RUN,
+                    &format!("starts {WIN_APP}"),
+                    "Task Manager: disabled (Settings › Apps › Startup)",
+                    to_off,
+                ],
+            ),
+            (
+                "windows, moved, no Task Manager entry",
+                windows_item(Some(r"D:\Old\undertone.exe"), Ok(StartupApproved::NoEntry)),
+                false,
+                vec![
+                    RUN,
+                    r"starts D:\Old\undertone.exe",
+                    "Task Manager: no entry (Windows starts it)",
+                    to_on,
+                    &format!("another copy: on start Undertone points it at {WIN_APP}"),
+                ],
+            ),
+            (
+                "windows, no value",
+                windows_item(None, Ok(StartupApproved::NoEntry)),
+                false,
+                vec![&none, "Task Manager: no entry (Windows starts it)"],
+            ),
+            (
+                "windows, unreadable state",
+                windows_item(Some(r"D:\Old\undertone.exe"), Err("access denied")),
+                false,
+                vec![
+                    RUN,
+                    r"starts D:\Old\undertone.exe",
+                    "whether it runs: unknown: access denied",
+                ],
+            ),
+        ] {
+            let lines = login_item_lines(&Ok(item), launch_at_login);
+            let labels: Vec<String> = expected
+                .iter()
+                .enumerate()
+                .map(|(i, text)| field(if i == 0 { "login item" } else { "" }, text))
+                .collect();
+            assert_eq!(lines, labels, "{name}");
+        }
+        assert_eq!(
+            login_item_lines(&Err("HOME is not set".into()), true),
+            ["login item:  unknown: HOME is not set"]
+        );
     }
 
     #[test]
@@ -2938,6 +3300,17 @@ mod tests {
         }))
         .render();
         assert!(text.contains("none yet"));
+    }
+
+    #[test]
+    fn the_login_item_is_named_after_the_product() {
+        // The autostart plugin names the plist and the Run value after `package_info().name`,
+        // which Tauri takes from productName.
+        assert_eq!(product_name().as_deref(), Ok("Undertone"));
+        assert_eq!(
+            login_item::legacy_plist(Path::new("/Users/demo"), &product_name().unwrap()),
+            PathBuf::from(PLIST)
+        );
     }
 
     #[test]
