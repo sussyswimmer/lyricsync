@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Undertone app icon (original artwork). Regenerate every size from a 1024 px PNG render of this file:
+       pnpm tauri icon <render>.png, then delete the android/ and ios/ folders it adds. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#173a42"/>
+      <stop offset="0.55" stop-color="#0d1a1f"/>
+      <stop offset="1" stop-color="#2a1622"/>
+    </linearGradient>
+    <radialGradient id="teal" cx="0.22" cy="0.16" r="0.62">
+      <stop offset="0" stop-color="#2f5a60" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2f5a60" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="plum" cx="0.86" cy="0.92" r="0.58">
+      <stop offset="0" stop-color="#6a3348" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#6a3348" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#teal)"/>
+    <rect x="100" y="100" width="824" height="824" fill="url(#plum)"/>
+  </g>
+  <!-- previous line, faded -->
+  <path d="M 360 371 L 664 371" stroke="#8d93a0" stroke-opacity="0.5" stroke-width="34" stroke-linecap="round" fill="none"/>
+  <!-- the current line bent into an arch, as Arc mode draws it: two words sung (glowing), one upcoming -->
+  <path d="M 262.0 551.4 A 540 540 0 0 1 380.6 506.2" stroke="#f2a65a" stroke-width="64" stroke-linecap="round" fill="none" filter="url(#glow)" opacity="0.8"/>
+  <path d="M 473.3 491.4 A 540 540 0 0 1 583.7 494.8" stroke="#f2a65a" stroke-width="64" stroke-linecap="round" fill="none" filter="url(#glow)" opacity="0.8"/>
+  <path d="M 262.0 551.4 A 540 540 0 0 1 380.6 506.2" stroke="#f2a65a" stroke-width="64" stroke-linecap="round" fill="none"/>
+  <path d="M 473.3 491.4 A 540 540 0 0 1 583.7 494.8" stroke="#f2a65a" stroke-width="64" stroke-linecap="round" fill="none"/>
+  <path d="M 675.3 515.3 A 540 540 0 0 1 762.0 551.4" stroke="#f1ece3" stroke-width="64" stroke-linecap="round" fill="none"/>
+  <!-- next line, faded -->
+  <path d="M 404 691 L 620 691" stroke="#8d93a0" stroke-opacity="0.5" stroke-width="34" stroke-linecap="round" fill="none"/>
+</svg>

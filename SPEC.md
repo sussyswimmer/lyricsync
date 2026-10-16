@@ -9,7 +9,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 - Highlights word by word as the song plays.
 - Default colors come from the album cover. The user can override every color.
 - Fully customizable: style (Arc / Lens / Drift / Stack), font, size, curve, height, glow, opacity.
-- Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon and no taskbar button.
+- Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
 
@@ -24,7 +24,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 | App shell | **Tauri v2**, Rust stable |
 | Frontend | **Vite + TypeScript**, no UI framework (the overlay is a per-frame renderer; keep it lean) |
 | Package manager | pnpm |
-| Persistence | `tauri-plugin-store` |
+| Persistence | `settings.json` in the app data folder, written by `settings.rs` itself (temp file, fsync, rename), in the `{"settings": …}` shape `tauri-plugin-store` used before |
 | Other plugins | `tray-icon` feature, `tauri-plugin-autostart`, `tauri-plugin-single-instance`, `tauri-plugin-global-shortcut` |
 | Lyrics source | LRCLIB (`https://lrclib.net/api`), free, no key |
 | Tests | `vitest` (TS), `cargo test` (Rust) |
@@ -38,7 +38,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 │   └─ macos: Spotify/Music via  ├─► events ──► all webviews         │
 │      AppleScript               │                                   │
 │ lyrics::Service (LRCLIB+cache)─┘                                   │
-│ settings::Store ──► settings-changed                               │
+│ settings.rs (settings.json) ──► settings-changed                   │
 │ desktop_layer ── pins the overlay window(s) to the desktop layer   │
 │ tray / autostart / single-instance / global shortcut               │
 └────────────────────────────────────────────────────────────────────┘
@@ -72,9 +72,11 @@ undertone/
 
 **Never edit the other agent's paths.** If you need something from the other side, add a request to `docs/HANDOFF.md` and work against the mock until it lands.
 
+Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HANDOFF.md`, "Taking over the rest of the native side"); `AGENTS.md` is kept as the original work order.
+
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v3 today: `contract/contract.ts` is authoritative, and v2 and v3 below only add to v1.
 
 ```ts
 // contract/contract.ts
@@ -121,7 +123,7 @@ export interface Settings {
   font: { family: string; weight: number };
   size: number;        // 22–140 px at 1x scale
   curve: number;       // -100..100, used by "arc"
-  yPos: number;        // 0..100, % of display height
+  yPos: number;        // 0..100, % of the display's work area, without menu bar, Dock or taskbar
   glow: number;        // 0..100
   opacity: number;     // 20..100
   showWhen: "playing" | "always";
@@ -146,19 +148,68 @@ export const DEFAULT_SETTINGS: Settings = {
 |---|---|---|
 | `now-playing` | `NowPlaying \| null` | Track change, play/pause, seek, and a resync at least every 1 s while playing. `null` when nothing is playing. |
 | `lyrics` | `Lyrics` | `status: "loading"` immediately on track change, then the result. |
-| `settings-changed` | `Settings` | After any successful update, from any window or the tray. |
+| `settings-changed` | `Settings` | After any successful update: from a window, the tray, a global shortcut, or a login-item check that found the OS's state changed. |
 
 **Commands (webview → Rust)**
 
 | Command | Returns |
 |---|---|
 | `get_settings()` | `Settings` |
-| `update_settings(patch: Partial<Settings>)` | `Settings` (validated and clamped) |
+| `update_settings(patch: Partial<Settings>)` | `Settings`. Each field is validated and clamped on its own, and an invalid value keeps the current one. A partial `colors`, `font` or `shortcuts` changes only the keys it has; `trackOffsetsMs` replaces the whole map. |
 | `get_now_playing()` | `NowPlaying \| null` |
 | `get_lyrics(trackKey: string)` | `Lyrics` |
 | `refetch_lyrics(trackKey: string)` | `()` (bypasses the cache; result arrives on the `lyrics` event) |
-| `set_track_offset(trackKey: string, ms: number)` | `Settings` |
+| `set_track_offset(trackKey: string, ms: number)` | `Settings` (`ms` clamped to ±2000; 0 removes the song's entry) |
 | `open_settings()` / `quit()` | `()` |
+
+**Contract v2 (additive, 2026-10-06).** `CONTRACT_VERSION = 2`. Nothing above changed; `Settings.version` stays 1.
+
+```ts
+/** Why nothing is reported: macOS Automation is off for a running player, or no supported player runs. */
+export type MediaProblem = "automation-denied" | "no-player";
+
+export interface MediaStatus {
+  /** the player being reported, or the player with the problem; null when none */
+  source: Source | null;
+  problem: MediaProblem | null;
+}
+```
+
+| Event / command | Payload / returns | When |
+|---|---|---|
+| `media-status` event | `MediaStatus` | Right after the `now-playing` it goes with, only when it changed. A reported track (playing or paused) gives `{ source, problem: null }`; otherwise a running player with Automation denied gives `"automation-denied"` (Spotify first), no supported player or media session gives `"no-player"`, and anything else gives `{ source: null, problem: null }`. |
+| `get_media_status()` | `MediaStatus` | The last status sent. |
+
+**Contract v3 (additive, 2026-10-06).** `CONTRACT_VERSION = 3`. `Settings.version` stays 1; stored settings without the new fields get their defaults.
+
+```ts
+export type ShortcutAction = "toggleLyrics" | "nudgeEarlier" | "nudgeLater";
+
+/** Accelerators such as "CmdOrCtrl+Alt+Shift+L": modifiers (at least one of CmdOrCtrl, Control,
+ *  Alt or Super, plus optional Shift) then one key. "" leaves that action without a shortcut. */
+export interface Shortcuts {
+  enabled: boolean;      // false turns every global shortcut off
+  toggleLyrics: string;
+  nudgeEarlier: string;  // +50 ms for the current song
+  nudgeLater: string;    // −50 ms for the current song
+}
+
+export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
+export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
+
+// Settings gains:
+enabled: boolean;        // default true; false hides the lyrics everywhere
+launchAtLogin: boolean;  // default false; the OS login item follows it
+shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
+```
+
+| Event / command | Payload / returns | When |
+|---|---|---|
+| `shortcuts-status` event | `ShortcutsStatus` | After every registration pass, only when it changed. `"unavailable"` means the OS refused the registration: on Windows, another app's global shortcut or a combination Windows keeps for itself; macOS rarely refuses. Shortcuts that work only inside another app are never detected. |
+| `get_shortcuts_status()` | `ShortcutsStatus` | The last status sent. |
+| `suspend_shortcuts(suspended: boolean)` | `()` | Settings suspends the global shortcuts while it records a new one, so the old binding doesn't swallow the keys. Rust resumes on `false`, after 30 s, or when Settings hides, is minimized or loses focus. |
+
+`enabled` replaces the tray's runtime-only "Hide lyrics" state: the tray item, the toggle shortcut and the Settings switch all change it, and it persists. `launchAtLogin` changes the login item in the same update (a failure keeps the old value and returns an error). Rust adopts the login item's real state at startup, whenever Settings opens and when the pointer enters the tray icon, and emits `settings-changed` when it differs. On macOS that state includes System Settings' **Allow in the Background** (`login_item.rs`): turning the item on while it is off there fails, and System Settings opens at Login Items. Invalid or duplicate shortcut bindings keep their current value, like every other field. **Reset to defaults** in Settings resets the shortcuts but keeps `enabled` and `launchAtLogin`.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

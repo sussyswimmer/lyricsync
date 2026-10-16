@@ -1,0 +1,590 @@
+{
+  "_comment": "Global shortcut accelerators (contract v3). Both halves validate with these cases: accept maps an input to its canonical spelling; reject keeps the current value. \"\" (no shortcut) is valid and stays \"\". merge: what update_settings does to Settings.shortcuts (current, the patch's shortcuts value, the result), through the mock's mergeSettings and Rust's merge_patch.",
+  "accept": [
+    [
+      "CmdOrCtrl+Alt+Shift+L",
+      "CmdOrCtrl+Alt+Shift+L"
+    ],
+    [
+      "CmdOrCtrl+Alt+Shift+]",
+      "CmdOrCtrl+Alt+Shift+]"
+    ],
+    [
+      "CmdOrCtrl+Alt+Shift+[",
+      "CmdOrCtrl+Alt+Shift+["
+    ],
+    [
+      "cmdorctrl+alt+shift+l",
+      "CmdOrCtrl+Alt+Shift+L"
+    ],
+    [
+      "Shift+Alt+CmdOrCtrl+L",
+      "CmdOrCtrl+Alt+Shift+L"
+    ],
+    [
+      "CommandOrControl+Option+Shift+]",
+      "CmdOrCtrl+Alt+Shift+]"
+    ],
+    [
+      "COMMANDORCONTROL+OPTION+K",
+      "CmdOrCtrl+Alt+K"
+    ],
+    [
+      "Ctrl+Alt+Delete",
+      "Control+Alt+Delete"
+    ],
+    [
+      "Control+Shift+F12",
+      "Control+Shift+F12"
+    ],
+    [
+      "Cmd+Shift+[",
+      "Super+Shift+["
+    ],
+    [
+      "Command+Space",
+      "Super+Space"
+    ],
+    [
+      "super+up",
+      "Super+Up"
+    ],
+    [
+      "Shift+Super+Control+CmdOrCtrl+Alt+K",
+      "CmdOrCtrl+Control+Super+Alt+Shift+K"
+    ],
+    [
+      "Alt+F1",
+      "Alt+F1"
+    ],
+    [
+      "Alt+f24",
+      "Alt+F24"
+    ],
+    [
+      "Option+0",
+      "Alt+0"
+    ],
+    [
+      "Alt+9",
+      "Alt+9"
+    ],
+    [
+      "Alt+a",
+      "Alt+A"
+    ],
+    [
+      "Alt+z",
+      "Alt+Z"
+    ],
+    [
+      "CmdOrCtrl+pageup",
+      "CmdOrCtrl+PageUp"
+    ],
+    [
+      "CmdOrCtrl+PAGEDOWN",
+      "CmdOrCtrl+PageDown"
+    ],
+    [
+      "CmdOrCtrl+home",
+      "CmdOrCtrl+Home"
+    ],
+    [
+      "CmdOrCtrl+End",
+      "CmdOrCtrl+End"
+    ],
+    [
+      "CmdOrCtrl+insert",
+      "CmdOrCtrl+Insert"
+    ],
+    [
+      "CmdOrCtrl+backspace",
+      "CmdOrCtrl+Backspace"
+    ],
+    [
+      "CmdOrCtrl+TAB",
+      "CmdOrCtrl+Tab"
+    ],
+    [
+      "CmdOrCtrl+enter",
+      "CmdOrCtrl+Enter"
+    ],
+    [
+      "Alt+Left",
+      "Alt+Left"
+    ],
+    [
+      "Alt+RIGHT",
+      "Alt+Right"
+    ],
+    [
+      "Alt+down",
+      "Alt+Down"
+    ],
+    [
+      "Alt+;",
+      "Alt+;"
+    ],
+    [
+      "Alt+'",
+      "Alt+'"
+    ],
+    [
+      "Alt+,",
+      "Alt+,"
+    ],
+    [
+      "Alt+.",
+      "Alt+."
+    ],
+    [
+      "Alt+/",
+      "Alt+/"
+    ],
+    [
+      "Alt+\\",
+      "Alt+\\"
+    ],
+    [
+      "Alt+`",
+      "Alt+`"
+    ],
+    [
+      "Alt+-",
+      "Alt+-"
+    ],
+    [
+      "Alt+=",
+      "Alt+="
+    ]
+  ],
+  "reject": [
+    "L",
+    "Shift+L",
+    "Shift+F5",
+    "F5",
+    "Space",
+    "CmdOrCtrl",
+    "CmdOrCtrl+Alt",
+    "Shift",
+    "CmdOrCtrl+L+K",
+    "L+CmdOrCtrl",
+    "CmdOrCtrl+L+Shift",
+    "Ctrl+Control+L",
+    "Cmd+Super+L",
+    "Cmd+Command+L",
+    "CmdOrCtrl+CommandOrControl+L",
+    "Alt+Option+L",
+    "Shift+Shift+Alt+L",
+    "CmdOrCtrl+Alt+Shift+",
+    "+L",
+    "CmdOrCtrl++L",
+    "CmdOrCtrl+Alt++",
+    "+",
+    " CmdOrCtrl+L",
+    "CmdOrCtrl + L",
+    "CmdOrCtrl+L ",
+    " ",
+    "CmdOrCtrl+F25",
+    "CmdOrCtrl+F0",
+    "CmdOrCtrl+F01",
+    "CmdOrCtrl+Escape",
+    "CmdOrCtrl+Esc",
+    "CmdOrCtrl+Plus",
+    "CmdOrCtrl+NumpadAdd",
+    "CmdOrCtrl+Num0",
+    "CmdOrCtrl+CapsLock",
+    "CmdOrCtrl+KeyL",
+    "CmdOrCtrl+ArrowUp",
+    "CmdOrCtrl+Digit1",
+    "CmdOrCtrl+BracketLeft",
+    "CmdOrCtrl+MediaPlayPause",
+    "CmdOrCtrl+PrintScreen",
+    "CmdOrControl+L",
+    "CommandOrCtrl+L",
+    "Meta+L",
+    "Win+L",
+    "AltGr+L",
+    "Hyper+L",
+    "CmdOrCtrl+K",
+    "CmdOrCtrl+é",
+    "Kontrol+L",
+    "constructor+L",
+    "__proto__+L",
+    "toString+L"
+  ],
+  "merge": [
+    {
+      "why": "a partial object changes only its keys, stored in the canonical spelling",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "ctrl+alt+k"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "Control+Alt+K",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "the switch alone",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "enabled": false
+      },
+      "expected": {
+        "enabled": false,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "an unusable binding or a wrong type keeps the current value",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Shift+L",
+        "nudgeEarlier": 5,
+        "nudgeLater": null,
+        "enabled": "no"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "not an object changes nothing",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": "CmdOrCtrl+L",
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "null changes nothing",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": null,
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "an array changes nothing",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": [
+        "CmdOrCtrl+Alt+Shift+L"
+      ],
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "unknown keys are ignored",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Alt+F1",
+        "constructor": "Alt+F2"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "Alt+F1",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "\"\" clears, and several actions may have none",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "",
+        "nudgeLater": ""
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": ""
+      }
+    },
+    {
+      "why": "another action's binding keeps the current value",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "also when spelled differently",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "nudgeLater": "shift+alt+cmdorctrl+l"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "a swap applies",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+L"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "taking a binding its action gives up in the same patch applies",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "Control+Alt+K"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "Control+Alt+K",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "a rotation of all three applies",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+[",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+L"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+[",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+L"
+      }
+    },
+    {
+      "why": "two actions taking one new binding both keep theirs",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Control+Alt+K",
+        "nudgeLater": "Control+Alt+K"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "whatever the order",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "nudgeLater": "Control+Alt+K",
+        "toggleLyrics": "Control+Alt+K"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "undoing one clash can undo another",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+["
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "respelling an action's own binding is no change, so another can't take it",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "Control+Alt+K",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "ctrl+alt+k",
+        "nudgeEarlier": "CONTROL+ALT+K"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "Control+Alt+K",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "none never clashes, and a new binding can't take one in use",
+      "current": {
+        "enabled": false,
+        "toggleLyrics": "",
+        "nudgeEarlier": "",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Alt+F1",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+["
+      },
+      "expected": {
+        "enabled": false,
+        "toggleLyrics": "Alt+F1",
+        "nudgeEarlier": "",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "a stored set with duplicates falls back to the current bindings",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Control+Alt+K",
+        "nudgeEarlier": "Control+Alt+K",
+        "nudgeLater": "Control+Alt+K"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    },
+    {
+      "why": "CmdOrCtrl and Control are different settings, even where they press the same keys",
+      "current": {
+        "enabled": true,
+        "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      },
+      "patch": {
+        "toggleLyrics": "Control+Alt+Shift+]"
+      },
+      "expected": {
+        "enabled": true,
+        "toggleLyrics": "Control+Alt+Shift+]",
+        "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
+        "nudgeLater": "CmdOrCtrl+Alt+Shift+["
+      }
+    }
+  ]
+}

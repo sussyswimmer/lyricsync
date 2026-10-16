@@ -1,0 +1,45 @@
+/* Overlay window page: transparent, click-through (the window ignores the mouse; nothing here handles it).
+   Stage and mode styles are in stage.css. */
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The overlay window's stage fills the screen. */
+#app.ut-stage {
+  position: fixed;
+  inset: 0;
+}
+
+/* ---------- stand-in wallpapers (mock bridge in a plain browser only) ---------- */
+html[data-wallpaper="dusk"] body {
+  background:
+    radial-gradient(circle at 18% 12%, #2b4d52 0, transparent 55%),
+    radial-gradient(circle at 88% 92%, #5a2e3d 0, transparent 52%),
+    #0d1a1f;
+}
+
+html[data-wallpaper="light"] body {
+  background:
+    radial-gradient(circle at 20% 15%, #fdf6ea 0, transparent 60%),
+    radial-gradient(circle at 85% 85%, #cfe0ec 0, transparent 55%),
+    #e9eef2;
+}
+
+html[data-wallpaper="busy"] body {
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.55) 0 38px, rgba(0, 0, 0, 0.45) 38px 76px),
+    conic-gradient(from 40deg at 40% 55%, #f2d16b, #3e8fb0, #e2726e, #f4f1e8, #f2d16b);
+}

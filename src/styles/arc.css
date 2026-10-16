@@ -1,0 +1,35 @@
+/* ---------- arc ---------- */
+/* Three lines on parallel quadratic curves. Each line is its own SVG band so its soft shadow (a CSS
+   filter, which every engine supports on an outer <svg>) is sized to that line and only repaints
+   that band. */
+.arc {
+  position: absolute;
+  inset: 0;
+}
+
+.arc-line {
+  position: absolute;
+  left: 0;
+  overflow: visible;
+}
+
+.arc text {
+  white-space: pre;
+  /* glyphs sit at fractional positions along the curve; keep their outlines exact */
+  text-rendering: geometricPrecision;
+}
+
+/* A word's color and glow switch at once, as in the prototype; no transitions here. Every band
+   carries a drop-shadow filter, and a transition on any word re-rasters its whole filtered band on
+   every frame it runs (several times the work of a single repaint per word change). */
+
+/* off-screen text used once per build to measure line lengths */
+.arc-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}

@@ -24,8 +24,11 @@
         "shadow": false,
         "skipTaskbar": true,
         "focus": false,
+        "focusable": false,
         "resizable": false,
-        "visible": false
+        "visible": false,
+        "backgroundThrottling": "disabled",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       },
       {
         "label": "settings",
@@ -33,7 +36,13 @@
         "url": "settings.html",
         "width": 380,
         "height": 640,
-        "visible": false
+        "minWidth": 360,
+        "minHeight": 480,
+        "maxWidth": 560,
+        "maximizable": false,
+        "center": true,
+        "visible": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion"
       }
     ],
     "security": {
@@ -43,13 +52,30 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "publisher": "Undertone",
+    "homepage": "https://github.com/sussyswimmer/lyricsync",
+    "category": "Music",
+    "shortDescription": "Synced lyrics on your desktop",
+    "longDescription": "Undertone shows the synced lyrics of the song you're playing on your desktop, between the wallpaper and your icons.",
+    "resources": {
+      "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false
+    }
   }
 }

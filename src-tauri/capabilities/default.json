@@ -1,13 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Event access for overlay and settings webviews",
+  "description": "Event access for overlay and settings webviews, and Tauri's debug-build devtools hotkey",
   "windows": [
     "overlay",
     "overlay-*",
     "settings"
   ],
   "permissions": [
-    "core:default"
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:webview:allow-internal-toggle-devtools"
   ]
 }

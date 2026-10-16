@@ -1,0 +1,1377 @@
+/* Settings window (C7): about 380×640, light and dark aware. The live preview stays pinned on top while
+   the controls scroll beneath it. The preview's stage styles come from stage.css (via stage.ts). */
+
+:root {
+  color-scheme: light dark;
+  --ui: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --bg: #f2f1ee;
+  --card: #ffffff;
+  --card-shadow: 0 0 0 1px rgba(24, 26, 32, 0.06), 0 1px 2px rgba(24, 26, 32, 0.05);
+  --line: rgba(24, 26, 32, 0.08);
+  --text: #1b1d22;
+  --text-2: #41464f;
+  /* ≥ 4.5:1 for small text on both --bg and --card */
+  --muted: #62676f;
+  /* marks what is selected or on (tile ring, on switch, slider fill): ≥ 3:1 on --card and --bg, and
+     the switch's white knob on it too */
+  --accent: #cf6f22;
+  --accent-strong: #a4541a;
+  --focus: #b8601b;
+  --track: rgba(24, 26, 32, 0.13);
+  --thumb: #ffffff;
+  --thumb-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.22);
+  --switch-off: rgba(24, 26, 32, 0.16);
+  /* the off switch's edge, ≥ 3:1 on --card: its track and white knob alone are about 1.4:1 */
+  --switch-ring: rgba(24, 26, 32, 0.5);
+  --seg-bg: rgba(24, 26, 32, 0.06);
+  --seg-on: #ffffff;
+  --seg-on-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.12);
+  --btn: rgba(24, 26, 32, 0.06);
+  --btn-hover: rgba(24, 26, 32, 0.1);
+  /* white "Reset" label at ≥ 4.5:1 (about 4.7:1) */
+  --danger: #d0402f;
+  /* a shortcut another app holds, a login item the OS refused: ≥ 4.5:1 on --card and --bg */
+  --warn: #9a5200;
+  --scroll: rgba(24, 26, 32, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141519;
+    --card: #1e2026;
+    --card-shadow: 0 0 0 1px rgba(255, 255, 255, 0.055), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --line: rgba(255, 255, 255, 0.07);
+    --text: #eceef2;
+    --text-2: #c5cad3;
+    --muted: #8f97a4;
+    --accent: #f2a65a;
+    --accent-strong: #f6b878;
+    --focus: #f2a65a;
+    --track: rgba(255, 255, 255, 0.14);
+    --thumb: #f3f3f5;
+    --thumb-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    --switch-off: rgba(255, 255, 255, 0.16);
+    /* the light knob already stands out on the dark card */
+    --switch-ring: transparent;
+    --seg-bg: rgba(0, 0, 0, 0.28);
+    --seg-on: #3a3d46;
+    --seg-on-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35);
+    --btn: rgba(255, 255, 255, 0.07);
+    --btn-hover: rgba(255, 255, 255, 0.11);
+    /* white "Reset" label at ≥ 4.5:1 (about 5.1:1) */
+    --danger: #c63d2c;
+    --warn: #f0b35e;
+    --scroll: rgba(255, 255, 255, 0.2);
+  }
+}
+
+/* ---------- page ---------- */
+html.ut-settings {
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll) transparent;
+}
+
+html.ut-settings body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 13px/1.4 var(--ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* a window, not a page: a double click on a label doesn't select its text */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* not inside the preview stage: the modes measure text there exactly as in the overlay window */
+.top,
+.pv,
+.pv-bar,
+.pv-bar *,
+.panel,
+.panel *,
+.panel *::before,
+.panel *::after {
+  box-sizing: border-box;
+}
+
+.ut-settings #app {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ut-settings [hidden] {
+  display: none !important;
+}
+
+.ut-settings :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Zero specificity for the page part, so it only replaces the browser's button font and color: every
+   button class below (.step, .btn, .link-btn, .icon-btn…) still sets its own size, weight and color. */
+:where(.ut-settings) button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---------- pinned preview ---------- */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 12px 14px 10px;
+  background: var(--bg);
+  transition: box-shadow 0.2s ease;
+}
+
+html.is-scrolled .top {
+  box-shadow:
+    0 1px 0 var(--line),
+    0 10px 18px -16px rgba(0, 0, 0, 0.5);
+}
+
+@property --wp-1 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #0d1a1f;
+}
+@property --wp-2 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #2b4d52;
+}
+@property --wp-3 {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #5a2e3d;
+}
+
+.pv {
+  /* 16:9, but never taller than 38% of the window, so the controls keep room in a wide window */
+  width: min(100%, 38vh * 16 / 9);
+  margin-inline: auto;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.18),
+    0 8px 20px -10px rgba(0, 0, 0, 0.45);
+  /* keeps the rounded clip on composited lyric layers in WebKit */
+  isolation: isolate;
+}
+
+.pv-screen {
+  /* the menu bar's height: the lyric stage starts where the bar ends */
+  --pv-bar-h: 22px;
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background:
+    radial-gradient(circle at 18% 12%, var(--wp-2) 0, transparent 58%),
+    radial-gradient(circle at 88% 92%, var(--wp-3) 0, transparent 55%),
+    var(--wp-1);
+  transition:
+    --wp-1 0.9s ease,
+    --wp-2 0.9s ease,
+    --wp-3 0.9s ease;
+}
+
+/* Below the menu bar, not behind it: the stage's own Height clamp then keeps the focus line whole and
+   in view at Height 0, and lines above it slide out under the bar's edge. Only the wallpaper runs
+   under the bar. */
+.pv-stage.ut-stage {
+  position: absolute;
+  inset: var(--pv-bar-h) 0 0;
+}
+
+/* a slim menu bar naming what the preview plays */
+.pv-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--pv-bar-h);
+  padding: 0 7px 0 6px;
+  background: rgba(8, 10, 14, 0.34);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pv-cover {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: cover;
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2);
+}
+
+.pv-no-cover .pv-bar::before {
+  content: "\266a";
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 9px;
+}
+
+.pv-track {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pv-title {
+  font-weight: 600;
+}
+
+.pv-artist {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.pv-title:not(:empty) + .pv-artist:not(:empty)::before {
+  content: " \00b7  ";
+}
+
+.pv-badge {
+  flex: none;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pv-badge[data-kind="demo"] {
+  background: rgba(242, 166, 90, 0.26);
+  color: #ffd6ab;
+}
+
+/* Lyrics turned off on the desktop: a calm note in the corner; the preview keeps playing. */
+.pv-off {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: rgba(8, 10, 14, 0.52);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  animation: ut-fade 0.2s ease-out;
+}
+
+.pv-off .icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* ---------- groups and cards ---------- */
+.panel {
+  padding: 2px 14px 18px;
+}
+
+.group {
+  margin-top: 16px;
+}
+
+.group-title {
+  margin: 0 0 7px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.card {
+  padding: 2px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+}
+
+.card-plain {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ---------- media notice ---------- */
+/* Calm, not an alarm: a card warmed by the accent, the fix spelled out with the path to follow. The
+   live region (.notice) stays in place, empty and without height, while nothing is wrong. */
+.notice-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  margin-top: 14px;
+  padding: 11px 12px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--card));
+  box-shadow:
+    var(--card-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation: ut-confirm 0.18s ease-out;
+}
+
+.notice-card .icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--accent-strong);
+}
+
+.notice-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.notice-fix {
+  margin: 3px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notice-path {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ---------- rows ---------- */
+.row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 40px;
+}
+
+.card > .row + .row,
+.card > .row + .hint + .row,
+.card > * + .song {
+  border-top: 1px solid var(--line);
+}
+
+.row-label {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.row-tail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 46px;
+}
+
+.row-value {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.row.is-disabled .row-label,
+.row.is-disabled .row-value {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* ---------- range ---------- */
+.range {
+  --a: 0;
+  --b: 0;
+  --r: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.range:focus-visible {
+  outline: none;
+}
+
+/* the fill runs from --a to --b (0..1), measured between the thumb's end positions */
+.range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--track) 0 calc(var(--r) + (100% - 2 * var(--r)) * var(--a)),
+    var(--accent) calc(var(--r) + (100% - 2 * var(--r)) * var(--a)) calc(var(--r) + (100% - 2 * var(--r)) * var(--b)),
+    var(--track) calc(var(--r) + (100% - 2 * var(--r)) * var(--b)) 100%
+  );
+}
+
+.range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--track) 0 calc(var(--r) + (100% - 2 * var(--r)) * var(--a)),
+    var(--accent) calc(var(--r) + (100% - 2 * var(--r)) * var(--a)) calc(var(--r) + (100% - 2 * var(--r)) * var(--b)),
+    var(--track) calc(var(--r) + (100% - 2 * var(--r)) * var(--b)) 100%
+  );
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--thumb);
+  box-shadow: var(--thumb-shadow);
+  transition: box-shadow 0.15s ease;
+}
+
+.range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--thumb);
+  box-shadow: var(--thumb-shadow);
+}
+
+.range:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    var(--thumb-shadow),
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus);
+}
+
+.range:focus-visible::-moz-range-thumb {
+  box-shadow:
+    var(--thumb-shadow),
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus);
+}
+
+.range:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.range:disabled::-webkit-slider-thumb {
+  box-shadow: none;
+  background: var(--track);
+}
+
+/* ---------- switch ---------- */
+.toggle {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.switch {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 11px;
+  cursor: pointer;
+  /* knob and its shadow drawn as gradients: WebKit won't put pseudo-elements on inputs */
+  background-color: var(--switch-off);
+  background-image:
+    radial-gradient(circle at 50% 50%, #fff 0 8.6px, transparent 9.2px),
+    radial-gradient(circle at 50% 58%, rgba(0, 0, 0, 0.22) 0 8.6px, transparent 10.5px);
+  background-size: 22px 22px;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  transition:
+    background-color 0.18s ease,
+    background-position 0.18s ease;
+}
+
+.switch:not(:checked) {
+  box-shadow: inset 0 0 0 1px var(--switch-ring);
+}
+
+.switch:checked {
+  background-color: var(--accent);
+  background-position: 16px 0;
+}
+
+.toggle-hint {
+  padding: 0 0 10px;
+  margin-top: -4px;
+}
+
+/* empty (and without height) unless the OS refused the login item */
+.login-note {
+  color: var(--warn);
+}
+
+/* as specific as `.card > .hint`, which pads every caption in a card */
+.card > .login-note:empty {
+  padding: 0;
+  margin: 0;
+}
+
+/* ---------- swatches ---------- */
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--line);
+}
+
+.swatch {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.swatch-chip {
+  --swatch: #888888;
+  position: relative;
+  display: block;
+  height: 34px;
+  margin-bottom: 5px;
+  border-radius: 9px;
+  background: var(--swatch);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* the native picker covers the chip, invisible, so a click opens the system color panel */
+.swatch-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.swatch-chip:has(.swatch-input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.swatch-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.swatch-hex {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- radio tiles and segments ---------- */
+.opt {
+  position: relative;
+  display: block;
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* invisible, but as big as its tile, so keyboard focus scrolls the whole tile into view */
+.opt input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.opt-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    color 0.15s ease;
+}
+
+.opt input:focus-visible + .opt-face {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.opt-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tiles {
+  display: grid;
+  gap: 8px;
+}
+
+.tiles-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tiles-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tiles .opt-face {
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+  color: var(--text-2);
+}
+
+.tiles .opt:hover .opt-face {
+  color: var(--text);
+}
+
+.tiles input:checked + .opt-face {
+  color: var(--text);
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    var(--card-shadow);
+}
+
+.modes .opt-face {
+  flex-direction: column;
+  gap: 6px;
+  height: 62px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.icon {
+  width: 30px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.modes .icon {
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+
+.modes input:checked + .opt-face .icon {
+  color: var(--accent);
+}
+
+.mode-blurb {
+  min-height: 2.8em;
+  padding: 8px 4px 0;
+}
+
+/* each face in its own font, sized so they read at a similar weight */
+.fonts .opt-face {
+  height: 46px;
+  padding: 0 10px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.fonts [data-family="Instrument Serif"] .opt-face {
+  font-size: 20px;
+}
+.fonts [data-family="Unbounded"] .opt-face,
+.fonts [data-family="JetBrains Mono"] .opt-face {
+  font-size: 14px;
+}
+.fonts [data-family="Syne"] .opt-face {
+  font-size: 16px;
+}
+.fonts [data-family="Caveat"] .opt-face {
+  font-size: 22px;
+}
+.fonts [data-family="System"] .opt-face {
+  font-size: 15px;
+}
+
+/* empty (and without height) for a face with Vietnamese accented letters; more specific than
+   `.card > .hint`, which pads every caption in a card */
+.card > .hint.font-note {
+  padding: 8px 4px 0;
+}
+
+.card > .hint.font-note:empty {
+  padding: 0;
+}
+
+/* two-way choices */
+.seg {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--seg-bg);
+}
+
+.seg .opt-face {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* The raised pill alone is about 1.1:1 on the light track (1.7:1 in dark): an accent edge marks the
+   choice, as the ring does on the tiles. */
+.seg input:checked + .opt-face {
+  background: var(--seg-on);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--seg-on-shadow);
+  color: var(--text);
+}
+
+.choice {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+
+/* ---------- sync ---------- */
+.slider-wide {
+  row-gap: 0;
+  padding: 6px 0 4px;
+}
+
+.scale {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  margin-top: -3px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--btn);
+  color: var(--text);
+}
+
+/* keeps its place when there is nothing to reset, so the slider beside it never changes width */
+.icon-btn:disabled {
+  visibility: hidden;
+}
+
+/* room for "−2000 ms": a value that grows while dragging must not shrink the track under the pointer */
+.slider-wide .row-value {
+  min-width: 4.75em;
+}
+
+.icon-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.card > .hint {
+  padding: 2px 0 10px;
+}
+
+.song {
+  padding: 10px 0 12px;
+}
+
+.song-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.song-value {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.song-title {
+  margin: 2px 0 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.step,
+.btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.step:hover:not(:disabled, [aria-disabled="true"]),
+.btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+
+.step:active:not(:disabled, [aria-disabled="true"]),
+.btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* The sync steps and "Reset this song" are inert, never disabled, when a press would change nothing:
+   keyboard focus stays on them (a held key at the limit does nothing more). Only the face dims, so a
+   focus ring on one keeps full strength. */
+.step[aria-disabled="true"] {
+  background: color-mix(in srgb, var(--btn) 45%, transparent);
+  color: color-mix(in srgb, var(--text) 38%, transparent);
+  cursor: default;
+}
+
+.link-btn[aria-disabled="true"] {
+  color: color-mix(in srgb, var(--accent-strong) 40%, transparent);
+  cursor: default;
+}
+
+.song-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.link-btn {
+  flex: none;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-btn:hover:not([aria-disabled="true"]) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.song.is-disabled .song-head .row-label,
+.song.is-disabled .song-title {
+  color: var(--muted);
+}
+
+/* ---------- shortcuts ---------- */
+/* The rows share one column for their key buttons (subgrid), so the buttons line up at one width. */
+.sc-rows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  border-top: 1px solid var(--line);
+  transition: opacity 0.15s ease;
+}
+
+/* Shortcuts off: readable, but dimmed and out of reach (the container is inert). */
+.sc-rows.is-disabled {
+  opacity: 0.45;
+}
+
+.sc-row {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: subgrid;
+  padding: 6px 0;
+}
+
+.sc-row + .sc-row {
+  border-top: 1px solid var(--line);
+}
+
+/* Wraps rather than cutting off: a long binding narrows the label column, and the ms in
+   "Nudge earlier (+50 ms)" is what tells the two nudges apart. */
+.sc-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+/* A key cap showing the binding; it listens for the new one when pressed. Wide enough for
+   "Press keys…" and "Ctrl+Alt+Shift+L" alike; while it listens it keeps its width (set by the
+   recorder) and cuts off a longer "Win+Ctrl+Alt+Shift+…", so the key column doesn't jump. */
+.sc-key {
+  min-width: 8.5em;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--btn);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease;
+}
+
+.sc-key:hover {
+  background: var(--btn-hover);
+}
+
+.sc-key.is-none {
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.sc-key.is-recording {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  color: var(--accent-strong);
+  letter-spacing: 0;
+  animation: ut-listen 1.4s ease-in-out infinite;
+}
+
+.sc-key.is-warning {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 65%, transparent);
+}
+
+/* Always present (a live region); without height while empty. */
+.sc-msg {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 2px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.sc-msg:empty {
+  padding: 0;
+}
+
+.sc-msg[data-tone="warn"],
+.sc-msg[data-tone="error"] {
+  color: var(--warn);
+}
+
+.sc-msg[data-tone="warn"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+}
+
+.sc-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0 10px;
+}
+
+/* One line, so the prompt appearing never moves anything. */
+.sc-hint {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@keyframes ut-listen {
+  50% {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+}
+
+@keyframes ut-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- reset ---------- */
+.reset {
+  margin-top: 22px;
+  text-align: center;
+}
+
+.btn-quiet {
+  background: none;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.confirm {
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow:
+    var(--card-shadow),
+    inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
+  text-align: left;
+  animation: ut-confirm 0.18s ease-out;
+}
+
+.confirm[hidden] {
+  display: none;
+}
+
+.confirm-title {
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.check[hidden] {
+  display: none;
+}
+
+.check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 88%, #000);
+}
+
+@keyframes ut-confirm {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.foot {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.foot-brand {
+  font-weight: 600;
+}
+
+.foot-brand::after,
+.foot-item::after {
+  content: " \00b7";
+  font-weight: 400;
+}
+
+.foot-link {
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.foot-link:hover {
+  color: var(--text);
+}
+
+/* Licenses: the third-party notices, in a modal over the whole window. */
+.licenses {
+  width: calc(100vw - 24px);
+  max-width: 560px;
+  height: calc(100vh - 48px);
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--card-shadow), 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.licenses[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.licenses::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.licenses-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px 0 14px;
+}
+
+.licenses-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.licenses > .hint {
+  margin: 4px 14px 10px;
+}
+
+.licenses-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 14px 14px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font: 10.5px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll) transparent;
+}
+
+.licenses-text:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .top,
+  .pv-screen,
+  .switch,
+  .opt-face,
+  .modes .icon,
+  .range::-webkit-slider-thumb,
+  .step,
+  .btn,
+  .sc-rows,
+  .sc-key {
+    transition: none;
+  }
+  .confirm,
+  .notice-card,
+  .pv-off,
+  .sc-key.is-recording {
+    animation: none;
+  }
+}
+
+/* ---------- forced colors (Windows Contrast themes) ---------- */
+/* Shadows and gradient backgrounds are dropped and colors forced to the theme's, so the selection
+   rings, the switches (drawn with gradients), the sliders and the button edges vanished. Each gets
+   system colors instead. Selection is a border, never an outline, so a focus ring still shows on the
+   chosen tile. The preview and the swatches show the user's own colors and keep them. */
+@media (forced-colors: active) {
+  .pv,
+  .swatch-chip {
+    forced-color-adjust: none;
+  }
+
+  .swatch-chip {
+    border: 1px solid CanvasText;
+  }
+
+  .tiles .opt-face,
+  .seg .opt-face,
+  .step,
+  .btn,
+  .sc-key {
+    border: 1px solid ButtonText;
+  }
+
+  .tiles input:checked + .opt-face,
+  .seg input:checked + .opt-face,
+  .sc-key.is-recording {
+    border: 2px solid Highlight;
+  }
+
+  .step[aria-disabled="true"],
+  .link-btn[aria-disabled="true"] {
+    border-color: GrayText;
+    color: GrayText;
+  }
+
+  .switch {
+    forced-color-adjust: none;
+    border: 1px solid ButtonText;
+    background-color: Canvas;
+    background-image: radial-gradient(circle at 50% 50%, ButtonText 0 6px, transparent 6.6px);
+    /* inside the border: the knob's square stays centered, and travels as far */
+    background-size: 20px 20px;
+    box-shadow: none;
+  }
+
+  .switch:checked {
+    border-color: Highlight;
+    background-color: Highlight;
+    background-image: radial-gradient(circle at 50% 50%, HighlightText 0 6px, transparent 6.6px);
+  }
+
+  .range {
+    forced-color-adjust: none;
+    --track: GrayText;
+    --accent: Highlight;
+    --thumb: ButtonText;
+    --card: Canvas;
+    --focus: Highlight;
+  }
+
+  .range:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .notice-card,
+  .confirm {
+    border: 1px solid CanvasText;
+  }
+}
