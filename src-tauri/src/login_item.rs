@@ -218,6 +218,29 @@ impl Here {
     }
 }
 
+impl Here {
+    /// This copy as a build of `kind`. A development build (`pnpm tauri dev`) shares the app's
+    /// name, so its login item too: it never points that at `target/debug`, which would start
+    /// with no dev server at the next login and announce a background item at every switch.
+    pub fn for_build(mut self, debug: bool) -> Here {
+        if debug && self.temporary.is_none() {
+            self.temporary = Some("a development build");
+        }
+        self
+    }
+}
+
+/// The program the login item starts, from what each place auto-launch may have written holds
+/// (Windows: HKCU's Run value, then HKLM's). One that starts this copy wins, so an item that
+/// does isn't rewritten because a stale one sits in the other hive.
+pub fn stored_program<'a>(os: &str, programs: &'a [String], here: &Here) -> Option<&'a str> {
+    programs
+        .iter()
+        .find(|program| same_program(os, program, &here.program))
+        .or_else(|| programs.first())
+        .map(String::as_str)
+}
+
 /// What startup does about a login item that may start another copy of Undertone.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Refresh {
@@ -276,20 +299,22 @@ pub mod native {
     /// Where auto-launch writes: the current user's unless Undertone ran as an administrator.
     const HIVES: [(&str, &Key); 2] = [("HKCU", CURRENT_USER), ("HKLM", LOCAL_MACHINE)];
 
-    /// The Run value auto-launch wrote for `app_name`: its hive and its text, HKCU's first.
-    /// `Ok(None)` when neither has one.
-    pub fn run_value(app_name: &str) -> Result<Option<(&'static str, String)>, String> {
+    /// The Run values auto-launch wrote for `app_name`, with their hives: HKCU's, then HKLM's.
+    /// Empty when neither has one. Both can: an item turned on as a user, then again as an
+    /// administrator.
+    pub fn run_values(app_name: &str) -> Result<Vec<(&'static str, String)>, String> {
+        let mut values = Vec::new();
         for (hive, root) in HIVES {
             match root
                 .open(super::RUN_KEY)
                 .and_then(|key| key.get_string(app_name))
             {
-                Ok(command) => return Ok(Some((hive, command))),
+                Ok(command) => values.push((hive, command)),
                 Err(error) if error.code().0 == FILE_NOT_FOUND => {}
                 Err(error) => return Err(format!(r"{hive}\{}: {error}", super::RUN_KEY)),
             }
         }
-        Ok(None)
+        Ok(values)
     }
 
     /// Task Manager's entries for `app_name` in both hives, as auto-launch reads them.
@@ -617,6 +642,49 @@ mod tests {
         ] {
             assert_eq!(refresh(os, on, stored, &here), expected, "{os}: {name}");
         }
+    }
+
+    #[test]
+    fn a_development_build_never_points_the_login_item_at_itself() {
+        let here = |temporary| Here {
+            program: r"C:\Dev\undertone\src-tauri\target\debug\undertone.exe".into(),
+            temporary,
+        };
+        let stored = Some(r"C:\Users\demo\AppData\Local\Undertone\undertone.exe");
+        let debug = here(None).for_build(true);
+        assert_eq!(debug.temporary, Some("a development build"));
+        assert_eq!(
+            refresh("windows", true, stored, &debug),
+            Refresh::Temporary("a development build")
+        );
+        // a release build of the same copy would be pointed at
+        let release = here(None).for_build(false);
+        assert_eq!(refresh("windows", true, stored, &release), Refresh::Rewrite);
+        // a temporary place keeps its own reason
+        let zipped = here(Some("the temp folder")).for_build(true);
+        assert_eq!(zipped.temporary, Some("the temp folder"));
+    }
+
+    #[test]
+    fn a_stale_value_in_the_other_hive_doesnt_rewrite_an_item_that_starts_this_copy() {
+        let here = Here {
+            program: r"C:\Apps\Undertone\undertone.exe".into(),
+            temporary: None,
+        };
+        let stale = r"C:\Old\Undertone\undertone.exe".to_owned();
+        let current = r"c:\apps\undertone\UNDERTONE.EXE".to_owned();
+        // HKCU stale, HKLM current (turned on again as an administrator): keep
+        let both = [stale.clone(), current.clone()];
+        let picked = stored_program("windows", &both, &here);
+        assert_eq!(picked, Some(current.as_str()));
+        assert_eq!(refresh("windows", true, picked, &here), Refresh::Keep);
+        // only stale ones: the first, and it is pointed at this copy
+        let only_stale = [stale.clone()];
+        let picked = stored_program("windows", &only_stale, &here);
+        assert_eq!(picked, Some(stale.as_str()));
+        assert_eq!(refresh("windows", true, picked, &here), Refresh::Rewrite);
+        // none
+        assert_eq!(stored_program("windows", &[], &here), None);
     }
 
     #[test]

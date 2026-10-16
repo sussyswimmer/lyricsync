@@ -1767,16 +1767,31 @@ mod native {
     /// The Run value the autostart plugin wrote, and Task Manager's state for it.
     pub fn login_item() -> Result<LoginItem, String> {
         let app = super::product_name()?;
-        let run = login_item::native::run_value(&app);
-        let hive = match &run {
-            Ok(Some((hive, _))) => *hive,
-            _ => "HKCU",
+        let here = Here::current().map(|here| here.for_build(cfg!(debug_assertions)));
+        let run = login_item::native::run_values(&app);
+        // The value the app goes by (`login_item::stored_program`): one that starts this copy.
+        let picked = match (&run, &here) {
+            (Ok(values), Ok(here)) => {
+                let programs: Vec<String> = values
+                    .iter()
+                    .filter_map(|(_, command)| login_item::run_program(command))
+                    .collect();
+                let chosen = login_item::stored_program("windows", &programs, here);
+                values
+                    .iter()
+                    .find(|(_, command)| login_item::run_program(command).as_deref() == chosen)
+                    .or(values.first())
+                    .cloned()
+            }
+            (Ok(values), Err(_)) => values.first().cloned(),
+            (Err(_), _) => None,
         };
+        let hive = picked.as_ref().map_or("HKCU", |(hive, _)| *hive);
         Ok(LoginItem {
             os: "windows",
             place: format!(r"{hive}\{} › {app}", login_item::RUN_KEY),
-            program: run.and_then(|value| {
-                value
+            program: run.and_then(|_| {
+                picked
                     .map(|(_, command)| {
                         login_item::run_program(&command)
                             .ok_or_else(|| format!("{command:?} names no program"))
@@ -1784,7 +1799,7 @@ mod native {
                     .transpose()
             }),
             approval: login_item::native::startup_approved(&app).map(Approval::Startup),
-            here: Here::current(),
+            here,
         })
     }
 
@@ -2212,7 +2227,7 @@ mod native {
             place: plist.display().to_string(),
             program: login_item::read_plist_program(&plist),
             approval: Ok(Approval::Status(login_item::native::status(&plist))),
-            here: Here::current(),
+            here: Here::current().map(|here| here.for_build(cfg!(debug_assertions))),
         })
     }
 

@@ -496,18 +496,32 @@ pub mod runtime {
             }
         }
     }
-    /// The program the OS login item starts: the plist's on macOS, the Run value's on Windows.
+    /// The program the OS login item starts: the plist's on macOS, the Run value's on Windows,
+    /// where one in either hive that starts `here` wins (`crate::login_item::stored_program`).
     /// `None` when there is no item, or (logged) when it can't be read.
-    fn login_item_program(app: &AppHandle) -> Option<String> {
+    fn login_item_program(app: &AppHandle, here: &crate::login_item::Here) -> Option<String> {
         #[cfg(target_os = "macos")]
-        let program = plist(app).and_then(|plist| crate::login_item::read_plist_program(&plist));
+        let programs = plist(app)
+            .and_then(|plist| crate::login_item::read_plist_program(&plist))
+            .map(|program| program.into_iter().collect::<Vec<_>>());
         #[cfg(target_os = "windows")]
-        let program = crate::login_item::native::run_value(&app.package_info().name)
-            .map(|value| value.and_then(|(_, command)| crate::login_item::run_program(&command)));
-        program.unwrap_or_else(|error| {
-            applog!("launch at login: the login item's program: {error}");
-            None
-        })
+        let programs =
+            crate::login_item::native::run_values(&app.package_info().name).map(|values| {
+                values
+                    .iter()
+                    .filter_map(|(_, command)| crate::login_item::run_program(command))
+                    .collect::<Vec<_>>()
+            });
+        match programs {
+            Ok(programs) => {
+                crate::login_item::stored_program(std::env::consts::OS, &programs, here)
+                    .map(str::to_owned)
+            }
+            Err(error) => {
+                applog!("launch at login: the login item's program: {error}");
+                None
+            }
+        }
     }
     /// A login item turned on before Undertone was moved still starts the old path: nothing, at
     /// login, while it reads as on. Turning it on again makes the plugin write this copy's path
@@ -518,13 +532,13 @@ pub mod runtime {
             return;
         }
         let here = match crate::login_item::Here::current() {
-            Ok(here) => here,
+            Ok(here) => here.for_build(cfg!(debug_assertions)),
             Err(error) => {
                 applog!("launch at login: {error}");
                 return;
             }
         };
-        let stored = login_item_program(app);
+        let stored = login_item_program(app, &here);
         let os = std::env::consts::OS;
         match crate::login_item::refresh(os, launch_at_login, stored.as_deref(), &here) {
             crate::login_item::Refresh::Keep => {}
