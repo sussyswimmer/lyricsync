@@ -35,6 +35,7 @@ Both OSes, with the installed app:
 2. Turn on **Launch at login**, log out and back in: a second `started` line appears.
 3. Play a few songs, including one LRCLIB doesn't have, and search the log for a line of their lyrics: it isn't there.
 4. Run `--diagnose` as the README's [Reporting a bug](../README.md#reporting-a-bug) says. The report ends with **Recent log**: the log's path and its last lines.
+5. macOS: quit Spotify, start it again and run `--diagnose` right away. Under **Media sources**, Spotify's line says `running; still launching, not read` (or, if Spotify finished starting first, what it plays), never `read failed: did not answer within 2 s`.
 
 ## 3. Shortcuts
 
