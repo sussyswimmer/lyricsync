@@ -23,7 +23,9 @@ use crate::{
         matching, Track,
     },
     media::{
-        applescript::{classify, Failure, FailureKind, Player, PlayerState, Reading},
+        applescript::{
+            classify, Failure, FailureKind, Instance, Player, PlayerState, Reading, LAUNCH_GRACE,
+        },
         RawTrack, Watcher,
     },
     settings,
@@ -365,11 +367,39 @@ pub fn session_line(index: usize, session: &SmtcSession) -> String {
     line
 }
 
+/// macOS: one player's process, as the media watcher judges it before reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Process {
+    NotRunning,
+    /// Running, but its newest process has not finished launching: neither asked nor read.
+    Launching,
+    Running,
+}
+/// The app's launch gate (`Launches::readable`) for one look: a player is judged by its newest
+/// process (`Instance::newest`), and read once that has finished launching. Until then AppKit
+/// holds the Apple events sent to it, so a read would wait out the script's 2 s and look like a
+/// hang. The app reads one that never reports it `LAUNCH_GRACE` after first seeing it; here that
+/// counts from its launch, and without a launch date it is still launching.
+pub fn player_process(instances: &[Instance], now_secs: f64) -> Process {
+    let Some(newest) = Instance::newest(instances) else {
+        return Process::NotRunning;
+    };
+    let settled = newest.finished_launching
+        || newest
+            .launched
+            .is_some_and(|launched| now_secs - launched >= LAUNCH_GRACE.as_secs_f64());
+    if settled {
+        Process::Running
+    } else {
+        Process::Launching
+    }
+}
+
 /// macOS: one player as Undertone sees it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerInfo {
     pub player: Player,
-    pub running: bool,
+    pub process: Process,
     /// AEDeterminePermissionToAutomateTarget's answer, without prompting; `None` when not asked.
     pub automation: Option<i32>,
     /// The read script's answer (`Ok(None)`: stopped); `None` when no script ran.
@@ -416,11 +446,17 @@ pub fn failure_text(failure: &Failure) -> String {
 }
 pub fn player_line(info: &PlayerInfo) -> String {
     let mut line = format!("{} ({}): ", info.player.name(), info.player.bundle_id());
-    if !info.running {
-        line.push_str("not running");
-        return line;
+    match info.process {
+        Process::NotRunning => {
+            line.push_str("not running");
+            return line;
+        }
+        Process::Launching => {
+            line.push_str("running; still launching, not read");
+            return line;
+        }
+        Process::Running => line.push_str("running"),
     }
-    line.push_str("running");
     if let Some(status) = info.automation {
         line.push_str("; ");
         line.push_str(&automation_text(info.player, status));
@@ -1228,7 +1264,7 @@ async fn lookup_steps(
         track.album,
         round1(seconds)
     );
-    let exact: Option<Record> = fetch(
+    let exact = fetch::<serde_json::Value>(
         client,
         base,
         "get",
@@ -1243,9 +1279,12 @@ async fn lookup_steps(
     )
     .await
     .inspect_err(|error| log.push(format!("{label} -> {error}")))?;
-    match exact {
+    // Like the app, an answer that isn't a usable record is a miss: search still gets its turn.
+    // The decode error isn't shown, since it can quote the record's text.
+    match exact.map(serde_json::from_value::<Record>) {
         None => log.push(format!("{label} -> not found (404)")),
-        Some(record) => {
+        Some(Err(_)) => log.push(format!("{label} -> unusable record, searching")),
+        Some(Ok(record)) => {
             if matching::best(track, std::slice::from_ref(&record)).is_some() {
                 log.push(format!("{label} -> {}, accepted", record_name(&record)));
                 let lyrics = record.into_lyrics(&track.key);
@@ -2014,9 +2053,10 @@ mod native {
         })
     }
 
-    /// Spotify and Music as `media/macos.rs` reads them: only running players are scripted (a
-    /// `tell` would launch a closed one), Automation is checked without prompting, and the same
-    /// scripts, parser and `choose` pick the track.
+    /// Spotify and Music as `media/macos.rs` reads them: only running players that have finished
+    /// launching are scripted (a `tell` would launch a closed one, and wait out its 2 s on one
+    /// still launching), Automation is checked without prompting, and the same scripts, parser
+    /// and `choose` pick the track.
     pub fn media(_: &RuntimeResult) -> Media {
         if MainThreadMarker::new().is_none() {
             return Media {
@@ -2024,18 +2064,18 @@ mod native {
                 track: Err(MAIN_THREAD.into()),
             };
         }
-        let running = running_players();
+        let now_secs = epoch_ms() / 1000.0;
         let mut players = Vec::new();
         let mut readings: Vec<(usize, Player, Reading, f64)> = Vec::new();
-        for player in Player::ALL {
+        for (player, instances) in processes() {
             let mut info = PlayerInfo {
                 player,
-                running: running.contains(&player),
+                process: super::player_process(&instances, now_secs),
                 automation: None,
                 reading: None,
                 selected: false,
             };
-            if info.running {
+            if info.process == super::Process::Running {
                 let status = automation_status(player.bundle_id());
                 info.automation = Some(status);
                 if super::automation_allows(status) {
@@ -2075,20 +2115,30 @@ mod native {
         }
     }
 
-    /// Like `media/macos.rs`: a closed player is never sent an Apple event.
-    fn running_players() -> Vec<Player> {
+    /// Each player's running processes (none when it is closed), in `Player::ALL` order, as
+    /// `media/macos.rs` lists them.
+    fn processes() -> Vec<(Player, Vec<applescript::Instance>)> {
         autoreleasepool(|_| {
             let apps = NSWorkspace::sharedWorkspace().runningApplications();
             Player::ALL
                 .into_iter()
-                .filter(|player| {
+                .map(|player| {
                     let bundle_id = NSString::from_str(player.bundle_id());
-                    apps.iter().any(|app| {
-                        !app.isTerminated()
-                            && app
-                                .bundleIdentifier()
-                                .is_some_and(|id| id.isEqualToString(&bundle_id))
-                    })
+                    let instances = apps
+                        .iter()
+                        .filter(|app| {
+                            !app.isTerminated()
+                                && app
+                                    .bundleIdentifier()
+                                    .is_some_and(|id| id.isEqualToString(&bundle_id))
+                        })
+                        .map(|app| applescript::Instance {
+                            pid: app.processIdentifier(),
+                            launched: app.launchDate().map(|date| date.timeIntervalSince1970()),
+                            finished_launching: app.isFinishedLaunching(),
+                        })
+                        .collect();
+                    (player, instances)
                 })
                 .collect()
         })
@@ -2654,6 +2704,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unusable_exact_record_is_a_miss_and_search_still_runs() {
+        let mut broken = serde_json::to_value(record()).unwrap();
+        broken["instrumental"] = "no".into();
+        let mut found = record();
+        found.id = 9;
+        let (base, requests, server) =
+            serve(vec![(200, json(&broken)), (200, json(&vec![found]))]).await;
+        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        server.await.unwrap();
+        let (matched, lyrics) = lookup.result.unwrap();
+        assert_eq!(matched.unwrap().id, 9);
+        assert_eq!(lyrics.status, LyricsStatus::Found);
+        assert_eq!(
+            lookup.requests[0],
+            "get \"Paper Lantern\" by Demo Artist on \"Demo Album\", 180.0 s -> unusable record, \
+             searching"
+        );
+        assert!(
+            lookup.requests[1].ends_with(
+                "-> 1 result, picked #9 \"Paper Lantern\" by Demo Artist on \"Demo Album\""
+            ),
+            "{:?}",
+            lookup.requests
+        );
+        assert_eq!(requests.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
     async fn a_rejected_exact_match_and_an_empty_search_are_not_found() {
         let mut far = record();
         far.duration = 190.0;
@@ -3015,7 +3093,7 @@ mod tests {
     fn players_show_automation_and_what_they_play() {
         let closed = PlayerInfo {
             player: Player::Music,
-            running: false,
+            process: Process::NotRunning,
             automation: None,
             reading: None,
             selected: false,
@@ -3023,7 +3101,7 @@ mod tests {
         assert_eq!(player_line(&closed), "Music (com.apple.Music): not running");
         let denied = PlayerInfo {
             player: Player::Spotify,
-            running: true,
+            process: Process::Running,
             automation: Some(-1743),
             ..closed
         };
@@ -3064,6 +3142,53 @@ mod tests {
             ..denied
         };
         assert!(player_line(&stopped).ends_with("Automation granted; stopped, no track"));
+    }
+
+    #[test]
+    fn a_player_still_launching_is_listed_but_not_read() {
+        let now = 1_700_000_000.0;
+        let grace = LAUNCH_GRACE.as_secs_f64();
+        let instance = |pid, launched, finished_launching| Instance {
+            pid,
+            launched,
+            finished_launching,
+        };
+        assert_eq!(player_process(&[], now), Process::NotRunning);
+        assert_eq!(
+            player_process(&[instance(100, Some(now - 1.0), true)], now),
+            Process::Running
+        );
+        // Just started: an Apple event would wait out the script's 2 s.
+        let starting = instance(100, Some(now - 1.0), false);
+        assert_eq!(player_process(&[starting], now), Process::Launching);
+        assert_eq!(
+            player_process(&[instance(100, None, false)], now),
+            Process::Launching
+        );
+        // One that never reports it is read after the app's grace, counted from its launch.
+        let silent = |age| [instance(100, Some(now - age), false)];
+        assert_eq!(
+            player_process(&silent(grace - 0.5), now),
+            Process::Launching
+        );
+        assert_eq!(player_process(&silent(grace), now), Process::Running);
+        // Relaunched while the old process quits: the new one speaks for the player.
+        let quitting = instance(90, Some(now - 600.0), true);
+        assert_eq!(
+            player_process(&[quitting, starting], now),
+            Process::Launching
+        );
+        let launching = PlayerInfo {
+            player: Player::Spotify,
+            process: Process::Launching,
+            automation: None,
+            reading: None,
+            selected: false,
+        };
+        assert_eq!(
+            player_line(&launching),
+            "Spotify (com.spotify.client): running; still launching, not read"
+        );
     }
 
     #[test]
