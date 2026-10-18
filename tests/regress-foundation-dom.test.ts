@@ -619,6 +619,36 @@ describe("Drift instrumental breaks", () => {
   });
 });
 
+describe("Drift's karaoke leaving focus", () => {
+  /** Animations on a row's word boxes and everything in their overlays (the row's own scroll aside). */
+  const wordMotion = (row: FakeElement | undefined): number =>
+    wordsOf(row).reduce((n, w) => n + w.getAnimations().length + [...w.find("kw-fx"), ...w.find("kw-track"), ...w.find("kw-in"), ...w.find("kw-glow"), ...w.find("kl")].reduce((m, e) => m + e.getAnimations().length, 0), 0);
+
+  it("stops a line sung through as it leaves, so its overlay fades out still", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(0, 2000));
+    expect(wordMotion(rows[0])).toBeGreaterThan(0);
+    clock += 16;
+    // Paper Lanterns: "river" ends the first line at 3.7 s, the next one starts at 4.2 s
+    mode.paint(cue(1, 4200));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(wordsOf(rows[0])[0]?.find("kw-fx")).toHaveLength(1);
+    expect(wordMotion(rows[0])).toBe(0);
+    expect(wordMotion(rows[1])).toBeGreaterThan(0);
+  });
+
+  it("keeps a line left before it was sung (a seek back) moving with the song", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(1, 5000));
+    const before = wordMotion(rows[1]);
+    expect(before).toBeGreaterThan(0);
+    clock += 16;
+    mode.paint(cue(0, 2500));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    expect(wordMotion(rows[1])).toBe(before);
+  });
+});
+
 // Regression (dpr-change-no-resize): layouts are snapped to device pixels, but only a resize rebuilt
 // them, and a window moved between a 2× and a 1× screen of the same size never resizes.
 describe("the stage on a device pixel ratio change", () => {

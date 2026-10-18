@@ -116,6 +116,21 @@ export class KaraokeLine {
     return { origin: this.origin, end: this.end };
   }
 
+  /** Song time its last word ends. */
+  get sungBy(): number {
+    return Math.max(0, ...this.views.map((v) => v.word.end));
+  }
+
+  /**
+   * Stops the line's motion where it ends (every word sung, in place, no bloom): for a line leaving
+   * focus once it has been sung, so that its overlay fades out as one still picture rather than a
+   * hundred layers the compositor keeps redrawing as the list scrolls. All it cuts short is the last
+   * word's springs settling their final pixel.
+   */
+  finish(): void {
+    this.timeline.cancel(this.group);
+  }
+
   /**
    * Plans every word and starts the line's animations at once, as of song time `t` (the line coming
    * into focus): words already sung show sung, the one being sung joins mid-way, the rest wait at

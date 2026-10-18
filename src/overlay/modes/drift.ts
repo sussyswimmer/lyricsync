@@ -544,9 +544,11 @@ export class DriftMode implements ModeRenderer {
     const focusSlot = this.slots[this.target];
     const focusRow = focusSlot?.kind === "line" ? focusSlot.row : null;
     const layout = this.layout(this.target, look);
-    // the line leaving focus fades back to plain text, then drops its overlay
+    // the line leaving focus fades back to plain text, then drops its overlay; sung through (the usual
+    // way out) it fades as it ends, still; leaving early (a seek back) it keeps moving with the song
     if (this.karaoke && this.karaoke.row !== focusRow) {
       const { line, row } = this.karaoke;
+      if (cue.t >= line.sungBy) line.finish();
       row.el.classList.remove("has-fx");
       this.leaving.push({ line, row, at: cue.t });
       this.karaoke = null;
