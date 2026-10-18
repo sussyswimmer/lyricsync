@@ -1,7 +1,9 @@
 /**
  * Breaking a word into letters that can move on their own, placed exactly where the browser draws
- * them in the whole word (kerning included), measured on a canvas so no layout is read.
+ * them in the whole word (kerning and letter-spacing included), measured on a canvas so no layout is
+ * read.
  */
+import type { Line, Word } from "../../core/lrc";
 import type { LetterBox, Part } from "./karaoke";
 
 /**
@@ -56,6 +58,11 @@ export function canvasMeasure(font: string): Measure | null {
   };
 }
 
+/** Forgets the canvas context (tests that stub one in, or take it away). */
+export function resetMeasure(): void {
+  context = undefined;
+}
+
 /** A rough measurer for when there is no canvas: half an em per character. */
 export function roughMeasure(size: number): Measure {
   return (text: string) => [...text].length * size * 0.5;
@@ -64,12 +71,16 @@ export function roughMeasure(size: number): Measure {
 /**
  * The letters of `text` (a word without its trailing space) and its width. Each letter sits where it
  * is drawn inside the whole word: the advance of everything up to and including it, less its own
- * advance, which keeps kerning pairs in place. A word that can't be split is one letter. `parts` (the
- * word's syllables) tell each letter which syllable it belongs to.
+ * advance, which keeps kerning pairs in place; `spacingPx` (CSS letter-spacing) follows every
+ * grapheme, so the n-th letter moves n spacings right and the word grows by one per gap. A word that
+ * can't be split is one letter. `parts` (the word's syllables) tell each letter which syllable it
+ * belongs to.
  */
-export function measureLetters(text: string, parts: readonly Pick<Part, "text">[], measure: Measure): { width: number; letters: LetterBox[] } {
-  const width = measure(text);
-  if (!splittable(text) || [...text].length < 2) return { width, letters: [{ text, x: 0, w: width, part: 0 }] };
+export function measureLetters(text: string, parts: readonly Pick<Part, "text">[], measure: Measure, spacingPx = 0): { width: number; letters: LetterBox[] } {
+  const all = graphemes(text);
+  const gaps = Math.max(0, all.length - 1);
+  const width = measure(text) + spacingPx * gaps;
+  if (!splittable(text) || all.length < 2) return { width, letters: [{ text, x: 0, w: width, part: 0 }] };
   // character offset where each part ends, in the word's text
   const ends: number[] = [];
   let at = 0;
@@ -79,14 +90,38 @@ export function measureLetters(text: string, parts: readonly Pick<Part, "text">[
   }
   const letters: LetterBox[] = [];
   let offset = 0;
-  for (const g of graphemes(text)) {
+  all.forEach((g, i) => {
     const through = offset + g.length;
     const w = measure(g);
-    const x = Math.max(0, measure(text.slice(0, through)) - w);
+    const x = Math.max(0, measure(text.slice(0, through)) - w) + spacingPx * i;
     let part = ends.findIndex((end) => offset < end);
     if (part < 0) part = Math.max(0, ends.length - 1);
     if (g.trim() !== "") letters.push({ text: g, x, w, part });
     offset = through;
-  }
+  });
   return { width, letters };
+}
+
+/** How the look sets lyric text: as written, or upper case (Unbounded and Syne on shouted lines). */
+export type TextCase = "as-is" | "upper";
+
+/** `text` in the look's case. */
+export function cased(text: string, textCase: TextCase): string {
+  return textCase === "upper" ? text.toLocaleUpperCase() : text;
+}
+
+/**
+ * Lines in the look's case, ready to measure and draw: every word's text, and each syllable's, so a
+ * word's letters still find their syllable (casing each part keeps the word equal to its parts).
+ */
+export function casedLines(lines: readonly Line[], textCase: TextCase): Line[] {
+  if (textCase === "as-is") return [...lines];
+  return lines.map((line) => {
+    const words = line.words.map((w): Word => {
+      const parts = w.parts?.map((p) => ({ ...p, text: cased(p.text, textCase) }));
+      const text = parts && parts.length > 0 ? parts.map((p) => p.text).join("") : cased(w.text, textCase);
+      return parts ? { ...w, text, parts } : { ...w, text };
+    });
+    return { ...line, words, text: words.map((w) => w.text).join("") || cased(line.text, textCase) };
+  });
 }
