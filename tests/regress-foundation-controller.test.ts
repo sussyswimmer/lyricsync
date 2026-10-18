@@ -3,7 +3,8 @@ import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from ".
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { PaletteCache, type Palette } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
-import { DEFAULT_PICK, type PickedLook } from "../src/overlay/look";
+import type { SongLook } from "../src/core/songlook";
+import { DEFAULT_PICK, pickedOf, type PickedLook } from "../src/overlay/look";
 import type { LyricStage, StageView } from "../src/overlay/stage";
 
 const T0 = 1_760_000_000_000;
@@ -102,6 +103,22 @@ class FakeStage {
   looks: [PickedLook | null, string][] = [];
   setPickedLook(look: PickedLook | null, how = "now"): void {
     this.looks.push([look, how]);
+  }
+  /** What atSafePoint answers. */
+  safe = false;
+  atSafePoint(): boolean {
+    return this.safe;
+  }
+  private readonly safeListeners = new Set<() => void>();
+  addSafePointListener(fn: () => void): () => void {
+    this.safeListeners.add(fn);
+    return () => {
+      this.safeListeners.delete(fn);
+    };
+  }
+  /** The stage reaches a safe point (a line change, a break starting). */
+  reachSafePoint(): void {
+    for (const fn of [...this.safeListeners]) fn();
   }
 }
 
@@ -906,48 +923,54 @@ describe("quiet resyncs", () => {
   });
 });
 
+// The song's look in full (commit timing, refinement, memory) is tests/look-wiring.test.ts's.
 describe("the look", () => {
-  it("is DEFAULT_PICK until a pick or an override comes, and onLook hears each change, null without a track", async () => {
+  it("is DEFAULT_PICK until a track brings its own; onLook hears the song's look, forced parts win, null without a track", async () => {
     const bridge = new FakeBridge();
     bridge.answers.get_settings = () => structuredClone(DEFAULT_SETTINGS);
     bridge.answers.get_now_playing = () => null;
     bridge.answers.get_lyrics = () => lyrics("x");
     const stage = new FakeStage();
-    const heard: (PickedLook | null)[] = [];
+    const heard: (SongLook | null)[] = [];
     const controller = new OverlayController(bridge, stage as unknown as LyricStage, { palettes: new PaletteCache(async () => null), onLook: (l) => heard.push(l) });
     await controller.start();
     expect(controller.look).toEqual(DEFAULT_PICK);
+    expect(controller.songLook).toBeNull();
     expect(heard).toEqual([]);
     bridge.emit("now-playing", np("a"));
-    expect(heard).toEqual([DEFAULT_PICK]);
+    // the track's provisional look: no lyrics yet
+    expect(heard).toHaveLength(1);
+    const provisional = heard[0] ?? null;
+    expect(provisional?.traits).toContain("no lyrics");
+    expect(controller.songLook).toBe(provisional);
+    const song = pickedOf(provisional ?? DEFAULT_PICK);
+    expect(controller.look).toEqual(song);
     // resyncs of the same track say nothing
     bridge.emit("now-playing", np("a", { positionMs: 1000 }));
     expect(heard).toHaveLength(1);
 
-    controller.forceLook({ style: "stack" });
-    expect(stage.looks[stage.looks.length - 1]).toEqual([{ ...DEFAULT_PICK, style: "stack" }, "now"]);
-    expect(heard[heard.length - 1]).toEqual({ ...DEFAULT_PICK, style: "stack" });
+    controller.forceLook({ style: "lens" });
+    expect(stage.looks[stage.looks.length - 1]).toEqual([{ ...song, style: "lens" }, "now"]);
+    expect(heard[heard.length - 1]).toEqual({ ...provisional, style: "lens" });
     // the same again changes nothing anyone hears
-    controller.forceLook({ style: "stack" });
+    controller.forceLook({ style: "lens" });
     expect(heard).toHaveLength(2);
-    // nothing valid in it: no override
+    // nothing valid in it: no override, and onLook has the keeper's own look again
     controller.forceLook({ style: "flow" as PickedLook["style"] });
-    expect(controller.look).toEqual(DEFAULT_PICK);
-
-    // a picked look comes in at a safe point, crossfading; forced parts stay forced
-    controller.forceLook({ style: "stack", font: "Caveat" });
-    const song: PickedLook = { ...DEFAULT_PICK, style: "lens", energy: 0.9, curve: -20 };
-    controller.setPickedLook(song, "crossfade");
-    expect(stage.looks[stage.looks.length - 1]).toEqual([{ ...song, style: "stack", font: { family: "Caveat", weight: 600 } }, "crossfade"]);
-    controller.forceLook(null);
     expect(controller.look).toEqual(song);
-    expect(heard[heard.length - 1]).toEqual(song);
-    controller.setPickedLook(null);
-    expect(controller.look).toEqual(DEFAULT_PICK);
+    expect(heard[heard.length - 1]).toBe(provisional);
+    // forced parts stay forced; the rest is the song's
+    controller.forceLook({ style: "drift", font: "Caveat" });
+    expect(controller.look).toEqual({ ...song, style: "drift", font: { family: "Caveat", weight: 600 } });
+    // nothing waits for a safe point
+    const count = stage.looks.length;
+    stage.reachSafePoint();
     controller.safePoint();
+    expect(stage.looks).toHaveLength(count);
 
     bridge.emit("now-playing", null);
     expect(heard[heard.length - 1]).toBeNull();
+    expect(controller.songLook).toBeNull();
     controller.destroy();
   });
 });

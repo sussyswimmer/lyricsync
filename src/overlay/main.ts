@@ -24,10 +24,11 @@ if (host) {
   let controller: OverlayController | null = null;
   const stage = new LyricStage(host, {
     onInvalidate: () => controller?.kick(),
-    onSafePoint: () => controller?.safePoint(),
     // The native overlay covers its display's work area, not the whole screen: Size follows the screen.
     ...(bridge.kind === "tauri" ? { referenceHeight: () => workAreaReference(innerHeight, screen.height) } : {}),
   });
+  // Picks each song's look (SPEC §4.6) and brings refinements in at the stage's safe points, which it
+  // listens for itself.
   controller = new OverlayController(bridge, stage, { gate: true });
   // QA overrides, never stored (SPEC §4.10): `mode`, `font` and `curve` inside the mock's ?settings=
   // (so the harness tools keep working), ?look=style[,family[,curve]] on any bridge, and the app's
