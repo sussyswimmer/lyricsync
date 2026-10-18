@@ -4,7 +4,6 @@ import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
 import { InterludeDots } from "../motion/dots";
-import { FULL_TRANSFORM } from "../motion/karaoke";
 import { findInterludes, type Interlude } from "../motion/interlude";
 import { compositorSteps, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
 import { casedLines } from "../motion/letters";
@@ -65,7 +64,7 @@ const PREPARE_GAP_MS = 40;
  * After a line change, the line leaving focus and the rows that only step their distance blur are
  * restyled this many per frame (each repaints and re-rasters its row).
  */
-const JOBS_PER_FRAME = 1;
+const JOBS_PER_FRAME = 3;
 /** The scroll's keyframes are thinned to this much of a px of position and of opacity, and of scale. */
 const SCROLL_THIN = { y: 0.25, opacity: 0.004, scale: 0.002 };
 
@@ -338,9 +337,9 @@ export class DriftMode implements ModeRenderer {
       for (const w of line.words) {
         const text = w.text.trimEnd();
         const word = h("span", "kw");
-        // an identity transform, never "none": a box that gains or loses a transform (its karaoke
-        // pose, a line coming into focus or leaving it) has its whole row laid out again
-        put(word, "transform", FULL_TRANSFORM);
+        // No transform of its own out of focus: an identity transform on every word box made the
+        // compositor draw about one more render pass every frame (letters, under their animated
+        // word box, do rest on an identity transform; see line.ts restStyle).
         const txt = h("span", "kw-txt", text);
         word.append(txt);
         el.append(word);
@@ -899,7 +898,7 @@ export class DriftMode implements ModeRenderer {
     }
     // Out of focus every word stands at full size; the focus line's karaoke poses its own words.
     if (!focus && was !== "" && was !== "focus") return;
-    if (!focus) for (const w of row.words) put(w, "transform", FULL_TRANSFORM);
+    if (!focus) for (const w of row.words) put(w, "transform", "none");
   }
 
   /** A row's state with the list on `layout` around `focusRow`: focus, or its distance blur above or below. */

@@ -98,7 +98,7 @@ export const SLICE_MS = 6;
  * Mount slices (one per frame) stop taking new words once they have run this long, ms: every word they
  * start adds its layers to that frame's commit and raster, so a frame takes a few words, not a line.
  */
-export const MOUNT_SLICE_MS = 2;
+export const MOUNT_SLICE_MS = 5;
 /** The overlay reaches this far beyond the word's box (glyph overhangs, the lift, the bloom), in em. */
 const PAD_EM = 0.5;
 
@@ -233,17 +233,24 @@ export class KaraokeLine {
   /**
    * Builds and plans words ahead, for a line expected to come into focus at `origin` (by default its
    * lead: LEAD_MS before its first word), for at most `budgetMs`. True once every word is ready, so
-   * mounting only has animations to start.
+   * mounting only has animations to start. Every overlay is built first, so the page renders the
+   * new DOM once rather than after every slice; the planning after it touches no DOM.
    */
   prepare(budgetMs = SLICE_MS, origin = (this.views[0]?.word.start ?? 0) - LEAD_MS): boolean {
     if (this.destroyed) return true;
     const started = now();
     let done = 0;
+    // at least one word a slice, however slow the clock says the last one was
+    const out = (): boolean => done > 0 && now() - started >= budgetMs;
     for (const v of this.views) {
-      if (v.ov && this.plans.has(this.planKey(v, origin, true))) continue;
-      // at least one word a slice, however slow the clock says the last one was
-      if (done > 0 && now() - started >= budgetMs) return false;
+      if (v.ov) continue;
+      if (out()) return false;
       this.overlayOf(v);
+      done++;
+    }
+    for (const v of this.views) {
+      if (this.plans.has(this.planKey(v, origin, true))) continue;
+      if (out()) return false;
       this.planFor(v, origin, true);
       done++;
     }
@@ -293,7 +300,7 @@ export class KaraokeLine {
     this.timeline.cancel(this.group);
     for (const v of this.views) {
       if (v.ov) this.finalStyle(v, v.ov);
-      else put(v.el, "transform", FULL_TRANSFORM);
+      else put(v.el, "transform", "none");
       v.mounted = true;
     }
   }
@@ -313,7 +320,7 @@ export class KaraokeLine {
       v.ov?.fx.remove();
       v.ov = null;
       v.el.classList.remove("kw-on");
-      put(v.el, "transform", FULL_TRANSFORM);
+      put(v.el, "transform", "none");
       put(v.el, "will-change", "auto");
       if (v.txt) v.txt.el.textContent = v.txt.text;
       v.txt = null;
@@ -413,7 +420,7 @@ export class KaraokeLine {
   /** A word waiting for its slice: at rest, nothing lit; still at full size if its line settles in. */
   private hold(v: WordView): void {
     if (v.ov) this.restStyle(v, v.ov);
-    const pose = !this.moves() || this.settles(v) ? FULL_TRANSFORM : restTransform(this.look.size, this.look.params);
+    const pose = !this.moves() ? "none" : this.settles(v) ? FULL_TRANSFORM : restTransform(this.look.size, this.look.params);
     put(v.el, "transform", pose);
     this.layer(v);
   }
@@ -600,6 +607,8 @@ export class KaraokeLine {
     for (const inner of ov.inners) put(inner, "transform", `translateX(${px(-closed)})`);
     put(ov.win, "opacity", full ? "1" : "0");
     put(ov.glow, "opacity", "0");
+    // letters rest on an identity transform, never "none": a letter that gains or loses a transform as
+    // its motion starts or ends has its word laid out again
     const rest = (i: number): string => ov.letterRest[i] || FULL_TRANSFORM;
     ov.base.forEach((s, i) => put(s, "transform", rest(i)));
     ov.lit.forEach((s, i) => put(s, "transform", rest(i)));
@@ -612,7 +621,7 @@ export class KaraokeLine {
 
   /** Sung: full size, fully lit, no glow. */
   private finalStyle(v: WordView, ov: Overlay): void {
-    put(v.el, "transform", FULL_TRANSFORM);
+    put(v.el, "transform", "none");
     put(ov.track, "transform", "translateX(0px)");
     for (const inner of ov.inners) put(inner, "transform", "translateX(0px)");
     put(ov.win, "opacity", "1");

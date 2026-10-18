@@ -11,7 +11,6 @@ import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import { bloomShadow } from "../src/overlay/motion/bloom";
-import { FULL_TRANSFORM } from "../src/overlay/motion/karaoke";
 import { bloomOf } from "../src/overlay/motion/params";
 import { FakeAnimation, FakeAnimationHost, valuesAt } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
@@ -1096,7 +1095,7 @@ describe("a line change, spread over the frames after it", () => {
     return `${txt?.style.getPropertyValue("color")}/${blur}`;
   };
 
-  it("restyles the new focus at once, then the line leaving it, then the other rows a frame each, nearest first", () => {
+  it("restyles the new focus at once, then the line leaving it, then the other rows a few a frame, nearest first", () => {
     const { mode, rows } = drift(0, lookFor(), EIGHT);
     // line 3 (7 s) in focus, and everything around it styled
     mode.paint(cue(3, 7100, false));
@@ -1110,17 +1109,25 @@ describe("a line change, spread over the frames after it", () => {
     // nothing else yet: the line leaving keeps its overlay and look, the rest their blur
     expect(rows[3]?.classList.contains("has-fx")).toBe(true);
     expect(rows.map(styleOf).filter((_, i) => i !== 4)).toEqual(before.filter((_, i) => i !== 4));
-    // the next frame: the line leaving hands back to its plain text, dimmed
+    // the next frame: the line leaving hands back to its plain text, dimmed; then the other rows, the
+    // nearest first (one line away, then two, ...), a few a frame
+    const order = [5, 2, 6, 1, 7, 0];
+    const restyled = (): number[] => order.filter((i) => styleOf(rows[i]) !== before[i]);
     vi.advanceTimersByTime(16);
     expect(rows[3]?.classList.contains("has-fx")).toBe(false);
     expect(styleOf(rows[3])).toMatch(/^transparent\//u);
-    expect(styleOf(rows[5])).toBe(before[5]);
-    // then the row just below the focus (one line away), before rows further off
-    vi.advanceTimersByTime(16);
-    expect(styleOf(rows[5])).not.toBe(before[5]);
-    expect(styleOf(rows[7])).toBe(before[7]);
-    vi.advanceTimersByTime(16 * 10);
-    expect(styleOf(rows[7])).not.toBe(before[7]);
+    let frames = 1;
+    let last = restyled().length;
+    expect(last).toBeLessThan(order.length);
+    while (restyled().length < order.length && frames < 20) {
+      expect(restyled()).toEqual(order.slice(0, restyled().length));
+      vi.advanceTimersByTime(16);
+      frames++;
+      expect(restyled().length).toBeGreaterThan(last);
+      last = restyled().length;
+    }
+    expect(restyled()).toEqual(order);
+    expect(frames).toBeGreaterThan(1);
     // every row ends as a paused cut would have drawn it at once
     const spread = rows.map(styleOf);
     const cut = drift(0, lookFor(), EIGHT);
@@ -1160,16 +1167,22 @@ describe("a line change, spread over the frames after it", () => {
     expect(rows[4]?.classList.contains("has-fx")).toBe(false);
   });
 
-  it("keeps every word box on an identity transform, never none, in focus or out", () => {
+  it("rests letters on an identity transform, never none, and word boxes out of focus on none", () => {
     const { mode, rows } = drift(0, lookFor(), EIGHT);
-    const boxes = (): string[] => rows.flatMap((r) => wordsOf(r).map((w) => w.style.getPropertyValue("transform")));
-    expect(new Set(boxes())).toEqual(new Set([FULL_TRANSFORM]));
+    // the letters that move (a word that can't split draws one still run instead)
+    const letters = (r: FakeElement | undefined): string[] =>
+      (r?.find("kl") ?? []).filter((l) => l.getAnimations().length > 0).map((l) => l.style.getPropertyValue("transform"));
+    const boxes = (r: FakeElement | undefined): string[] => wordsOf(r).map((w) => w.style.getPropertyValue("transform"));
     mode.paint(cue(3, 7100, false));
     clock += 16;
     mode.paint(cue(3, 8700));
     vi.advanceTimersByTime(16 * 12);
-    expect(boxes().includes("none")).toBe(false);
-    expect(boxes().includes("")).toBe(false);
+    // the line in focus: every letter of every copy has a transform at rest (its overlay's final pose)
+    expect(letters(rows[4]).length).toBeGreaterThan(0);
+    expect(letters(rows[4]).every((t) => t !== "" && t !== "none")).toBe(true);
+    // the rows around it: their word boxes carry none (an identity transform on every box cost the
+    // compositor a render pass a frame)
+    expect(new Set([...boxes(rows[2]), ...boxes(rows[3]), ...boxes(rows[5])])).toEqual(new Set(["none"]));
   });
 });
 
