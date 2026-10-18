@@ -1364,27 +1364,28 @@ describe("a karaoke line", () => {
     return due.length;
   };
 
-  it("mounts the words sung by now or within 400 ms in its first slice, the rest on the next frames, earliest first, in one window", () => {
+  it("mounts only the words due within 100 ms in its first slice (none at a lead), then a word or two a frame, earliest first, in one window", () => {
     const ws = words(["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"], 10_000, 300);
     const { line: k, boxes } = line(ws);
-    tick = 2;
+    tick = 1;
     k.mount(9700, true);
     const mounted = (): number[] => boxes.map((b, i) => (animated(b).length > 0 ? i : -1)).filter((i) => i >= 0);
-    const first = mounted();
-    // within 400 ms of the origin (9.7 s): "one" at 10.0 s; a few more while the 6 ms slice lasts
-    expect(first[0]).toBe(0);
-    expect(first.length).toBeLessThan(ws.length);
-    expect(first).toEqual(first.map((_, i) => i));
+    // at the line's lead, 300 ms before its first word, nothing is due yet: the frame that starts the
+    // list's scroll starts none of the line's own animations
+    expect(mounted()).toEqual([]);
     expect(k.mounting).toBe(true);
-    // the rest wait in their pose: still full size, easing into rest when they mount
-    const waiting = boxes[first.length];
-    expect(waiting?.style.getPropertyValue("transform")).toBe(FULL_TRANSFORM);
-    // each frame mounts at least one more, earliest first
-    let last = first.length;
+    // every word waits in its pose, on a layer of its own: still full size, easing into rest when it mounts
+    for (const b of boxes) {
+      expect(b.style.getPropertyValue("transform")).toBe(FULL_TRANSFORM);
+      expect(b.style.getPropertyValue("will-change")).toBe("transform");
+    }
+    // each frame mounts one or two more, earliest first
+    let last = 0;
     while (k.mounting) {
       expect(runFrames()).toBe(1);
       const now = mounted();
       expect(now.length).toBeGreaterThan(last);
+      expect(now.length - last).toBeLessThanOrEqual(2);
       expect(now).toEqual(now.map((_, i) => i));
       last = now.length;
     }
@@ -1399,13 +1400,31 @@ describe("a karaoke line", () => {
     expect(new Set(all.map((a) => Math.round((a.startTime ?? 0) * 1000)))).toHaveProperty("size", 1);
   });
 
-  it("mounts every word sung by the time it comes into focus mid-line in its first slice", () => {
+  it("still mounts a word a frame when every word takes longer than a slice", () => {
+    const ws = words(["one", "two", "three", "four"], 10_000, 300);
+    const { line: k, boxes } = line(ws);
+    // every clock read jumps 50 ms: past the slice's budget before it has done anything
+    tick = 50;
+    k.mount(9700, true);
+    for (let n = 1; n <= ws.length; n++) {
+      runFrames();
+      expect(boxes.filter((b) => animated(b).length > 0)).toHaveLength(n);
+    }
+    expect(k.mounting).toBe(false);
+    // and an idle prepare slice plans at least one word too
+    const other = line(words(["five", "six"], 20_000, 300));
+    expect(other.line.prepare(0)).toBe(false);
+    expect(other.boxes.filter((b) => b.kids("kw-fx").length === 1)).toHaveLength(1);
+  });
+
+  it("mounts every word sung by the time it comes into focus mid-line, or starting within 100 ms, in its first slice", () => {
     const ws = words(["one", "two", "three", "four", "five", "six"], 10_000, 300);
     const { line: k, boxes } = line(ws);
     tick = 50;
     k.mount(11_000, false);
-    // sung by 11 s, or within 400 ms of it: words 0..4 (starting by 11.2 s), however long the slice takes
-    expect(boxes.slice(0, 5).every((b) => animated(b).length > 0)).toBe(true);
+    // sung by 11 s, or starting by 11.1 s: words 0..3, however long the slice takes; 11.2 s waits
+    expect(boxes.slice(0, 4).every((b) => animated(b).length > 0)).toBe(true);
+    expect(animated(boxes[4] as Node)).toEqual([]);
     expect(k.span.origin).toBe(10_000);
   });
 
@@ -1421,6 +1440,7 @@ describe("a karaoke line", () => {
     const built = boxes.map((b) => b.kids("kw-fx")[0]);
     tick = 0;
     k.mount(20_000 - LEAD_MS, true);
+    while (k.mounting) runFrames();
     expect(boxes.map((b) => b.kids("kw-fx")[0])).toEqual(built);
     expect(boxes.every((b) => animated(b).length > 0)).toBe(true);
     expect(k.prepare()).toBe(true);
@@ -1434,6 +1454,7 @@ describe("a karaoke line", () => {
     ];
     const { line: k, boxes } = line(ws);
     k.mount(10_000, false);
+    while (k.mounting) runFrames();
     const [bridge, arabic, night] = boxes as [Node, Node, Node];
     for (const box of boxes) {
       const fx = box.kids("kw-fx")[0] as Node;
@@ -1511,8 +1532,10 @@ describe("a karaoke line", () => {
     const slot = new Node("span");
     const along = { el: asEl(slot), track: { t0: 9800, duration: 2600, frames: [{ opacity: 0 }, { opacity: 1 }] } };
     k.mount(9700, true, [along]);
+    // the along track plays at once, ahead of the words' slices
     const anim = slot.getAnimations()[0];
     expect(anim).toBeDefined();
+    while (k.mounting) runFrames();
     const word = animated(boxes[0] as Node)[0];
     expect(anim?.options.duration).toBe(word?.options.duration);
     expect(k.span.end).toBe(Math.max(wordUntil(ws[1] as Word, BL), 9800 + 2600));
@@ -1524,6 +1547,10 @@ describe("a karaoke line", () => {
     const ws = words(["one", "two", "three"], 10_000, 400);
     const { line: k, tl } = line(ws);
     k.mount(10_000, false);
+    // while slices are still to run it covers the song by definition: they start on the window
+    expect(k.mounting).toBe(true);
+    expect(k.covers(10_500)).toBe(true);
+    while (k.mounting) runFrames();
     expect(k.covers(10_500)).toBe(true);
     expect(k.covers(9_000)).toBe(false);
     expect(k.covers(k.span.end + 10)).toBe(true);
@@ -1537,6 +1564,7 @@ describe("a karaoke line", () => {
     const ws = words(["one", "two"], 10_000, 400);
     const { line: k, boxes, tl } = line(ws);
     k.mount(10_000, false);
+    while (k.mounting) runFrames();
     k.finish();
     expect(tl.size).toBe(0);
     expect(boxes[1]?.find("kw-track")[0]?.style.getPropertyValue("transform")).toBe("translateX(0px)");
@@ -1553,6 +1581,7 @@ describe("a karaoke line", () => {
     const ws = words(["one", "two"], 10_000, 400);
     const { line: k, boxes } = line(ws);
     k.mount(10_000 - LEAD_MS, true);
+    while (k.mounting) runFrames();
     const pop = boxes[0]?.getAnimations()[0] as FakeAnimation;
     const window = k.span.end - k.span.origin;
     expect(valuesAt(pop.keyframes, 0).transform).toBe(FULL_TRANSFORM);

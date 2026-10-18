@@ -58,16 +58,11 @@
   transform-origin: 50% 62%;
 }
 
-/* The plain text: what rests on screen, and the layout the overlay is drawn over. Shown again
-   (fading back in) when its line leaves focus; hidden at once where an overlay takes over (a word
-   whose overlay isn't built yet keeps showing it). */
-.kw-txt {
-  transition: opacity 0.32s ease;
-}
-
+/* The plain text: what rests on screen, and the layout the overlay is drawn over. Hidden where an
+   overlay takes over (a word whose overlay isn't built yet keeps showing it), back as its line
+   leaves focus. */
 .kw-host.has-fx .kw-on > .kw-txt {
   opacity: 0;
-  transition: none;
 }
 
 /* With letters placed (Arc): the word's own run keeps the box its size, unseen; the letters draw it. */
@@ -75,16 +70,15 @@
   visibility: hidden;
 }
 
-/* The overlay fades out as its line leaves focus, but takes over at once as one comes in (it may have
-   been built ahead, hidden). */
+/* The overlay takes over at once as its line comes in (it may have been built ahead, hidden) and
+   hands back to the plain text at once as the line leaves, while the list's own scroll dims the row.
+   A fade here would give every word's overlay a layer of its own to raster just as the list starts
+   moving, the costliest frame of a line change on a software compositor. */
 .kw-fx {
   position: absolute;
   inset: 0;
-  transition: opacity 0.32s ease;
-}
-
-.kw-host.has-fx .kw-fx {
-  transition: none;
+  /* always its own stacking context, so showing or hiding it never asks for a layout */
+  isolation: isolate;
 }
 
 .kw-host:not(.has-fx) .kw-fx {

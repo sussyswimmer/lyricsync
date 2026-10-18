@@ -85,10 +85,20 @@ export interface Along {
   track: Track;
 }
 
-/** The first mount slice takes the words starting within this long of the origin (or of now). */
-const FIRST_SLICE_MS = 400;
-/** Slices stop taking new words once they have run this long, ms. */
+/**
+ * The first mount slice, run in the paint that brings the line in, takes only the words due within
+ * this long of the origin (or of now): the ones already sung after a seek, or starting at once. Every
+ * other word waits, held in its rest pose, for the slices on the frames after, so the frame that
+ * starts the list's scroll doesn't also start the line's hundred animations.
+ */
+const FIRST_SLICE_MS = 100;
+/** Prepare slices (idle timers) stop taking new words once they have run this long, ms. */
 export const SLICE_MS = 6;
+/**
+ * Mount slices (one per frame) stop taking new words once they have run this long, ms: every word they
+ * start adds its layers to that frame's commit and raster, so a frame takes a few words, not a line.
+ */
+export const MOUNT_SLICE_MS = 2;
 /** The overlay reaches this far beyond the word's box (glyph overhangs, the lift, the bloom), in em. */
 const PAD_EM = 0.5;
 
@@ -143,7 +153,7 @@ function childWithClass(el: HTMLElement, cls: string): HTMLElement | undefined {
 }
 
 /** Runs `fn` on the next frame (a timer without frames); returns a canceller. */
-function nextFrame(fn: () => void): () => void {
+export function nextFrame(fn: () => void): () => void {
   if (typeof requestAnimationFrame === "function") {
     const id = requestAnimationFrame(() => fn());
     return () => {
@@ -228,11 +238,14 @@ export class KaraokeLine {
   prepare(budgetMs = SLICE_MS, origin = (this.views[0]?.word.start ?? 0) - LEAD_MS): boolean {
     if (this.destroyed) return true;
     const started = now();
+    let done = 0;
     for (const v of this.views) {
       if (v.ov && this.plans.has(this.planKey(v, origin, true))) continue;
-      if (now() - started >= budgetMs) return false;
+      // at least one word a slice, however slow the clock says the last one was
+      if (done > 0 && now() - started >= budgetMs) return false;
       this.overlayOf(v);
       this.planFor(v, origin, true);
+      done++;
     }
     return true;
   }
@@ -260,9 +273,8 @@ export class KaraokeLine {
     // the line's own motion first (Lens's fisheye), then its words
     for (const a of along) this.timeline.play(a.el, rebase(a.track, origin, end), origin, end - origin, this.group);
     const must = Math.max(origin, t) + FIRST_SLICE_MS;
-    const started = now();
     for (const v of this.views) {
-      if (v.word.start >= must && now() - started >= SLICE_MS) break;
+      if (v.word.start >= must) break;
       this.mountWord(v);
     }
     const rest = this.views.filter((v) => !v.mounted);
@@ -281,7 +293,7 @@ export class KaraokeLine {
     this.timeline.cancel(this.group);
     for (const v of this.views) {
       if (v.ov) this.finalStyle(v, v.ov);
-      else put(v.el, "transform", "none");
+      else put(v.el, "transform", FULL_TRANSFORM);
       v.mounted = true;
     }
   }
@@ -301,7 +313,8 @@ export class KaraokeLine {
       v.ov?.fx.remove();
       v.ov = null;
       v.el.classList.remove("kw-on");
-      put(v.el, "transform", "none");
+      put(v.el, "transform", FULL_TRANSFORM);
+      put(v.el, "will-change", "auto");
       if (v.txt) v.txt.el.textContent = v.txt.text;
       v.txt = null;
     }
@@ -316,10 +329,12 @@ export class KaraokeLine {
       this.cancelSlice = null;
       if (this.destroyed) return;
       const started = now();
+      let done = 0;
       for (const v of this.views) {
         if (v.mounted) continue;
-        if (now() - started >= SLICE_MS) break;
+        if (done > 0 && now() - started >= MOUNT_SLICE_MS) break;
         this.mountWord(v);
+        done++;
       }
       if (this.views.some((v) => !v.mounted)) this.scheduleSlice();
     });
@@ -369,6 +384,7 @@ export class KaraokeLine {
     const ov = this.overlayOf(v);
     const plan = this.planFor(v, this.origin, this.settleIn);
     const { size, params } = this.look;
+    this.layer(v);
     // the resting style is the end state: what shows once the line's animations are over
     this.finalStyle(v, ov);
     const lead = this.settles(v)
@@ -397,8 +413,18 @@ export class KaraokeLine {
   /** A word waiting for its slice: at rest, nothing lit; still at full size if its line settles in. */
   private hold(v: WordView): void {
     if (v.ov) this.restStyle(v, v.ov);
-    const pose = !this.moves() ? "none" : this.settles(v) ? FULL_TRANSFORM : restTransform(this.look.size, this.look.params);
+    const pose = !this.moves() || this.settles(v) ? FULL_TRANSFORM : restTransform(this.look.size, this.look.params);
     put(v.el, "transform", pose);
+    this.layer(v);
+  }
+
+  /**
+   * A word that will pop gets its own layer from the moment its line comes in, not when its slice
+   * starts its motion: otherwise every slice would take words out of the row's layer and the whole
+   * row would repaint and re-raster again, frame after frame.
+   */
+  private layer(v: WordView): void {
+    if (this.moves()) put(v.el, "will-change", "transform");
   }
 
   private play(el: Element | undefined, track: Track | null, lead: readonly { at: number; frame: Keyframe }[] = []): void {
@@ -574,7 +600,7 @@ export class KaraokeLine {
     for (const inner of ov.inners) put(inner, "transform", `translateX(${px(-closed)})`);
     put(ov.win, "opacity", full ? "1" : "0");
     put(ov.glow, "opacity", "0");
-    const rest = (i: number): string => ov.letterRest[i] || "none";
+    const rest = (i: number): string => ov.letterRest[i] || FULL_TRANSFORM;
     ov.base.forEach((s, i) => put(s, "transform", rest(i)));
     ov.lit.forEach((s, i) => put(s, "transform", rest(i)));
     ov.darkLetters.forEach((s, i) => put(s, "transform", rest(i)));
@@ -586,15 +612,15 @@ export class KaraokeLine {
 
   /** Sung: full size, fully lit, no glow. */
   private finalStyle(v: WordView, ov: Overlay): void {
-    put(v.el, "transform", "none");
+    put(v.el, "transform", FULL_TRANSFORM);
     put(ov.track, "transform", "translateX(0px)");
     for (const inner of ov.inners) put(inner, "transform", "translateX(0px)");
     put(ov.win, "opacity", "1");
     put(ov.glow, "opacity", "0");
-    for (const s of [...ov.base, ...ov.lit, ...ov.darkLetters]) put(s, "transform", "none");
+    for (const s of [...ov.base, ...ov.lit, ...ov.darkLetters]) put(s, "transform", FULL_TRANSFORM);
     for (const s of ov.letterGlows) {
       put(s, "opacity", "0");
-      put(s, "transform", "none");
+      put(s, "transform", FULL_TRANSFORM);
     }
   }
 }

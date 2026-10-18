@@ -4,10 +4,11 @@ import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
 import { InterludeDots } from "../motion/dots";
+import { FULL_TRANSFORM } from "../motion/karaoke";
 import { findInterludes, type Interlude } from "../motion/interlude";
 import { compositorSteps, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
 import { casedLines } from "../motion/letters";
-import { KaraokeLine, SLICE_MS } from "../motion/line";
+import { KaraokeLine, nextFrame, SLICE_MS } from "../motion/line";
 import {
   BLUR_STEPS,
   CALM_SCROLL_SPRING,
@@ -60,6 +61,11 @@ const PAUSED_SEEK_MS = 50;
 const PREPARE_DELAY_MS = 600;
 /** ...in idle slices this far apart. */
 const PREPARE_GAP_MS = 40;
+/**
+ * After a line change, the line leaving focus and the rows that only step their distance blur are
+ * restyled this many per frame (each repaints and re-rasters its row).
+ */
+const JOBS_PER_FRAME = 1;
 /** The scroll's keyframes are thinned to this much of a px of position and of opacity, and of scale. */
 const SCROLL_THIN = { y: 0.25, opacity: 0.004, scale: 0.002 };
 
@@ -67,6 +73,11 @@ interface Row {
   el: HTMLDivElement;
   /** the `.kw` box of each word */
   words: HTMLElement[];
+  /**
+   * each word's plain text (`.kw-txt`): a row's state colors and blurs these, not the row, so that a
+   * restyle recalculates a span per word rather than every copy in the karaoke overlay beneath
+   */
+  txts: HTMLElement[];
   /** the line as drawn: in the look's case */
   line: Line;
   index: number;
@@ -102,14 +113,25 @@ export interface Placed {
   off: number;
 }
 
-/** One slot's style with the list at some scroll position. */
+/**
+ * One slot's style with the list at some scroll position, as numbers: transformOf writes it out, for
+ * the keyframes a scroll keeps only.
+ */
 interface SlotStyle {
-  transform: string;
   opacity: number;
   off: number;
-  /** the transform's parts, for thinning the scroll's keyframes */
   y: number;
   scale: number;
+  /** Drift's depth (px, toward the back) and tilt (deg); 0 in Stack */
+  z: number;
+  tilt: number;
+}
+
+/** A slot's transform: flat for Stack, with Drift's depth and tilt. */
+function transformOf(s: SlotStyle, depth: number): string {
+  return depth > 0
+    ? `translate3d(0px, ${num(s.y, 2)}px, ${num(s.z, 1)}px) rotateX(${num(s.tilt, 2)}deg) scale(${num(s.scale, 4)})`
+    : `translate(0px, ${num(s.y, 2)}px) scale(${num(s.scale, 4)})`;
 }
 
 const perfNow = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
@@ -256,6 +278,9 @@ export class DriftMode implements ModeRenderer {
   private frozen = false;
   /** destroy() ran (and no build since): anything still scheduled does nothing */
   private destroyed = false;
+  /** what a line change left for the frames after it (restate's `spread`), and the frame that runs it */
+  private later: (() => void)[] = [];
+  private cancelLater: (() => void) | null = null;
 
   constructor(depth: number) {
     this.depth = depth;
@@ -309,18 +334,24 @@ export class DriftMode implements ModeRenderer {
       el.dir = "auto";
       el.style.top = `${look.y}px`;
       const words: HTMLElement[] = [];
+      const txts: HTMLElement[] = [];
       for (const w of line.words) {
         const text = w.text.trimEnd();
         const word = h("span", "kw");
-        word.append(h("span", "kw-txt", text));
+        // an identity transform, never "none": a box that gains or loses a transform (its karaoke
+        // pose, a line coming into focus or leaving it) has its whole row laid out again
+        put(word, "transform", FULL_TRANSFORM);
+        const txt = h("span", "kw-txt", text);
+        word.append(txt);
         el.append(word);
         // the space between words sits outside the word boxes, where line breaking can use it
         if (text !== w.text) el.append(h("span", "", " "));
         words.push(word);
+        txts.push(txt);
       }
       put(el, "visibility", "hidden");
       box.append(el);
-      return { el, words, line, index, size: look.size, box: 0, height: 0, state: "" };
+      return { el, words, txts, line, index, size: look.size, box: 0, height: 0, state: "" };
     });
     this.breaks = this.interludes.map((il) => {
       const el = h("div", "drift-break");
@@ -359,6 +390,7 @@ export class DriftMode implements ModeRenderer {
     this.look = look;
     const box = this.box;
     if (!box) return;
+    this.flushLater();
     paintVars(box, look, look.size);
     for (const row of this.rows) if (row.size !== look.size) paintVars(row.el, look, row.size);
     box.style.color = look.colors.dim;
@@ -433,6 +465,7 @@ export class DriftMode implements ModeRenderer {
 
   /** Commits everything moving to inline style and stops it (before the stage copies the scene). */
   freeze(): void {
+    this.flushLater();
     this.karaoke?.line.freeze();
     for (const l of this.leaving) l.line.freeze();
     this.timeline.freeze();
@@ -447,6 +480,9 @@ export class DriftMode implements ModeRenderer {
     this.timeline.cancel();
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.prepareTimer = null;
+    this.cancelLater?.();
+    this.cancelLater = null;
+    this.later = [];
     this.prepared?.line.destroy();
     this.prepared = null;
     this.karaoke?.line.destroy();
@@ -565,11 +601,14 @@ export class DriftMode implements ModeRenderer {
       // `at` is where the slot should appear; the perspective (its origin on look.y) pulls a slot
       // `dist` lines back toward look.y by projection(dist), so place it that much further out.
       const y = snap(shift + p.at, look.dpr) / projection(dist, depth) - box / 2;
-      const transform =
-        depth > 0
-          ? `translate3d(0px, ${num(y, 2)}px, ${num(-dist * zUnit, 1)}px) rotateX(${num(-p.off * DRIFT_TILT_DEG * depth, 2)}deg) scale(${num(scale, 4)})`
-          : `translate(0px, ${num(y, 2)}px) scale(${num(scale, 4)})`;
-      out.set(i, { transform, opacity: slot.kind === "line" ? lineLevel(p.off) : 1, off: p.off, y, scale });
+      out.set(i, {
+        opacity: slot.kind === "line" ? lineLevel(p.off) : 1,
+        off: p.off,
+        y,
+        scale,
+        z: -dist * zUnit,
+        tilt: -p.off * DRIFT_TILT_DEG * depth,
+      });
     }
     return out;
   }
@@ -600,7 +639,7 @@ export class DriftMode implements ModeRenderer {
     const glide = look.motion && cue.running && from >= 0 && Math.abs(this.lineOfSlot(focus) - fromLine) <= MAX_GLIDE_LINES;
     if (glide) this.scroll(look);
     else this.cut(look);
-    this.restate(cue);
+    this.restate(cue, glide);
   }
 
   /** The list at rest on the focus slot: every slot's own style, nothing animated. */
@@ -614,7 +653,7 @@ export class DriftMode implements ModeRenderer {
         return;
       }
       this.reveal(i, el);
-      put(el, "transform", at.transform);
+      put(el, "transform", transformOf(at, this.depth));
       put(el, "opacity", num(at.opacity, 3));
     });
   }
@@ -669,7 +708,7 @@ export class DriftMode implements ModeRenderer {
       this.reveal(i, el);
       const end = final.get(i);
       put(el, "opacity", num(end?.opacity ?? 0, 3));
-      if (end) put(el, "transform", end.transform);
+      if (end) put(el, "transform", transformOf(end, this.depth));
       // where a slot is out of reach at a sample, it holds its nearest known place at no opacity
       let last = end ?? frames.find((f) => f.has(i))?.get(i) ?? null;
       const styles = new Array<SlotStyle | null>(s.times.length);
@@ -682,8 +721,12 @@ export class DriftMode implements ModeRenderer {
       const ys = styles.map((st) => st?.y ?? 0);
       const scales = styles.map((st) => st?.scale ?? 1);
       const keep = thin(s.times, [ys, opacity, scales], [SCROLL_THIN.y, SCROLL_THIN.opacity, SCROLL_THIN.scale]);
+      const depth = this.depth;
       const anim = playWall(el, {
-        frames: keyframesAt(s.times, keep, (k) => ({ transform: styles[k]?.transform ?? "none", opacity: num(opacity[k] ?? 0, 3) })),
+        frames: keyframesAt(s.times, keep, (k) => {
+          const st = styles[k];
+          return { transform: st ? transformOf(st, depth) : "none", opacity: num(opacity[k] ?? 0, 3) };
+        }),
         duration: s.duration,
         startTime: s.startTime,
       });
@@ -691,29 +734,54 @@ export class DriftMode implements ModeRenderer {
     });
   }
 
-  /** Row states around the new focus, the karaoke handed to the focus line, the break's dots started. */
-  private restate(cue: Cue): void {
+  /**
+   * Row states around the new focus, the karaoke handed to the focus line, the break's dots started.
+   * `spread` (a glide while playing): this frame restyles only the new focus; the line leaving it, then
+   * the rows that only step their distance blur (nearest first), follow on the next frames,
+   * JOBS_PER_FRAME at a time, while the list is moving anyway. Each of them repaints and re-rasters
+   * its row, and all at once, on top of the scroll and the karaoke's handover, made the frame that
+   * starts a line change the longest of the song.
+   */
+  private restate(cue: Cue, spread = false): void {
     const look = this.look;
     if (!look) return;
     const focusSlot = this.slots[this.target];
     const focusRow = focusSlot?.kind === "line" ? focusSlot.row : null;
     const layout = this.layout(this.target, look);
-    // the line leaving focus fades back to plain text, then drops its overlay; sung through (the usual
-    // way out) it fades as it ends, still; leaving early (a seek back) it keeps moving with the song
+    // what a glide leaves for the frames after this one, in order: the line leaving focus, then the
+    // rows that only step their blur, nearest first
+    this.flushLater();
+    const later: { job: () => void; dist: number }[] = [];
+    // the line leaving focus hands back to its plain text (the scroll dims the row), then drops its
+    // overlay LEAVE_MS on; sung through (the usual way out) it stops as it ends, still; leaving early
+    // (a seek back) it keeps moving with the song
+    let leavingRow: Row | null = null;
     if (this.karaoke && this.karaoke.row !== focusRow) {
       const { line, row } = this.karaoke;
-      if (cue.t >= line.sungBy) line.finish();
-      row.el.classList.remove("has-fx");
+      const sung = cue.t >= line.sungBy;
+      leavingRow = row;
       this.leaving.push({ line, row, at: cue.t });
       this.karaoke = null;
+      const state = this.stateOf(row, layout, focusRow);
+      const leave = (): void => {
+        // back in focus meanwhile (a seek back): it kept its overlay
+        if (this.karaoke?.row === row) return;
+        if (sung) line.finish();
+        row.el.classList.remove("has-fx");
+        this.styleRow(row, state);
+      };
+      if (spread) later.push({ job: leave, dist: -1 });
+      else leave();
     }
-    this.slots.forEach((slot, i) => {
-      if (slot.kind !== "line") return;
+    this.slots.forEach((slot) => {
+      if (slot.kind !== "line" || slot.row === leavingRow) return;
       const row = slot.row;
-      const off = layout.get(i)?.off;
-      const state = row === focusRow ? "focus" : off === undefined ? (i < this.target ? "past" : "up") : off < 0 ? `past:${blurStep(off)}` : `up:${blurStep(off)}`;
-      this.styleRow(row, state);
+      const state = this.stateOf(row, layout, focusRow);
+      // the focus line, and a row never styled yet (coming into reach), change now
+      if (!spread || row === focusRow || row.state === "") this.styleRow(row, state);
+      else if (row.state !== state) later.push({ job: () => this.styleRow(row, state), dist: this.distOf(row, layout) });
     });
+    this.queueLater(later.sort((a, b) => a.dist - b.dist).map((l) => l.job));
     if (focusRow && !look.unsynced && (!this.karaoke || this.karaoke.row !== focusRow)) {
       // a line coming back while still fading out takes its overlay back
       const back = this.leaving.findIndex((l) => l.row === focusRow);
@@ -815,18 +883,57 @@ export class DriftMode implements ModeRenderer {
     const focus = state === "focus";
     row.el.classList.toggle("is-focus", focus);
     const shadow = textShadow(look, row.size);
-    if (focus) {
-      put(row.el, "color", look.colors.lyric);
-      put(row.el, "text-shadow", shadow);
-    } else {
+    let color = look.colors.lyric;
+    let textShadowOf = shadow;
+    if (!focus) {
       const step = Number(state.split(":")[1] ?? BLUR_STEPS);
       const blur = Math.max(0.6, step * (this.depth > 0 ? DRIFT_BLUR_EM : STACK_BLUR_EM) * row.size);
-      put(row.el, "color", "transparent");
-      put(row.el, "text-shadow", `0 0 ${blur.toFixed(2)}px ${rgba(look.colors.dim, 1)}, ${shadow}`);
+      color = "transparent";
+      textShadowOf = `0 0 ${blur.toFixed(2)}px ${rgba(look.colors.dim, 1)}, ${shadow}`;
+    }
+    // on the words' plain text only: the overlay draws its own colors and shadows, and an inherited
+    // change on the row would recalculate every copy in it
+    for (const txt of row.txts) {
+      put(txt, "color", color);
+      put(txt, "text-shadow", textShadowOf);
     }
     // Out of focus every word stands at full size; the focus line's karaoke poses its own words.
     if (!focus && was !== "" && was !== "focus") return;
-    if (!focus) for (const w of row.words) put(w, "transform", "none");
+    if (!focus) for (const w of row.words) put(w, "transform", FULL_TRANSFORM);
+  }
+
+  /** A row's state with the list on `layout` around `focusRow`: focus, or its distance blur above or below. */
+  private stateOf(row: Row, layout: Map<number, SlotStyle>, focusRow: Row | null): string {
+    if (row === focusRow) return "focus";
+    const i = this.slotOfLine[row.index] ?? -1;
+    const off = layout.get(i)?.off;
+    if (off === undefined) return i < this.target ? "past" : "up";
+    return off < 0 ? `past:${blurStep(off)}` : `up:${blurStep(off)}`;
+  }
+
+  private distOf(row: Row, layout: Map<number, SlotStyle>): number {
+    const off = layout.get(this.slotOfLine[row.index] ?? -1)?.off;
+    return off === undefined ? Infinity : Math.abs(off);
+  }
+
+  /** Runs `jobs` over the next frames, JOBS_PER_FRAME a frame, in order. */
+  private queueLater(jobs: (() => void)[]): void {
+    this.later = jobs;
+    if (jobs.length === 0) return;
+    const step = (): void => {
+      this.cancelLater = null;
+      if (this.destroyed) return;
+      for (const job of this.later.splice(0, JOBS_PER_FRAME)) job();
+      if (this.later.length > 0) this.cancelLater = nextFrame(step);
+    };
+    this.cancelLater = nextFrame(step);
+  }
+
+  /** Every job still waiting, now: before another line change, a new look, or the stage's still copy. */
+  private flushLater(): void {
+    this.cancelLater?.();
+    this.cancelLater = null;
+    for (const job of this.later.splice(0)) job();
   }
 
   /** The break's dots, anchored to its start (a seek into the middle of a break joins it there). */

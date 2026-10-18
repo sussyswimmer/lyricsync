@@ -229,7 +229,11 @@ export const DRIFT_TILT_DEG = 14;
 export const MAX_GLIDE_LINES = 3;
 /** A line coming into focus eases its upcoming words into their rest pose over this long. */
 export const SETTLE_IN_MS = 240;
-/** A line leaving focus keeps its overlay this long, while it fades back to plain text. */
+/**
+ * A line leaving focus keeps its (hidden) overlay this long before it is taken down, so that taking
+ * it down (its words leave their layers, the row repaints) falls after the busiest frames of the
+ * line change.
+ */
 export const LEAVE_MS = 420;
 
 // ---------- the interlude dots ----------

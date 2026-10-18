@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { parseLrc, type Line } from "../src/core/lrc";
@@ -11,6 +11,7 @@ import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import { bloomShadow } from "../src/overlay/motion/bloom";
+import { FULL_TRANSFORM } from "../src/overlay/motion/karaoke";
 import { bloomOf } from "../src/overlay/motion/params";
 import { FakeAnimation, FakeAnimationHost, valuesAt } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
@@ -269,12 +270,18 @@ describe("Drift while paused", () => {
     expect(scaleOf(rows[2])).toBe(1);
     expect(yOf(rows[2])).toBe(0);
     expect(scaleOf(rows[1])).toBeCloseTo(0.58, 4);
-    // the focus went to the centered line: lyric color there, the old line dim (drawn by its soft shadow)
+    // the focus went to the centered line: lyric color there, the old line dim (drawn by its soft
+    // shadow), on every word's plain text (paused: at once, nothing left for later frames)
     expect(rows[2]?.classList.contains("is-focus")).toBe(true);
-    expect(rows[2]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
     expect(rows[1]?.classList.contains("is-focus")).toBe(false);
-    expect(rows[1]?.style.getPropertyValue("color")).toBe("transparent");
-    expect(rows[1]?.style.getPropertyValue("text-shadow")).toMatch(/^0 0 [\d.]+px rgba\(141, 147, 160, 1\.000\)/u);
+    for (const txt of rows[2]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    for (const txt of rows[1]?.find("kw-txt") ?? []) {
+      expect(txt.style.getPropertyValue("color")).toBe("transparent");
+      expect(txt.style.getPropertyValue("text-shadow")).toMatch(/^0 0 [\d.]+px rgba\(141, 147, 160, 1\.000\)/u);
+    }
+    // nothing of it on the rows themselves: the overlay under a row would inherit it
+    expect(rows[2]?.style.getPropertyValue("color")).toBe("");
+    expect(rows[1]?.style.getPropertyValue("text-shadow")).toBe("");
   });
 
   it("glides again (no stage crossfade) once playing", () => {
@@ -430,8 +437,9 @@ describe("Drift restyle", () => {
     expect(mode.paint(cue(1, 4416))).toBe(false);
     expect(scrolling(rows[1])).toEqual(glide);
     expect(host.find("drift")[0]?.style.getPropertyValue("--ut-hl")).toBe("#ff0000");
-    expect(rows[1]?.style.getPropertyValue("color")).toBe("#ffffff");
-    expect(rows[0]?.style.getPropertyValue("text-shadow")).toMatch(/rgba\(51, 51, 51, 1\.000\)/u);
+    // the new colors reach every row's words, those the line change had left for later frames too
+    for (const txt of rows[1]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("#ffffff");
+    for (const txt of rows[0]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("text-shadow")).toMatch(/rgba\(51, 51, 51, 1\.000\)/u);
   });
 });
 
@@ -585,6 +593,14 @@ describe("frames on a boundary", () => {
 });
 
 describe("Drift instrumental breaks", () => {
+  // a glide hands the line leaving focus back to plain text on the frame after it starts
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("brings three dots into focus for a long break, then the next line, then drops the dots", () => {
     const { mode, host, rows } = drift(0);
     mode.paint(cue(1, 8000));
@@ -596,7 +612,8 @@ describe("Drift instrumental breaks", () => {
     // the dots run on the compositor: the group's pop and fade, each dot and its glow
     expect(host.find("ut-dots")[0]?.getAnimations()).toHaveLength(2);
     expect(host.find("ut-dot").every((d) => d.getAnimations().length === 1)).toBe(true);
-    // no line sings karaoke during the break
+    // no line sings karaoke during the break (the one before it hands back on the next frame)
+    vi.advanceTimersByTime(16);
     expect(rows.some((r) => r.classList.contains("has-fx"))).toBe(false);
     clock += 16;
     mode.paint(cue(2, 12_600));
@@ -606,15 +623,17 @@ describe("Drift instrumental breaks", () => {
     expect(host.find("ut-dot")).toHaveLength(0);
   });
 
-  it("sends the line before a break back to plain text once its overlay has faded", () => {
+  it("sends the line before a break back to plain text, and takes its overlay down after", () => {
     const { mode, rows } = drift(0);
     mode.paint(cue(1, 8000));
     expect(rows[1]?.classList.contains("has-fx")).toBe(true);
     expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
     clock += 16;
     mode.paint(cue(1, 8960, true, false));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    vi.advanceTimersByTime(16);
     expect(rows[1]?.classList.contains("has-fx")).toBe(false);
-    // still fading
+    // its overlay, hidden, is taken down a little later
     expect(mode.nextChange(8960)).toBeLessThanOrEqual(420);
     clock += 500;
     mode.paint(cue(1, 9500, true, true));
@@ -623,17 +642,28 @@ describe("Drift instrumental breaks", () => {
 });
 
 describe("Drift's karaoke leaving focus", () => {
+  // a glide hands the line leaving focus back to plain text on the frame after it starts
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   /** Animations on a row's word boxes and everything in their overlays (the row's own scroll aside). */
   const wordMotion = (row: FakeElement | undefined): number =>
     wordsOf(row).reduce((n, w) => n + w.getAnimations().length + [...w.find("kw-fx"), ...w.find("kw-track"), ...w.find("kw-in"), ...w.find("kw-glow"), ...w.find("kl")].reduce((m, e) => m + e.getAnimations().length, 0), 0);
 
-  it("stops a line sung through as it leaves, so its overlay fades out still", () => {
+  it("stops a line sung through as it leaves, so its overlay is put away still", () => {
     const { mode, rows } = drift(0);
     mode.paint(cue(0, 2000));
     expect(wordMotion(rows[0])).toBeGreaterThan(0);
     clock += 16;
     // Paper Lanterns: "river" ends the first line at 3.7 s, the next one starts at 4.2 s
     mode.paint(cue(1, 4200));
+    // the frame that starts the scroll leaves it as it is; the next one puts it away
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+    vi.advanceTimersByTime(16);
     expect(rows[0]?.classList.contains("has-fx")).toBe(false);
     expect(wordsOf(rows[0])[0]?.find("kw-fx")).toHaveLength(1);
     expect(wordMotion(rows[0])).toBe(0);
@@ -643,10 +673,13 @@ describe("Drift's karaoke leaving focus", () => {
   it("keeps a line left before it was sung (a seek back) moving with the song", () => {
     const { mode, rows } = drift(0);
     mode.paint(cue(1, 5000));
+    // the rest of the line mounts on the frames after
+    vi.advanceTimersByTime(16 * 12);
     const before = wordMotion(rows[1]);
     expect(before).toBeGreaterThan(0);
     clock += 16;
     mode.paint(cue(0, 2500));
+    vi.advanceTimersByTime(16);
     expect(rows[1]?.classList.contains("has-fx")).toBe(false);
     expect(wordMotion(rows[1])).toBe(before);
   });
@@ -1046,27 +1079,132 @@ describe("the stage and the picked look", () => {
   });
 });
 
+// Regression (line-change-long-task): a line change restyled every row in reach, handed the karaoke
+// over, started the scroll and every animation of the new line in one frame, the longest of the song.
+describe("a line change, spread over the frames after it", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const lyric = DEFAULT_SETTINGS.colors.lyric;
+  /** The style a row's words show: their color and their blur (0 for the crisp focus line). */
+  const styleOf = (row: FakeElement | undefined): string => {
+    const txt = row?.find("kw-txt")[0];
+    const blur = /^0 0 ([\d.]+)px rgba\(141/u.exec(txt?.style.getPropertyValue("text-shadow") ?? "")?.[1] ?? "0";
+    return `${txt?.style.getPropertyValue("color")}/${blur}`;
+  };
+
+  it("restyles the new focus at once, then the line leaving it, then the other rows a frame each, nearest first", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    // line 3 (7 s) in focus, and everything around it styled
+    mode.paint(cue(3, 7100, false));
+    const before = rows.map(styleOf);
+    expect(before[3]).toBe(`${lyric}/0`);
+    // a glide to line 4 (9 s): its lead
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    expect(styleOf(rows[4])).toBe(`${lyric}/0`);
+    expect(rows[4]?.classList.contains("has-fx")).toBe(true);
+    // nothing else yet: the line leaving keeps its overlay and look, the rest their blur
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(rows.map(styleOf).filter((_, i) => i !== 4)).toEqual(before.filter((_, i) => i !== 4));
+    // the next frame: the line leaving hands back to its plain text, dimmed
+    vi.advanceTimersByTime(16);
+    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
+    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
+    expect(styleOf(rows[5])).toBe(before[5]);
+    // then the row just below the focus (one line away), before rows further off
+    vi.advanceTimersByTime(16);
+    expect(styleOf(rows[5])).not.toBe(before[5]);
+    expect(styleOf(rows[7])).toBe(before[7]);
+    vi.advanceTimersByTime(16 * 10);
+    expect(styleOf(rows[7])).not.toBe(before[7]);
+    // every row ends as a paused cut would have drawn it at once
+    const spread = rows.map(styleOf);
+    const cut = drift(0, lookFor(), EIGHT);
+    cut.mode.paint(cue(4, 9100, false));
+    expect(cut.rows.map(styleOf)).toEqual(spread);
+  });
+
+  it("restyles everything still waiting at once before the stage copies the scene, or for a new look", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    mode.freeze();
+    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
+    const frozen = rows.map(styleOf);
+    vi.advanceTimersByTime(16 * 12);
+    expect(rows.map(styleOf)).toEqual(frozen);
+    // a new look in the middle of the spread restyles every row in it
+    clock += 16;
+    mode.paint(cue(4, 10_700));
+    mode.restyle(lookFor({ colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#8d93a0" } }));
+    expect(styleOf(rows[5])).toBe("#ffffff/0");
+    expect(styleOf(rows[4])).toMatch(/^transparent\//u);
+  });
+
+  it("leaves a line that is back in focus before its frame came with its overlay", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    // a seek straight back to line 3, before the frame that would hand it back
+    clock += 16;
+    mode.paint(cue(3, 7500));
+    vi.advanceTimersByTime(16 * 12);
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(styleOf(rows[3])).toBe(`${lyric}/0`);
+    expect(rows[4]?.classList.contains("has-fx")).toBe(false);
+  });
+
+  it("keeps every word box on an identity transform, never none, in focus or out", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    const boxes = (): string[] => rows.flatMap((r) => wordsOf(r).map((w) => w.style.getPropertyValue("transform")));
+    expect(new Set(boxes())).toEqual(new Set([FULL_TRANSFORM]));
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    vi.advanceTimersByTime(16 * 12);
+    expect(boxes().includes("none")).toBe(false);
+    expect(boxes().includes("")).toBe(false);
+  });
+});
+
 describe("Stack and Drift on the motion engine", () => {
   it("move to a line 300 ms before it starts", () => {
-    const { mode, rows } = drift(0);
-    mode.paint(cue(0, 3800));
-    clock += 99;
-    mode.paint(cue(0, 3899));
-    expect(rows[0]?.classList.contains("is-focus")).toBe(true);
-    expect(scrolling(rows[1])).toEqual([]);
-    clock += 1;
-    // line 1 starts at 4.2 s: the list is on its way there at 3.9 s, the line waiting, its overlay mounted
-    mode.paint(cue(0, 3900));
-    expect(rows[1]?.classList.contains("is-focus")).toBe(true);
-    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
-    expect(scrolling(rows[1])).toHaveLength(1);
-    const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
-    expect(xIn(wipe?.values().transform)).toBeLessThan(0);
-    // the mode wakes for its own events: the old line's overlay to drop once faded, then the break's dots at 8.95 s
-    expect(mode.nextChange(4000)).toBe(3900 + 420 - 4000);
-    clock += 500;
-    mode.paint(cue(1, 4400));
-    expect(mode.nextChange(4400)).toBe(8950 - 4400);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode, rows } = drift(0);
+      mode.paint(cue(0, 3800));
+      clock += 99;
+      mode.paint(cue(0, 3899));
+      expect(rows[0]?.classList.contains("is-focus")).toBe(true);
+      expect(scrolling(rows[1])).toEqual([]);
+      clock += 1;
+      // line 1 starts at 4.2 s: the list is on its way there at 3.9 s, the line waiting in focus
+      mode.paint(cue(0, 3900));
+      expect(rows[1]?.classList.contains("is-focus")).toBe(true);
+      expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+      expect(scrolling(rows[1])).toHaveLength(1);
+      // that frame starts only the scroll; the line's words mount on the frames after, long before
+      // its first word, and the line leaving focus hands back to its plain text on the next one
+      expect(partOf(rows[1], 0, "kw-track")?.getAnimations() ?? []).toEqual([]);
+      expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+      vi.advanceTimersByTime(16 * 4);
+      expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+      const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
+      expect(xIn(wipe?.values().transform)).toBeLessThan(0);
+      // the mode wakes for its own events: the old line's overlay to drop, then the break's dots at 8.95 s
+      expect(mode.nextChange(4000)).toBe(3900 + 420 - 4000);
+      clock += 500;
+      mode.paint(cue(1, 4400));
+      expect(mode.nextChange(4400)).toBe(8950 - 4400);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("glide from what is on screen when the song seeks one to three lines, either way", () => {
@@ -1091,8 +1229,17 @@ describe("Stack and Drift on the motion engine", () => {
   it("re-light the focus line after a seek back past what its animations still cover", () => {
     // Paper Lanterns' last line: "Light is a promise the water keeps" 16.4-20 s; its motion is over by
     // about 21.3 s, and a paint at 21.7 s drops it. Seeking back to 17 s must not leave it fully lit.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const { mode, rows } = drift(0);
-    mode.paint(cue(3, 16_500));
+    // a paint, then the frames after it that mount the rest of the line
+    const paintAll = (c: Cue): void => {
+      mode.paint(c);
+      vi.advanceTimersByTime(16 * 12);
+    };
+    paintAll(cue(3, 16_500));
     // the wipes drawing anything (an engine drops finished animations; the fake keeps them)
     const tracks = (): FakeAnimation[] =>
       wordsOf(rows[3])
@@ -1100,14 +1247,15 @@ describe("Stack and Drift on the motion engine", () => {
         .flatMap((e) => e.getAnimations())
         .filter((a) => a.playState !== "finished");
     const first = tracks();
+    expect(first).toHaveLength(7);
     clock += 16;
-    mode.paint(cue(3, 18_000));
+    paintAll(cue(3, 18_000));
     // a seek the animations still cover needs nothing new
     expect(tracks()).toEqual(first);
     clock += 16;
-    mode.paint(cue(3, 21_700));
+    paintAll(cue(3, 21_700));
     clock += 16;
-    mode.paint(cue(3, 17_000));
+    paintAll(cue(3, 17_000));
     const after = tracks();
     expect(after).toHaveLength(first.length);
     expect(after.some((a) => first.includes(a))).toBe(false);
