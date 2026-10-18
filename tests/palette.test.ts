@@ -3,11 +3,13 @@ import { DEFAULT_SETTINGS } from "../contract/contract";
 import {
   PaletteCache,
   SAMPLE_SIZE,
+  coverStats,
   hexToHsl,
   hslToHex,
   paletteFromPixels,
   readArtwork,
   rgbToHsl,
+  type CoverStats,
   type Palette,
 } from "../src/core/palette";
 
@@ -167,6 +169,159 @@ describe("PaletteCache", () => {
 
   it("reads real artwork by default", async () => {
     expect(await new PaletteCache().get("a", null)).toBeNull();
+  });
+});
+
+describe("coverStats", () => {
+  const RED: Rgb = [255, 0, 0];
+  const ORANGE: Rgb = [255, 170, 0]; // hue 40°, the warmest
+  const BLUE: Rgb = [0, 85, 255]; // hue 220°, the coolest
+  const stats = (parts: [Rgb, number][]): CoverStats => {
+    const s = coverStats(cover(parts));
+    if (!s) throw new Error("no opaque pixels");
+    return s;
+  };
+
+  it("reads lightness, its spread and chroma; black and white is all gray, with no hue or warmth", () => {
+    expect(stats([[[0, 0, 0], 0.5], [[255, 255, 255], 0.5]])).toEqual({
+      lightness: 0.5,
+      contrast: 0.5,
+      chroma: 0,
+      colorfulness: 0,
+      warmth: 0,
+      gray: 1,
+      hue: null,
+    });
+  });
+
+  it("reads a flat color: its lightness and hue, full chroma, no spread", () => {
+    // colorfulness 0.3 × |(r − g, (r + g) / 2 − b)| / 110 = 0.3 × 285.1 / 110; warmth cos(0° − 40°)
+    expect(stats([[RED, 1]])).toEqual({ lightness: 0.5, contrast: 0, chroma: 1, colorfulness: 0.778, warmth: 0.766, gray: 0, hue: 0 });
+    expect(stats([[[40, 0, 80], 1]]).hue).toBeCloseTo(rgbToHsl(40, 0, 80)[0], 3);
+  });
+
+  it("runs warmth from orange (+1) to blue (−1)", () => {
+    expect(stats([[ORANGE, 1]]).warmth).toBe(1);
+    expect(stats([[BLUE, 1]]).warmth).toBe(-1);
+    expect(stats([[ORANGE, 0.5], [BLUE, 0.5]]).warmth).toBe(0);
+  });
+
+  it("weights the hue by chroma, and gives a mostly gray cover none", () => {
+    // half vivid red, half a muted blue (hue 228°): the mean stays within 10° of red
+    expect(hueGap(stats([[RED, 0.5], [[90, 100, 140], 0.5]]).hue ?? -1, 0)).toBeLessThan(0.03);
+    // gray pixels have no hue to add: a red accent on near-gray is red
+    expect(hueGap(stats([[[200, 30, 40], 0.3], [[120, 110, 110], 0.7]]).hue ?? -1, rgbToHsl(200, 30, 40)[0])).toBeLessThan(0.01);
+    const faint = stats([[[40, 40, 40], 0.95], [ORANGE, 0.05]]);
+    expect(faint.gray).toBeCloseTo(0.95, 2);
+    expect(faint.hue).toBeNull();
+    // a little color on a gray cover is only a little warm
+    expect(faint.warmth).toBeGreaterThan(0);
+    expect(faint.warmth).toBeLessThan(0.3);
+  });
+
+  it("grows colorfulness with clashing colors, up to 1", () => {
+    const muted = stats([[[120, 100, 90], 1]]).colorfulness;
+    const clash = stats([[[255, 0, 255], 0.5], [[0, 255, 0], 0.5]]).colorfulness;
+    expect(muted).toBeLessThan(0.3);
+    expect(clash).toBe(1);
+  });
+
+  it("reads only pixels at least half opaque, and is null with none", () => {
+    const px = cover([[RED, 0.5], [BLUE, 0.5]]);
+    for (let i = 3; i < px.length / 2; i += 4) px[i] = 127;
+    expect(coverStats(px)).toEqual(stats([[BLUE, 1]]));
+    expect(coverStats(cover([[RED, 1]], 0))).toBeNull();
+    expect(coverStats([])).toBeNull();
+  });
+
+  it("stays in range on any cover", () => {
+    let seed = 11;
+    const rand = (): number => (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648) / 2_147_483_648;
+    for (let n = 0; n < 200; n++) {
+      const parts = Array.from({ length: 1 + Math.floor(rand() * 5) }, (): [Rgb, number] => [
+        [Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)],
+        rand(),
+      ]);
+      const total = parts.reduce((sum, [, share]) => sum + share, 0);
+      const s = stats(parts.map(([rgb, share]) => [rgb, share / total]));
+      for (const v of [s.lightness, s.chroma, s.colorfulness, s.gray]) expect(v >= 0 && v <= 1).toBe(true);
+      expect(s.contrast >= 0 && s.contrast <= 0.5).toBe(true);
+      expect(s.warmth >= -1 && s.warmth <= 1).toBe(true);
+      if (s.hue !== null) expect(s.hue >= 0 && s.hue <= 1).toBe(true);
+    }
+  });
+});
+
+describe("PaletteCache.cover", () => {
+  const pixels = cover([[[15, 59, 70], 0.7], [[247, 169, 59], 0.2], [[212, 55, 122], 0.1]]);
+
+  /** A reader whose reads finish when the test says so. */
+  function manualReader(): { read: (art: string) => Promise<ArrayLike<number> | null>; finish: (art: string, px: ArrayLike<number> | null) => Promise<void> } {
+    const waiting = new Map<string, (px: ArrayLike<number> | null) => void>();
+    return {
+      read: (art) => new Promise((resolve) => waiting.set(art, resolve)),
+      finish: async (art, px) => {
+        waiting.get(art)?.(px);
+        await Promise.resolve();
+      },
+    };
+  }
+
+  it("is filled by the same decode as the palette, before the palette resolves", async () => {
+    const read = vi.fn(async () => pixels);
+    const cache = new PaletteCache(read);
+    const seen: (CoverStats | null)[] = [];
+    const palette = cache.get("a", "data:a").then((p) => {
+      seen.push(cache.cover("a"));
+      return p;
+    });
+    expect(cache.cover("a")).toBeNull(); // not decoded yet
+    expect(await palette).toEqual(paletteFromPixels(pixels));
+    expect(seen).toEqual([coverStats(pixels)]);
+    // a hit keeps both, with no second decode
+    await cache.get("a", "data:a");
+    expect(cache.cover("a")).toEqual(coverStats(pixels));
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("is null without artwork, with artwork that can't be read, and for a track it doesn't hold", async () => {
+    const cache = new PaletteCache(async (art) => (art === "data:good" ? pixels : null));
+    await cache.get("none", null);
+    await cache.get("bad", "data:bad");
+    expect(cache.cover("none")).toBeNull();
+    expect(cache.cover("bad")).toBeNull();
+    expect(cache.cover("never")).toBeNull();
+    const failing = new PaletteCache(() => Promise.reject(new Error("boom")));
+    await failing.get("x", "data:x");
+    expect(failing.cover("x")).toBeNull();
+    await cache.get("good", "data:good");
+    expect(cache.cover("good")).toEqual(coverStats(pixels));
+  });
+
+  it("follows the track's latest artwork: a slower decode of the art it replaced changes nothing", async () => {
+    const { read, finish } = manualReader();
+    const cache = new PaletteCache(read);
+    const old = cover([[[40, 90, 220], 1]]);
+    void cache.get("a", "data:old");
+    void cache.get("a", "data:new");
+    await finish("data:new", pixels);
+    expect(cache.cover("a")).toEqual(coverStats(pixels));
+    await finish("data:old", old);
+    expect(cache.cover("a")).toEqual(coverStats(pixels));
+    // and artwork going away for the track takes its cover with it
+    await cache.get("a", null);
+    expect(cache.cover("a")).toBeNull();
+  });
+
+  it("forgets a track's cover with its palette, past the cache's limit", async () => {
+    const cache = new PaletteCache(async () => pixels, 2);
+    await cache.get("a", "data:a");
+    await cache.get("b", "data:b");
+    expect(cache.cover("a")).not.toBeNull(); // a peek: "a" stays the oldest
+    await cache.get("c", "data:c");
+    expect(cache.cover("a")).toBeNull();
+    expect(cache.cover("b")).toEqual(coverStats(pixels));
+    expect(cache.cover("c")).toEqual(coverStats(pixels));
   });
 });
 
