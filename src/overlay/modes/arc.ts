@@ -120,10 +120,14 @@ const PREPARE_GAP_MS = 40;
  * frames of its own on animations ending.
  */
 const RELEASE_MS = 60;
-/** Keyframes of a word's glide are kept where a straight line would miss by more than this: px, px, degrees, scale. */
-const FRAME_THIN = [0.25, 0.25, 0.05, 0.002];
+/**
+ * Keyframes of a word's glide are kept where a straight line would miss by more than this: px, px,
+ * degrees, scale (a 300 px word's ends: under half a pixel). Every keyframe of every word is parsed in
+ * the frame that starts a line change, so no tighter than the eye needs.
+ */
+const FRAME_THIN = [0.5, 0.5, 0.15, 0.003];
 /** ...and of a band's: px, scale, opacity. */
-const BAND_THIN = [0.25, 0.002, 0.004];
+const BAND_THIN = [0.5, 0.003, 0.006];
 const OPACITY_THIN = [0.004];
 
 /**
