@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 3;
+pub const CONTRACT_VERSION: u8 = 4;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`, and
-/// contract v3 only added fields, which stored settings without them get as defaults.
+/// contracts v3 and v4 only added fields, which stored settings without them get as defaults.
 pub const SETTINGS_VERSION: u8 = 1;
 pub static DEFAULT_SETTINGS: std::sync::LazyLock<Settings> =
     std::sync::LazyLock::new(Settings::default);
@@ -152,14 +152,19 @@ pub struct Font {
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub version: u8,
+    /// Not read since v4: Undertone picks the style per song. Still validated and stored.
     pub mode: Mode,
     pub auto_color: bool,
     pub colors: Colors,
+    /// Not read since v4: the face is picked per song. Still validated and stored.
     pub font: Font,
     pub size: f64,
+    /// Not read since v4: Arc's curve is picked per song. Still validated and stored.
     pub curve: f64,
     /// 0..100, % of the display's work area, without menu bar, Dock or taskbar
     pub y_pos: f64,
+    /// 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest)
+    /// and softens the dark shadow.
     pub glow: f64,
     pub opacity: f64,
     pub show_when: ShowWhen,
@@ -174,6 +179,14 @@ pub struct Settings {
     pub launch_at_login: bool,
     /// Added in contract v3.
     pub shortcuts: Shortcuts,
+    /// How much lyrics move as they're sung, 0..100; 50 is as picked for the song. Added in
+    /// contract v4: settings saved without it read as 50.
+    #[serde(default = "default_effects")]
+    pub effects: f64,
+}
+/// `Settings.effects` when it is missing (settings saved before contract v4).
+fn default_effects() -> f64 {
+    50.0
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -208,6 +221,7 @@ impl Default for Settings {
                 nudge_earlier: "CmdOrCtrl+Alt+Shift+]".into(),
                 nudge_later: "CmdOrCtrl+Alt+Shift+[".into(),
             },
+            effects: default_effects(),
         }
     }
 }
@@ -508,9 +522,27 @@ mod tests {
                     "toggleLyrics": "CmdOrCtrl+Alt+Shift+L",
                     "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
                     "nudgeLater": "CmdOrCtrl+Alt+Shift+["
-                }
+                },
+                "effects": 50.0
             })
         );
+        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level.
+        assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
+    }
+    #[test]
+    fn settings_saved_before_contract_v4_read_as_effects_50() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["effects"] = json!(80.0);
+        assert_eq!(
+            serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .effects,
+            80.0
+        );
+        saved.as_object_mut().unwrap().remove("effects");
+        let v3: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v3, *DEFAULT_SETTINGS);
+        assert_eq!(v3.effects, 50.0);
     }
     #[test]
     fn event_wire_names_and_nullable_fields_match() {
@@ -589,8 +621,8 @@ mod tests {
         );
     }
     #[test]
-    fn contract_v3_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 3);
+    fn contract_v4_keeps_the_v1_settings_schema() {
+        assert_eq!(CONTRACT_VERSION, 4);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

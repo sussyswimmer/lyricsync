@@ -2603,10 +2603,12 @@ mod tests {
         })
         .render();
         assert!(text.starts_with("\n== Undertone 0.1.0 diagnostics ==\n"));
+        // The contract the build speaks, so a report says which frontend it goes with.
+        let build = format!("build:       release, contract v{CONTRACT_VERSION}");
         for expected in [
             "generated:   2023-11-14 22:13:20 UTC",
             "os:          Windows 11 24H2 (10.0.26100), x86_64",
-            "build:       release, contract v3",
+            build.as_str(),
             "executable:  /Apps/undertone",
             "report file: not saved: read-only temp dir",
         ] {

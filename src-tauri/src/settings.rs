@@ -6,8 +6,9 @@
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
-//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts` without a new settings version:
-//! a stored file without them loads with their defaults and is rewritten once with them (`load`).
+//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, and contract v4 `effects`, without a
+//! new settings version: a stored file without them loads with their defaults and is rewritten once
+//! with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -25,6 +26,8 @@ pub const SIZE: RangeInclusive<f64> = 22.0..=140.0;
 pub const CURVE: RangeInclusive<f64> = -100.0..=100.0;
 pub const Y_POS: RangeInclusive<f64> = 0.0..=100.0;
 pub const GLOW: RangeInclusive<f64> = 0.0..=100.0;
+/// How much lyrics move as they're sung (contract v4); 50 is the look as picked.
+pub const EFFECTS: RangeInclusive<f64> = 0.0..=100.0;
 pub const OPACITY: RangeInclusive<f64> = 20.0..=100.0;
 pub const FONT_WEIGHT: RangeInclusive<f64> = 100.0..=900.0;
 /// Both the global offset and every per-song offset.
@@ -184,6 +187,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "enabled" => keep_or_set(&mut next.enabled, value.as_bool()),
             "launchAtLogin" => keep_or_set(&mut next.launch_at_login, value.as_bool()),
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
+            "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -825,7 +829,8 @@ mod tests {
             "shortcuts": {
                 "enabled": false, "toggleLyrics": "Alt+F1", "nudgeEarlier": "",
                 "nudgeLater": "Control+Shift+K"
-            }
+            },
+            "effects": 80
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -876,6 +881,7 @@ mod tests {
                 ..shortcuts("Alt+F1", "", "Control+Shift+K")
             }
         );
+        assert_eq!(s.effects, 80.0);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -909,28 +915,36 @@ mod tests {
     fn clamps_every_number_to_the_spec_range() {
         let high = patched(json!({
             "size": 500, "curve": 300, "yPos": 150, "glow": 101, "opacity": 120,
-            "globalOffsetMs": 9999, "font": { "weight": 1000 }
+            "globalOffsetMs": 9999, "font": { "weight": 1000 }, "effects": 150
         }));
         assert_eq!(
             (high.size, high.curve, high.y_pos, high.glow, high.opacity),
             (140.0, 100.0, 100.0, 100.0, 100.0)
         );
-        assert_eq!((high.global_offset_ms, high.font.weight), (2000.0, 900.0));
+        assert_eq!(
+            (high.global_offset_ms, high.font.weight, high.effects),
+            (2000.0, 900.0, 100.0)
+        );
         let low = patched(json!({
             "size": 10, "curve": -300, "yPos": -1, "glow": -5, "opacity": 5,
-            "globalOffsetMs": -9999, "font": { "weight": 50 }
+            "globalOffsetMs": -9999, "font": { "weight": 50 }, "effects": -0.5
         }));
         assert_eq!(
             (low.size, low.curve, low.y_pos, low.glow, low.opacity),
             (22.0, -100.0, 0.0, 0.0, 20.0)
         );
-        assert_eq!((low.global_offset_ms, low.font.weight), (-2000.0, 100.0));
-        // The ends themselves are valid.
-        let edges = patched(json!({ "size": 22, "opacity": 100, "curve": -100 }));
         assert_eq!(
-            (edges.size, edges.opacity, edges.curve),
-            (22.0, 100.0, -100.0)
+            (low.global_offset_ms, low.font.weight, low.effects),
+            (-2000.0, 100.0, 0.0)
         );
+        // The ends themselves are valid, and so is a fraction.
+        let edges = patched(json!({ "size": 22, "opacity": 100, "curve": -100, "effects": 0 }));
+        assert_eq!(
+            (edges.size, edges.opacity, edges.curve, edges.effects),
+            (22.0, 100.0, -100.0, 0.0)
+        );
+        assert_eq!(patched(json!({ "effects": 100 })).effects, 100.0);
+        assert_eq!(patched(json!({ "effects": 62.5 })).effects, 62.5);
     }
 
     #[test]
@@ -941,7 +955,7 @@ mod tests {
                 "mode": junk, "autoColor": junk, "colors": junk, "font": junk, "size": junk,
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
-                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk
+                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -970,6 +984,18 @@ mod tests {
             &json!({ "size": true, "glow": false, "displays": true, "colors": { "dim": true } }),
         );
         assert_eq!(next, current);
+        // Effects is a number: a string, a boolean or a level's name keeps the current value.
+        for junk in [
+            json!("50"),
+            json!(true),
+            json!("lively"),
+            json!({ "level": 50 }),
+        ] {
+            assert_eq!(
+                merge_patch(&current, &json!({ "effects": junk })).effects,
+                80.0
+            );
+        }
         let next = merge_patch(
             &current,
             &json!({
@@ -994,6 +1020,10 @@ mod tests {
                     &json!({ "size": n, "trackOffsetsMs": { "x": n } })
                 )
                 .size,
+                80.0
+            );
+            assert_eq!(
+                merge_patch(&custom(), &json!({ "effects": n })).effects,
                 80.0
             );
             assert_eq!(
@@ -1117,7 +1147,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 17);
+        assert_eq!(keys.len(), 18);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1587,6 +1617,27 @@ mod tests {
         assert!(rewrite);
         let rewritten = serde_json::to_value(&settings).unwrap();
         assert_eq!(load(Some(&rewritten)), (settings, false));
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v4_get_effects_50_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("effects");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                effects: 50.0,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["effects"], json!(50.0));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // And Effects alone, from nothing: the default.
+        assert_eq!(migrate(&json!({ "version": 1 })).effects, 50.0);
+        assert_eq!(migrate(&json!({ "effects": 20 })).effects, 20.0);
     }
 
     #[test]

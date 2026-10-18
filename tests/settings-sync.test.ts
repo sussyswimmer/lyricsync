@@ -260,3 +260,25 @@ describe("SettingsSync: echoes and replies", () => {
     expect(sync.saving).toBe(false);
   });
 });
+
+describe("SettingsSync: contract v4", () => {
+  it("an Effects drag saves like any slider: one patch after the debounce, the level the window shows", () => {
+    const { bridge, calls } = deferredCore();
+    const { sync } = start(bridge);
+    for (const level of [55, 70, 85]) sync.edit({ effects: level });
+    expect(sync.view.effects).toBe(85);
+    vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    expect(calls.map((c) => [c.name, c.args])).toEqual([["update_settings", { patch: { effects: 85 } }]]);
+  });
+
+  it("settings from a core older than v4 show Effects at 50, as picked; complete ones pass through as is", () => {
+    const old: Partial<Settings> = S0();
+    delete old.effects;
+    const { sync } = start(instantCore().bridge, old as Settings);
+    expect(sync.view.effects).toBe(50);
+    sync.receive({ ...(old as Settings), size: 70 });
+    expect(sync.view).toEqual({ ...S0(), size: 70 });
+    sync.receive({ ...S0(), effects: 20 });
+    expect(sync.view.effects).toBe(20);
+  });
+});

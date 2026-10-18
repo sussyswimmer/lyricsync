@@ -374,6 +374,7 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   if (typeof p.enabled === "boolean") next.enabled = p.enabled;
   if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
+  next.effects = clamp(p.effects, 0, 100) ?? next.effects;
   return next;
 }
 
@@ -422,7 +423,7 @@ export interface MockOptions {
   /** Persist across reloads. Default: localStorage when available. */
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
   /**
-   * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state,
+   * `?track=1&t=5200&paused&settings={"effects":80}` set the starting state,
    * `?media=automation-denied|no-player` starts with that media problem,
    * `?shortcutConflict=toggleLyrics,nudgeLater` makes those actions' starting combinations
    * "unavailable", as if another app held them, and `?loginItem=refuse` refuses every Launch at
