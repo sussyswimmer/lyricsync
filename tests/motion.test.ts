@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseLrc, type Line } from "../src/core/lrc";
+import { bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
 import { clamp01, sineOut, sineOutInverse, spline } from "../src/overlay/motion/curve";
 import { findInterludes, interludeAt, INTERLUDE_LEAD_MS, planDots } from "../src/overlay/motion/interlude";
 import {
@@ -341,6 +342,23 @@ describe("slow motion on the beat", () => {
     expect(on("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36")).toBe(true);
     expect(on("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")).toBe(false);
     expect(on("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0 Mobile/15E148 Safari/604.1")).toBe(false);
+  });
+});
+
+describe("the bloom", () => {
+  const alphas = (shadow: string): number[] => [...shadow.matchAll(/rgba\([^)]*, ([\d.]+)\)/gu)].map((m) => Number(m[1]));
+
+  it("is off at Glow 0, like the highlight halo everywhere else, and grows with Glow", () => {
+    expect(bloomShadow("#f5a524", 0)).toBe("none");
+    expect(bloomShadow("#f5a524", 0, true)).toBe("none");
+    expect(dotBloom("#f5a524", 0, 20)).toBe("none");
+    const soft = alphas(bloomShadow("#f5a524", 0.05));
+    const full = alphas(bloomShadow("#f5a524", 1));
+    expect(soft).toHaveLength(3);
+    soft.forEach((a, i) => expect(a).toBeLessThan(full[i] ?? 0));
+    // a held word's letters bloom brighter than a word does
+    expect(Math.max(...alphas(bloomShadow("#f5a524", 0.4, true)))).toBeGreaterThan(Math.max(...alphas(bloomShadow("#f5a524", 0.4))));
+    expect(dotBloom("#f5a524", 0.4, 20)).toMatch(/^0 0 6\.0px rgba\(245, 165, 36, /u);
   });
 });
 

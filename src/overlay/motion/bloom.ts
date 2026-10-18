@@ -6,11 +6,13 @@
 import { rgba } from "../look";
 
 /**
- * The bloom around a word, in em so it follows each row's size. `glow` is Settings.glow (0..1): 0 is
- * subtle, never off. `strong` is the letter-by-letter bloom of a held word: brighter and wider.
+ * The bloom around a word, in em so it follows each row's size. `glow` is Settings.glow (0..1): at 0
+ * there is none, as there is no highlight halo in the other styles; from there it starts soft and
+ * grows. `strong` is the letter-by-letter bloom of a held word: brighter and wider.
  */
 export function bloomShadow(highlight: string, glow: number, strong = false): string {
   const g = Math.max(0, Math.min(1, glow));
+  if (!(g > 0)) return "none";
   const k = 0.35 + 0.65 * g;
   const layers: [number, number][] = strong
     ? [
@@ -26,9 +28,10 @@ export function bloomShadow(highlight: string, glow: number, strong = false): st
   return layers.map(([blur, alpha]) => `0 0 ${blur}em ${rgba(highlight, alpha)}`).join(", ");
 }
 
-/** Interlude dots' halo (box-shadow), px. */
+/** Interlude dots' halo (box-shadow), px; none at Glow 0 (a lit dot still turns the highlight color). */
 export function dotBloom(highlight: string, glow: number, dotPx: number): string {
   const g = Math.max(0, Math.min(1, glow));
+  if (!(g > 0)) return "none";
   const k = 0.4 + 0.6 * g;
   return [
     `0 0 ${(dotPx * 0.3).toFixed(1)}px ${rgba(highlight, Math.min(1, 1.3 * k))}`,

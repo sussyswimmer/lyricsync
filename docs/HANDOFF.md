@@ -286,3 +286,10 @@ Follow-ups, not done:
 5. macOS: detect clashes with system shortcuts (HIToolbox `CopySymbolicHotKeys`).
 Needs from Codex: nothing.
 Contract: unchanged (v3). Only the `yPos` comment changed, in both files.
+
+## 2026-10-18 · Claude Code · proto/compositor (prototype branch, not merged)
+Done: Beautiful-Lyrics-like motion for Drift and Stack, played by the compositor. `src/overlay/motion/` is an engine any style can use: springs solved in closed form and planned ahead as keyframes; a `SongTimeline` that keeps Web Animations on song time through play, pause, seek and clock slews; `KaraokeLine` (a soft-edged wipe per syllable, a pop, a bloom in the highlight color, a letter ripple scaled by how fast the song is sung, held syllables lit letter by letter); instrumental-break dots. Drift and Stack show several lines with distance dim and blur, scroll on a spring, and put three filling dots where the next line will be during an intro or a gap of 3 s or more. A line's animations start and end together, so the page sleeps through words (`ModeRenderer.wordWakes = false` and `nextChange`, 1 s idle sleep); slow motion steps on a shared 20 Hz song-time beat in Chromium (WebKit keeps it linear: stepped keyframes would leave Core Animation). Parser: syllable tags inside a word become `Word.parts`. Mock: track 6, "Glass Harbor" (original placeholder lyrics). Glow 0 turns the bloom off, like the halo in the other styles. USER_GUIDE describes the new motion.
+Measured against `claude/friendly-mayer-shv80u` in one session (headless Chromium without a GPU, medians of 3 runs of 20 s). Singing: main thread 1.58% → 1.94% (Stack and Drift), page rAF callbacks 14.4/s → 1.35/s, total CPU 11.8% → 40.1% (Stack) and 11.2% → 42.1% (Drift). Held note: main 0.42% → 0.50%, total 2.3% → 16.1–16.7%. The totals are the software compositor drawing every frame on the CPU (gpu process 6–7% → 30–32%); on GPU-composited machines that work moves to the GPU, which wasn't measurable here.
+Not verified: WebKit (WKWebView should give the same animations to Core Animation) and any machine with a GPU.
+Needs from Codex: nothing.
+Contract: unchanged (v3).

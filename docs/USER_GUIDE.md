@@ -54,6 +54,8 @@ Four ways to lay out the lyrics. In every style the words of the current line ch
 - **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum. A jump of more than three lines, such as a seek, crossfades instead of scrolling.
 - **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are smaller and fainter, with no tilt. Long jumps crossfade, as in Drift.
 
+In Drift and Stack the current line comes alive as it's sung: each word fills with the highlight color behind a soft edge, syllable by syllable, and rises a little as it's sung; its letters hop as the color reaches them (higher in faster songs), and the word glows (see [Glow](#glow)). A word held for a second or more lights letter by letter, each letter rising and glowing until the note ends. Lines further from the current one are fainter and softer.
+
 Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it until it fits its curve, so the whole line stays on screen at any [Size](#size).
 
 You can also switch styles from the menu: **Style ▸ Arc / Lens / Drift / Stack**.
@@ -273,19 +275,19 @@ Shortcuts that work from any app, by default (change or turn them off in [Settin
 
 - **New song:** the old lyrics fade out over a quarter of a second, then the new song's lyrics fade in.
 - **Before the first line:** the first line waits on screen in the lyric color until it starts.
-- **Long instrumental breaks:** the line just sung stays up for at most about 2.5 seconds after its last word (less when the lyrics mark where the break starts), then the next line shows, waiting, until it starts.
+- **Long instrumental breaks:** the line just sung stays up for at most about 2.5 seconds after its last word (less when the lyrics mark where the break starts), then the next line shows, waiting, until it starts. In Drift and Stack, a break of 3 seconds or more, and an intro that long, shows three dots where the next line will appear: they fill one after another as the break goes on and pop away just before the line starts.
 - **Paused:** the lyrics stop where the song stopped, and Undertone stops animating. With **When: While playing** they also fade out until you press play.
 
 ## Reduced motion
 
 If you've asked your system to reduce motion (macOS: System Settings → Accessibility → Display → **Reduce motion**; Windows: Settings → Accessibility → Visual effects → **Animation effects** off), Undertone keeps the lyrics still and changes lines with a short crossfade instead:
 
-- **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
+- **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade. Words fade quickly to the highlight color instead of filling, nothing rises or hops, the glow stays steady, and the break dots only fade.
 - **Lens** doesn't magnify. The line stays flat, and words still light up as they're sung.
 - **Arc** lines don't glide between their places; they crossfade.
 - The loading dots fade in once and then stay still instead of pulsing.
 - The instrumental **♪** stays still instead of breathing.
-- Word colors change instantly instead of fading.
+- In Arc and Lens, word colors change instantly instead of fading.
 - With **When: While playing**, pausing hides the lyrics at once instead of fading them out.
 
 Song changes still fade out and in.
