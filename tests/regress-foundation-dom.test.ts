@@ -173,7 +173,21 @@ beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => clock);
 });
 
+/** Modes and stages a test made: destroyed after it, while its fake document is still in place, so no timer of theirs (the next line's prepare) outlives it. */
+const live: { destroy(): void }[] = [];
+function keep<T extends { destroy(): void }>(made: T): T {
+  live.push(made);
+  return made;
+}
+
 afterEach(() => {
+  for (const made of live.splice(0)) {
+    try {
+      made.destroy();
+    } catch {
+      // already torn down by the test
+    }
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -193,7 +207,7 @@ const EIGHT: Line[] = parseLrc(
 /** A built Drift (depth 1) or Stack (depth 0) on a fake host. */
 function drift(depth = 1, look = lookFor(), lines: readonly Line[] = LINES): { mode: DriftMode; host: FakeElement; rows: FakeElement[] } {
   const host = new FakeElement("div");
-  const mode = new DriftMode(depth);
+  const mode = keep(new DriftMode(depth));
   mode.build(asHtml(host), lines, look);
   return { mode, host, rows: host.find("drift-row") };
 }
@@ -432,7 +446,7 @@ const pick = (style: PickedLook["style"], over: Partial<PickedLook> = {}): Picke
 
 function stage(): { stage: LyricStage; root: FakeElement; scenes: () => FakeElement[] } {
   const host = new FakeElement("main");
-  const s = new LyricStage(asHtml(host));
+  const s = keep(new LyricStage(asHtml(host)));
   s.setPickedLook(pick("stack"));
   s.setSettings(settings());
   const root = host.children[0] as FakeElement;
@@ -718,7 +732,7 @@ describe("the stage's reference height", () => {
   it("asks for one given as a function on every layout (the overlay's follows its screen)", () => {
     let reference = 720;
     const host = new FakeElement("main");
-    const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
+    const s = keep(new LyricStage(asHtml(host), { referenceHeight: () => reference }));
     s.setPickedLook(pick("stack"));
     s.setSettings(settings());
     s.show(lyricsView, "a");
@@ -941,7 +955,7 @@ describe("the stage and the picked look", () => {
     expect(rowTransform()).toMatch(/^translate3d\(/u);
     expect(s.pickedLook.style).toBe("drift");
     // no pick: the house look
-    const fresh = new LyricStage(asHtml(new FakeElement("main")));
+    const fresh = keep(new LyricStage(asHtml(new FakeElement("main"))));
     expect(fresh.pickedLook).toBe(DEFAULT_PICK);
     fresh.setPickedLook(pick("lens"));
     fresh.setPickedLook(null);
@@ -998,7 +1012,7 @@ describe("the stage and the picked look", () => {
   it("calls safe points at the first paint before the first line, at each line change and as a long break starts", () => {
     let safe = 0;
     const host = new FakeElement("main");
-    const s = new LyricStage(asHtml(host), { onSafePoint: () => safe++ });
+    const s = keep(new LyricStage(asHtml(host), { onSafePoint: () => safe++ }));
     s.setPickedLook(pick("stack"));
     s.setSettings(settings());
     s.show(lyricsView, "a");
@@ -1286,7 +1300,7 @@ describe("the overlay's frame loop on a real stage", () => {
     // as overlay/main.ts wires them (with `?look=stack`)
     const host = new FakeElement("main");
     let controller: OverlayController | null = null;
-    const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick(), onSafePoint: () => controller?.safePoint() });
+    const s = keep(new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick(), onSafePoint: () => controller?.safePoint() }));
     controller = new OverlayController(bridge, s, { gate: true, palettes: new PaletteCache(async () => null) });
     controller.forceLook({ style: "stack" });
     const paints: number[] = [];
