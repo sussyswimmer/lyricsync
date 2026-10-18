@@ -135,7 +135,7 @@ Use Node 24+, pnpm 11 and Rust stable (`rust-toolchain.toml` selects the stable 
 ```sh
 pnpm install --frozen-lockfile
 pnpm test                 # vitest
-pnpm coverage             # vitest with coverage of src/core, src/bridge and the overlay's view.ts, look.ts and stage.ts; fails below 90% on lrc.ts, timing.ts or clock.ts (CI runs this)
+pnpm coverage             # vitest with coverage of src/core, src/bridge, src/overlay/motion and the overlay's view.ts, look.ts and stage.ts; fails below 90% on lrc.ts, timing.ts or clock.ts, or below 85% (75% of branches) on songlook.ts and the motion engine (CI runs this)
 pnpm build                # tsc, then vite build into dist/
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
