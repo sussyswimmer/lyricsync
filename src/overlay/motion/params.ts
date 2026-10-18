@@ -17,16 +17,16 @@
  * Every number was re-derived by eye from Beautiful Lyrics' promo frames (behavior only, no code).
  * BL_REFERENCE holds the A = 1 values the tests pin.
  */
+import type { EmphasisRule } from "../../core/songlook";
 import type { Key } from "./curve";
 import type { Power } from "./power";
 import type { SpringSpec } from "./spring";
 
-/** When a held syllable lights letter by letter (the song's look picks it; null: never). */
-export interface EmphasisRule {
-  minMs: number;
-  maxChars: number;
-  lastWordOnly: boolean;
-}
+/**
+ * When a held syllable lights letter by letter (the song's look picks it; null: never). One type with
+ * the look picker's, which lives in core (core never imports from the overlay).
+ */
+export type { EmphasisRule };
 
 /** What the parameters are worked out from: a resolved Look carries all of it. */
 export interface MotionInput {
