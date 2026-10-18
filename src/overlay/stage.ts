@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, type Mode, type Settings } from "../../contract/contract";
+import { now } from "../core/clock";
 import type { Line } from "../core/lrc";
 import type { Palette } from "../core/palette";
 import { lineAt, type Timeline } from "../core/timing";
@@ -7,22 +8,11 @@ import { cjkLang, fontFor, loadFont, type CjkLang } from "./fonts";
 import { resolveLook, type Look } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
-import { LOADING_DELAY_MS, SCENE_FADE_IN_MS, SCENE_FADE_OUT_MS, buildState, type StateKind } from "./states";
+import { LINE_IN_DELAY_MS, LINE_IN_MS, LINE_OUT_MS, LOADING_DELAY_MS, SCENE_FADE_IN_MS, SCENE_FADE_OUT_MS, buildState, type StateKind } from "./states";
 import "../styles/stage.css";
 
 export type StageView = { kind: "none" } | { kind: StateKind } | { kind: "lyrics"; timeline: Timeline };
 
-/** Old song out, then new song in (C6). */
-const FADE_OUT_MS = SCENE_FADE_OUT_MS;
-const FADE_IN_MS = SCENE_FADE_IN_MS;
-/**
- * Crossfade between lines for modes that redraw per line, and for everything under reduced motion.
- * The old line drops out fast and the new one comes in just behind it, so two different lines are
- * never both readable in the same place.
- */
-const LINE_OUT_MS = 170;
-const LINE_IN_MS = 240;
-const LINE_IN_DELAY_MS = 80;
 /**
  * After the last word of a line, wait this long before showing the next line as upcoming. Only matters
  * when the LRC has no empty stamp marking a long instrumental break.
@@ -83,25 +73,8 @@ export function cueAt(map: CueMap, t: number): Omit<Cue, "running"> {
   return { line: n, waiting: n >= 0, t };
 }
 
-/**
- * Time from `t` to the next visible change, in ms (Infinity when nothing else will change). Every
- * span is [start, end): a boundary at exactly `t` has already happened, as `wordState` paints it.
- */
-export function untilNextChange(map: CueMap, t: number): number {
-  const b = map.boundaries;
-  let lo = 0;
-  let hi = b.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if ((b[mid] ?? Infinity) <= t) lo = mid + 1;
-    else hi = mid;
-  }
-  const next = b[lo];
-  return next === undefined ? Infinity : next - t;
-}
-
-/** Whether `t` is exactly one of the map's boundaries. */
-function onBoundary(map: CueMap, t: number): boolean {
+/** Index of the first boundary at or after `t` (boundaries are sorted and unique), or their count. */
+function firstAtOrAfter(map: CueMap, t: number): number {
   const b = map.boundaries;
   let lo = 0;
   let hi = b.length;
@@ -110,7 +83,22 @@ function onBoundary(map: CueMap, t: number): boolean {
     if ((b[mid] ?? Infinity) < t) lo = mid + 1;
     else hi = mid;
   }
-  return b[lo] === t;
+  return lo;
+}
+
+/**
+ * Time from `t` to the next visible change, in ms (Infinity when nothing else will change). Every
+ * span is [start, end): a boundary at exactly `t` has already happened, as `wordState` paints it.
+ */
+export function untilNextChange(map: CueMap, t: number): number {
+  const i = firstAtOrAfter(map, t);
+  const next = map.boundaries[map.boundaries[i] === t ? i + 1 : i];
+  return next === undefined ? Infinity : next - t;
+}
+
+/** Whether `t` is exactly one of the map's boundaries. */
+function onBoundary(map: CueMap, t: number): boolean {
+  return map.boundaries[firstAtOrAfter(map, t)] === t;
 }
 
 interface Scene {
@@ -136,8 +124,6 @@ export interface StageOptions {
   /** Called when the stage needs a fresh frame on its own (fonts loaded, resized, motion preference flipped). */
   onInvalidate?: () => void;
 }
-
-const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 
 const reducedMotion = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -269,8 +255,8 @@ export class LyricStage {
         old.el.remove();
       };
       if (onScreen(old, t)) {
-        this.clearAt = Math.max(this.clearAt, t + FADE_OUT_MS);
-        void this.fade(old.el, null, 0, FADE_OUT_MS, 0, "ease-in").then(drop);
+        this.clearAt = Math.max(this.clearAt, t + SCENE_FADE_OUT_MS);
+        void this.fade(old.el, null, 0, SCENE_FADE_OUT_MS, 0, "ease-in").then(drop);
       } else {
         drop();
       }
@@ -278,7 +264,7 @@ export class LyricStage {
     if (view.kind !== "none") {
       const delay = Math.max(0, this.clearAt - t);
       scene.revealAt = t + delay;
-      void this.fade(scene.el, 0, 1, FADE_IN_MS, delay, "ease-out");
+      void this.fade(scene.el, 0, 1, SCENE_FADE_IN_MS, delay, "ease-out");
     }
     this.options.onInvalidate?.();
   }

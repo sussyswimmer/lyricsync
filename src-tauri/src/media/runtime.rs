@@ -20,6 +20,8 @@ type Native = super::macos::MacSource;
 #[cfg(target_os = "windows")]
 type Native = super::windows::WindowsSource;
 
+const TIMEOUTS_BEFORE_CLEAR: u32 = 3;
+
 /// One OS's now-playing adapter.
 #[async_trait]
 pub(super) trait Backend: MediaSource + Sized + 'static {
@@ -48,6 +50,7 @@ fn run<S: Backend>(app: AppHandle) {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut connection_error = None;
         let mut idle_ticks = 0;
+        let mut timeouts = 0u32;
         loop {
             let woken = tokio::select! {
                 _ = interval.tick() => {
@@ -116,13 +119,22 @@ fn run<S: Backend>(app: AppHandle) {
                 }
             };
             let reconnect = connected.is_disconnected() || snapshot.is_err();
-            publish(
-                &app,
-                &mut watcher,
-                snapshot.unwrap_or(None),
-                &connected.presence(),
-                started.elapsed().as_millis() as u64,
-            );
+            timeouts = if snapshot.is_ok() {
+                0
+            } else {
+                timeouts.saturating_add(1)
+            };
+            // One slow snapshot isn't the track ending: keep it (and its lyrics) until several
+            // time out in a row.
+            if timeouts == 0 || timeouts >= TIMEOUTS_BEFORE_CLEAR {
+                publish(
+                    &app,
+                    &mut watcher,
+                    snapshot.unwrap_or(None),
+                    &connected.presence(),
+                    started.elapsed().as_millis() as u64,
+                );
+            }
             if reconnect {
                 source = None;
             }

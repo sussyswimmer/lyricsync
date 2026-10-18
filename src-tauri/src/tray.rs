@@ -1,4 +1,4 @@
-//! X5 tray / menu bar. What the menu shows (labels, check marks, enabled items, tooltip) is a pure
+//! Tray / menu bar. What the menu shows (labels, check marks, enabled items, tooltip) is a pure
 //! function of settings and now playing, tested on every OS; `runtime` builds the native menu,
 //! keeps it in step with `settings-changed` and `now-playing`, and runs clicks. Hide/Show lyrics
 //! and Launch at login change the settings, like the Settings window's switches.

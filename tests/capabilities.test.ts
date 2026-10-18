@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { fs, readRepo as read, ROOT } from "./helpers";
 
 /*
  * src-tauri/capabilities/default.json grants the webviews exactly what the frontend uses (plus Tauri's
@@ -8,21 +9,6 @@ import { beforeAll, describe, expect, it } from "vitest";
  * @tauri-apps/api imports, so a new import fails here until the capability allows it, and a permission
  * nothing uses fails until it is dropped.
  */
-
-interface Fs {
-  readFileSync(path: URL, encoding: "utf8"): string;
-  readdirSync(path: URL, options: { recursive: true }): string[];
-}
-
-const ROOT = new URL("../", import.meta.url);
-let fs: Fs;
-const read = (path: string): string => fs.readFileSync(new URL(path, ROOT), "utf8");
-
-beforeAll(async () => {
-  // Through a variable, so the strict config (no Node types) doesn't resolve the module.
-  const fsModule = "node:fs";
-  fs = (await import(/* @vite-ignore */ fsModule)) as Fs;
-});
 
 const LISTEN = ["core:event:allow-listen", "core:event:allow-unlisten"];
 

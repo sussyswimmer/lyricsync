@@ -2,33 +2,13 @@ import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS } from "../contract/contract";
 import { MOCK_TRACKS } from "../src/bridge/mock";
 import { displayAccelerator } from "../src/core/accelerator";
+import { fs, readRepo as read, ROOT } from "./helpers";
 
 /*
- * Regressions from the docs QA pass:
- * - readme-install-coverage: README linked docs/INSTALL.md (not written yet) for the Gatekeeper and
- *   SmartScreen steps, and said `pnpm coverage` covers src/core when the script also covers the bridge
- *   and the overlay's pure modules.
- * - handoff-log-missing: docs/HANDOFF.md stopped at C4, so C5–C8 and every request to Codex were missing
- *   from the only channel between the two halves.
- * - docs-drift (2026-10-15 audit): LYRICS.md still said "the contract is v2" at v3, `--overlay-probe` was
- *   documented only in HANDOFF.md, and DESKTOP_LAYER.md, SPEC.md and the work orders had no link check.
- * Plus the facts the docs repeat from code (demo tracks, defaults, flags, commands and events), so they
- * can't drift apart unnoticed.
+ * Checks the docs against each other and against the code they repeat (demo tracks, defaults, flags,
+ * commands and events), so they can't drift apart unnoticed.
  */
 
-interface Fs {
-  readFileSync(path: URL, encoding: "utf8"): string;
-  existsSync(path: URL): boolean;
-  readdirSync(path: URL, options?: { recursive?: boolean }): string[];
-}
-
-// Through a variable, so the strict config (no Node types) doesn't resolve the module. Loaded before
-// the suites are collected, because the list of docs below decides which tests there are.
-const fsModule = "node:fs";
-const fs = (await import(/* @vite-ignore */ fsModule)) as Fs;
-
-const ROOT = new URL("../", import.meta.url);
-const read = (path: string): string => fs.readFileSync(new URL(path, ROOT), "utf8");
 const markdown = (dir: string): string[] =>
   fs
     .readdirSync(new URL(dir || "./", ROOT))
@@ -37,10 +17,6 @@ const markdown = (dir: string): string[] =>
 
 /** Every Markdown file at the root and in docs/, so a new doc is checked without being listed here. */
 const DOCS: readonly string[] = [...markdown(""), ...markdown("docs/")].sort();
-/** CLAUDE.md and AGENTS.md are the original work orders and HANDOFF.md is a log: they keep what was true then. */
-const HISTORY = new Set(["CLAUDE.md", "AGENTS.md", "docs/HANDOFF.md"]);
-/** The docs that describe the code as it is now. */
-const CURRENT = DOCS.filter((doc) => !HISTORY.has(doc));
 
 /** Every `--flag` string the Rust core has: what the app reads from its command line. */
 function appFlags(): Set<string> {
@@ -89,7 +65,7 @@ describe("slug", () => {
 
 describe("doc links", () => {
   it("finds the docs", () => {
-    expect(DOCS).toEqual(expect.arrayContaining(["README.md", "SPEC.md", "docs/USER_GUIDE.md", "docs/HANDOFF.md", "docs/ACCEPTANCE.md"]));
+    expect(DOCS).toEqual(expect.arrayContaining(["README.md", "SPEC.md", "docs/USER_GUIDE.md", "docs/ACCEPTANCE.md"]));
   });
 
   for (const doc of DOCS) {
@@ -148,7 +124,7 @@ describe("README development notes", () => {
   });
 });
 
-// Regression (dev-flag-double-dash): the docs ran `pnpm tauri dev -- --media-test`. tauri dev hands what
+// The docs once ran `pnpm tauri dev -- --media-test`. tauri dev hands what
 // follows the first `--` to cargo and what follows a second one to the app (pnpm passes `--` through
 // as is), so cargo got the app's flag and refused to run.
 describe("debug flags in the docs", () => {
@@ -173,21 +149,19 @@ describe("debug flags in the docs", () => {
     expect(wrong).toEqual([]);
   });
 
-  // Regression (docs-drift): `--overlay-probe`, the check for the covered-overlay fix, was only in HANDOFF.md.
-  it("are each explained in a doc other than the handoff log", () => {
+  it("are each explained in a doc", () => {
     const flags = [...appFlags()];
     expect(flags).toEqual(expect.arrayContaining(["--media-test", "--desktop-layer-test", "--desktop-layer-all", "--overlay-probe", "--diagnose"]));
-    const text = CURRENT.map(read).join("\n");
+    const text = DOCS.map(read).join("\n");
     const missing = flags.filter((flag) => !new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(text));
     expect(missing).toEqual([]);
   });
 });
 
-// Regression (docs-drift): LYRICS.md said "The shared contract is v2" a version after v3 landed. A claim
-// in the present tense must name the current version; "contract v2 adds …" is history and may stay.
+// A claim in the present tense must name the current version; "contract v2 adds …" is history and may stay.
 describe("contract version in the docs", () => {
   it("every \"contract is vN\" names CONTRACT_VERSION", () => {
-    const claims = CURRENT.flatMap((doc) => [...read(doc).matchAll(/\bcontract is (?:now )?v(\d+)\b/gi)].map((m) => `${doc}: ${m[0]}`));
+    const claims = DOCS.flatMap((doc) => [...read(doc).matchAll(/\bcontract is (?:now )?v(\d+)\b/gi)].map((m) => `${doc}: ${m[0]}`));
     expect(claims.length).toBeGreaterThan(0);
     expect(claims.filter((claim) => !claim.endsWith(`v${CONTRACT_VERSION}`))).toEqual([]);
   });
@@ -223,7 +197,7 @@ describe("user guide", () => {
   });
 });
 
-// Contract v3: the docs show the default shortcuts exactly as the Settings window writes them
+// The docs show the default shortcuts exactly as the Settings window writes them
 // (Apple's ⌃⌥⇧⌘ order on a Mac), and name the controls the way the window labels them.
 describe("shortcuts and the General switches in the docs", () => {
   const d = DEFAULT_SETTINGS.shortcuts;
@@ -255,52 +229,5 @@ describe("shortcuts and the General switches in the docs", () => {
     expect(guide).toContain("**Lyrics on the desktop** and **Launch at login** stay as they are.");
     // the Behavior rows were "Show lyrics" and "Show on" before the lyrics switch existed
     expect(guide).not.toMatch(/Show lyrics: |Show on: /);
-  });
-});
-
-describe("handoff log", () => {
-  interface Entry {
-    date: string;
-    author: string;
-    milestone: string;
-    body: string;
-  }
-  const entries = (): Entry[] =>
-    read("docs/HANDOFF.md")
-      .split(/^## /m)
-      .slice(1)
-      .map((chunk) => {
-        const [head = "", ...rest] = chunk.split("\n");
-        const [date = "", author = "", milestone = ""] = head.split(" · ").map((s) => s.trim());
-        return { date, author, milestone, body: rest.join("\n") };
-      });
-
-  it("uses the SPEC heading format for every entry", () => {
-    for (const e of entries()) {
-      expect(e.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      expect(e.author).not.toBe("");
-      expect(e.milestone).not.toBe("");
-    }
-  });
-
-  it("logs every frontend milestone, each with Done / Needs from Codex / Contract", () => {
-    const ours = entries().filter((e) => e.author === "Claude Code");
-    for (const task of ["C1", "C4", "C5", "C6", "C7", "C8"]) {
-      expect(ours.some((e) => e.milestone.includes(task)), `no entry for ${task}`).toBe(true);
-    }
-    for (const e of ours) {
-      expect(e.body, e.milestone).toMatch(/^Done: /m);
-      expect(e.body, e.milestone).toMatch(/^Needs from Codex:/m);
-      expect(e.body, e.milestone).toMatch(/^Contract: /m);
-    }
-  });
-
-  it("carries the requests to Codex", () => {
-    const log = read("docs/HANDOFF.md");
-    // the ones the real app can't match the mock without
-    expect(log).toMatch(/CloseRequested/);
-    expect(log).toMatch(/set_track_offset/);
-    expect(log).toMatch(/get_lyrics/);
-    expect(log).toMatch(/visibilityState/);
   });
 });

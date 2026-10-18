@@ -85,7 +85,7 @@ describe("viewFor: found", () => {
     expect(view.kind === "lyrics" && view.timeline.unsynced).toBe(true);
   });
 
-  // Regression (degenerate-synced): the parser keeps the first line of a stamp and skips unstamped
+  // The parser keeps the first line of a stamp and skips unstamped
   // rows, so LRC with every row on one stamp, or with one stamped row over untimed text, held a single
   // line on screen for the whole song while the plain lyrics went unused.
   describe("synced LRC whose timing would hold one line all song", () => {
@@ -122,7 +122,7 @@ describe("viewFor: found", () => {
       expect(viewFor(lyrics("found", { synced: credits }), DURATION)).toMatchObject({ kind: "lyrics", timeline: { unsynced: false } });
     });
 
-    // Regression (shape-knife-edge): every unstamped row counted as untimed text, so an unstamped
+    // Every unstamped row counted as untimed text, so an unstamped
     // translation under each stamped row, or the synced block's text pasted under it, sat one credit
     // or title row away from throwing away good timing and pacing every row evenly.
     const ORIGINALS = Array.from({ length: 10 }, (_, n) => `placeholder line number ${n + 1}`);

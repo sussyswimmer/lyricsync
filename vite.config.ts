@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
-/** CLAUDE.md C8: at least 90% coverage on the parser, word timing and the playback clock, enforced by `pnpm coverage` (CI). */
+/** At least 90% coverage on the parser, word timing and the playback clock, enforced by `pnpm coverage` (CI). */
 const CORE_FLOOR = { lines: 90, branches: 90, functions: 90, statements: 90 };
 
 export default defineConfig({

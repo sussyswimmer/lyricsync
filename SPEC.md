@@ -1,6 +1,6 @@
 # Undertone — Build Spec
 
-Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex reads `AGENTS.md`, and both read this file first.
+The architecture, the contract between the TypeScript and Rust halves, and the definition of done.
 
 ## What it is
 
@@ -32,7 +32,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 ## Architecture
 
 ```
-┌──────────────────────── Rust core (Codex) ────────────────────────┐
+┌──────────────────────────── Rust core ────────────────────────────┐
 │ media::Watcher ──► NowPlaying ─┐                                   │
 │   ├─ windows: SMTC (WinRT)     │                                   │
 │   └─ macos: Spotify/Music via  ├─► events ──► all webviews         │
@@ -42,7 +42,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 │ desktop_layer ── pins the overlay window(s) to the desktop layer   │
 │ tray / autostart / single-instance / global shortcut               │
 └────────────────────────────────────────────────────────────────────┘
-┌──────────────────────── Webviews (Claude Code) ───────────────────┐
+┌──────────────────────────── Webviews ─────────────────────────────┐
 │ overlay window (one per display): clock ► lrc timing ► renderer   │
 │ settings window: controls + live preview                          │
 │ core/: lrc parser, word timing, playback clock, palette           │
@@ -51,28 +51,22 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 
 Rule of thumb: **Rust talks to the OS and the network. TypeScript does everything about time, color and drawing.**
 
-## Repo layout and ownership
+## Repo layout
 
 ```
 undertone/
-  SPEC.md · CLAUDE.md · AGENTS.md      shared (edit only by agreement)
-  docs/HANDOFF.md                      shared log, both append
+  SPEC.md                              this file
   prototype/undertone.html             reference, read-only
   contract/contract.ts                 shared contract (TS side)
   src-tauri/src/contract.rs            shared contract (Rust side)
-  index.html                           overlay entry          ─┐
-  settings.html                        settings entry          │
-  src/                                 frontend                ├─ CLAUDE CODE
-  tests/                               vitest + fixtures       │
-  vite.config.ts, package.json         frontend tooling       ─┘  (after M0)
-  src-tauri/** (except contract.rs)    Rust core              ─┐
-  .github/workflows/                   CI + release            ├─ CODEX
-  app icons, Info.plist, bundling      packaging              ─┘
+  index.html                           overlay entry
+  settings.html                        settings entry
+  src/                                 frontend
+  tests/                               vitest + fixtures
+  vite.config.ts, package.json         frontend tooling
+  src-tauri/**                         Rust core
+  .github/workflows/                   CI + release
 ```
-
-**Never edit the other agent's paths.** If you need something from the other side, add a request to `docs/HANDOFF.md` and work against the mock until it lands.
-
-Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HANDOFF.md`, "Taking over the rest of the native side"); `AGENTS.md` is kept as the original work order.
 
 ## Contract v1
 
@@ -211,15 +205,15 @@ shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
 
 `enabled` replaces the tray's runtime-only "Hide lyrics" state: the tray item, the toggle shortcut and the Settings switch all change it, and it persists. `launchAtLogin` changes the login item in the same update (a failure keeps the old value and returns an error). Rust adopts the login item's real state at startup, whenever Settings opens and when the pointer enters the tray icon, and emits `settings-changed` when it differs. On macOS that state includes System Settings' **Allow in the Background** (`login_item.rs`): turning the item on while it is off there fails, and System Settings opens at Login Items. Invalid or duplicate shortcut bindings keep their current value, like every other field. **Reset to defaults** in Settings resets the shortcuts but keeps `enabled` and `launchAtLogin`.
 
-**Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
+**Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, and bumps `CONTRACT_VERSION`. Add fields; don't rename or remove them.
 
 **Auto colors** are computed in TypeScript from `artwork` and never written to settings. `colors` holds the user's manual choice, used when `autoColor` is false.
 
 ## Milestones
 
-| | Codex | Claude Code |
+| | Rust core | Frontend |
 |---|---|---|
-| **M0** | Scaffold Tauri v2 + Vite multi-page, both contract files, empty windows. Push, then log "M0 done". | Start immediately on `src/core/` (pure TS needs no scaffold). |
+| **M0** | Scaffold Tauri v2 + Vite multi-page, both contract files, empty windows. | Start immediately on `src/core/` (pure TS needs no scaffold). |
 | **M1** | Overlay window pinned to the desktop layer on both OSes, showing a test page. | Overlay renders all 4 styles from the mock bridge in a browser (`pnpm dev`). |
 | **M2** | Real now-playing on both OSes + LRCLIB service + cache. | Real bridge wired; clock, timing and colors working end to end. |
 | **M3** | Settings store, tray/menu bar, autostart, shortcuts. | Settings window with live preview; all settings apply instantly. |
@@ -238,14 +232,3 @@ shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
 ## Copyright rule
 
 **Never commit real song lyrics.** Test fixtures use original placeholder lyrics written for this repo, like the demo song in the prototype. Real lyrics are only fetched at runtime and cached in the user's app data folder.
-
-## HANDOFF.md format
-
-Append; never rewrite the other agent's entries.
-
-```
-## 2026-10-06 · Codex · M1
-Done: desktop_layer attaches on Win11 23H2 + macOS 15.
-Needs from Claude: nothing.
-Contract: unchanged (v1).
-```

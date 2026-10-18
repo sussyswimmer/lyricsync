@@ -1,93 +1,48 @@
 import "../../styles/arc.css";
 import type { Line, Word } from "../../core/lrc";
+import { clamp } from "../../core/math";
 import { wordState } from "../../core/timing";
 import { h, put, s } from "../dom";
 import { whenFaceLoads } from "../fonts";
 import { dropShadow, MIN_TEXT_PX, shadowLayers, snap, type Look } from "../look";
+import { CALM_GLIDE_MS, GLIDE_MS } from "../states";
 import type { Cue, ModeRenderer } from "./types";
 
-/**
- * Previous and next lines at this fraction of the focus size (prototype), but no smaller than
- * MIN_TEXT_PX (or 80% of the focus size, if that is smaller), so tiny sizes keep legible neighbors.
- */
+/** Neighbor lines' share of the focus size, but at least MIN_TEXT_PX (or 80% of the focus size, if smaller). */
 const SIDE_SCALE = 0.48;
-/** Baselines in focus font sizes from the focus baseline: previous above, next below with a little extra room for descenders (prototype). */
+/** Neighbor baselines from the focus baseline, in focus sizes; next gets a little extra for descenders. */
 const PREV_RISE = -1.25;
 const NEXT_DROP = 1.25 + 0.15;
-/**
- * The middle of each path rises curve × span × BEND above its ends (the prototype's arch). The span
- * is the stage height, or 9/16 of its width when that is smaller, so a portrait display gets the
- * same shape as a landscape one rather than a horseshoe.
- */
+/** The path's middle rises curve × span × BEND; span is the stage height, or 9/16 of its width if smaller. */
 const BEND = 0.42;
-/**
- * The focus baseline sits this many font sizes below `look.y`, so the glyphs (not the baseline) are
- * centered on the chosen height, the way Drift and Stack center their line box. The bend is split
- * evenly around it: raising the curve lifts the middle and lowers the ends by the same amount.
- */
+/** The focus baseline sits this many sizes below `look.y`, so the glyphs, not the baseline, are centered there. */
 const BASELINE = 0.35;
-/**
- * resolveLook keeps `look.y` this many font sizes from the top and bottom of the stage, which keeps
- * a flat line whole on screen. Arc keeps both extremes of its curve (the middle and the ends) inside
- * that same range, moving the line in from the edge, so a strong curve stays on screen at any Height.
- */
+/** Both ends of the curve stay this many sizes inside the stage, as resolveLook keeps `look.y`. */
 const EDGE = 0.75;
 /** Each path runs from this fraction of the width to 1 minus it. */
 const MARGIN = 0.05;
 /** A line longer than this share of its path shrinks to fit... */
 const FIT = 0.94;
-/**
- * ...but, shrunk to this share of its size, it may fill its whole path rather than FIT of it. It never
- * runs past the path's ends, which stay on screen: only a line still too long at MIN_TEXT_PX does (or
- * at this share of its size, where that is smaller: small sizes on a small stage, like the settings
- * preview, shrink as far as this share). On a display narrower than 16:9 the share drops in
- * proportion: the size follows the stage height, so an ordinary line on a portrait display needs to
- * shrink further to fit its width.
- */
+/** ...but once shrunk to this share of its size (less on portrait stages) it may fill the whole path. */
 const MIN_FIT = 0.55;
 /** Glyph extents in font sizes, for keeping neighbors clear of the focus line: capitals above the baseline, descenders below. */
 const CAP = 0.72;
 const DESCENT = 0.22;
-/**
- * Neighbors are vertical translations of the focus line's curve, which spread apart toward the ends.
- * A neighbor on the outer side of the curve (the previous line over an arch, the next one under a
- * sag) that is longer than the focus line would hang beside the focus line's ends and read as part of
- * its row. It moves out until its ends clear the focus line's ink, by at most this many focus sizes;
- * past that its own curve flattens instead.
- */
+/** Farthest a long outer-side neighbor moves out to clear the focus line's ends, in focus sizes; past that its curve flattens. */
 const MAX_PUSH = 1;
 /** Room above and below the baseline curve in each line's SVG band, in font sizes. */
 const BAND_ABOVE = 1.3;
 const BAND_BELOW = 0.6;
-/**
- * With motion on, Arc moves its own lines (the stage's crossfade would leave a fading copy of the
- * old line in place while the same text glides away, doubling every line change). Stepping to the
- * next line, each line glides from where its text just was: the old focus line shrinks up into the
- * previous slot and dims, the old next line grows into focus, a new next line rises in and the old
- * previous line rises out. Slower for unsynced lyrics. Any other change (a seek, the end of the
- * song) is a quick crossfade. Under reduced motion nothing moves and the stage crossfades.
- */
-const GLIDE_MS = 460;
-const CALM_GLIDE_MS = 800;
 const GLIDE_EASING = "cubic-bezier(0.45, 0, 0.2, 1)";
 /** The incoming next line rises this many focus sizes into place. */
 const NEXT_RISE = 0.5;
 /** Crossfade for jumps: the old lines go quickly, the new ones come in a little slower so they barely overlap. */
 const FADE_OUT_MS = 200;
 const FADE_IN_MS = 300;
-
-/**
- * Shares of a step's glide (in eased progress) that keep the moving lines from drawing through each
- * other: the incoming next line stays transparent until the old next line has grown up out of its
- * slot, and the outgoing previous line is gone before the old focus line shrinks up into its slot.
- */
+/** Shares of a step's eased glide that keep moving lines from drawing through each other. */
 const APPEAR_HOLD = 0.4;
 const LEAVE_BY = 0.5;
-/**
- * The two lines that change color on a step (the old focus line dimming, the old next line
- * brightening) settle in this share of the glide. The glide runs on the compositor, but every frame
- * of a color change re-rasters the line's filtered band.
- */
+/** The two lines that change color on a step settle in this share of the glide: each color frame re-rasters a band. */
 const FILL_SHARE = 0.45;
 
 /**
@@ -188,13 +143,13 @@ export function arcGeometry(look: Look, extent = 1): ArcGeometry {
   // the range resolveLook allows a flat line's baseline, and how far the text's ends sink below its middle
   const top = edge + BASELINE * look.size;
   const bottom = look.height - edge + BASELINE * look.size;
-  const sink = bend * Math.min(1, Math.max(0, extent)) ** 2;
+  const sink = bend * clamp(extent, 0, 1) ** 2;
   const mid = look.y + BASELINE * look.size - bend / 2;
   const aspect = look.height > 0 ? (look.width * 9) / (look.height * 16) : 1;
   return {
     bend,
     mid: Math.min(Math.max(mid, top - Math.min(0, sink)), bottom - Math.max(0, sink)),
-    minFit: MIN_FIT * Math.min(1, Math.max(0, aspect)),
+    minFit: MIN_FIT * clamp(aspect, 0, 1),
   };
 }
 

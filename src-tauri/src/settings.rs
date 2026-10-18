@@ -1,4 +1,4 @@
-//! X4 settings: validation, migration and persistence. The pure functions, settings.json's reading
+//! Settings: validation, migration and persistence. The pure functions, settings.json's reading
 //! and writing included, are portable and tested on every OS; `runtime` keeps the settings in
 //! AppState, saves every change and broadcasts `settings-changed`.
 //!
@@ -368,6 +368,15 @@ pub fn write_file(path: &Path, settings: &Settings) -> io::Result<()> {
     Ok(())
 }
 
+/// A save during the run (`runtime::persist`): skipped, returning false, when `open` left an
+/// unusable file in place (`Opened::keep_file`), since writing over it would destroy what it held.
+pub fn save(path: &Path, settings: &Settings, keep_file: bool) -> io::Result<bool> {
+    if keep_file {
+        return Ok(false);
+    }
+    write_file(path, settings).map(|()| true)
+}
+
 /// Where an unusable settings file goes before the defaults replace it:
 /// `settings.corrupt-<unix-secs>.json` next to it.
 pub fn backup_path(path: &Path, now_secs: u64) -> PathBuf {
@@ -386,6 +395,8 @@ pub struct Opened {
     /// Open Settings on this launch: there was no file (the first launch; a login-item start never
     /// is one, as the item can only be turned on after a launch) or its settings were lost.
     pub show_settings: bool,
+    /// Never write the file this run: it was unusable and couldn't be moved aside (`save`).
+    pub keep_file: bool,
 }
 
 /// Reads the settings at `path` for startup. An unusable file is moved aside to
@@ -396,20 +407,27 @@ pub fn open(path: &Path, now_secs: u64) -> Opened {
         Stored::Missing => None,
         Stored::Unusable(error) => {
             let backup = backup_path(path, now_secs);
-            match fs::rename(path, &backup) {
-                Ok(()) => applog!(
-                    "settings file unusable ({error}); moved to {} and using the defaults",
-                    backup.display()
-                ),
-                Err(move_error) => applog!(
-                    "settings file unusable ({error}) and not moved aside ({move_error}); using \
-                     the defaults"
-                ),
-            }
+            let moved = match fs::rename(path, &backup) {
+                Ok(()) => {
+                    applog!(
+                        "settings file unusable ({error}); moved to {} and using the defaults",
+                        backup.display()
+                    );
+                    true
+                }
+                Err(move_error) => {
+                    applog!(
+                        "settings file unusable ({error}) and not moved aside ({move_error}); \
+                         using the defaults without saving them"
+                    );
+                    false
+                }
+            };
             return Opened {
                 settings: Settings::default(),
-                rewrite: true,
+                rewrite: moved,
                 show_settings: true,
+                keep_file: !moved,
             };
         }
     };
@@ -418,6 +436,7 @@ pub fn open(path: &Path, now_secs: u64) -> Opened {
         show_settings: stored.is_none(),
         settings,
         rewrite,
+        keep_file: false,
     }
 }
 
@@ -443,6 +462,9 @@ pub mod runtime {
     /// `modify` refuses it: on macOS a second launch reaches `show_settings` (and its login-item
     /// sync) from a tokio task that can run before the app's setup has called `install`.
     static INSTALLED: AtomicBool = AtomicBool::new(false);
+    /// `Opened::keep_file`, set by `install` before it saves; `SKIP_LOGGED` logs the skip once.
+    static KEEP_FILE: AtomicBool = AtomicBool::new(false);
+    static SKIP_LOGGED: AtomicBool = AtomicBool::new(false);
 
     /// settings.json in the app data dir, where tauri-plugin-store kept it.
     fn file(app: &AppHandle) -> Result<PathBuf, String> {
@@ -456,10 +478,15 @@ pub mod runtime {
     /// auto-save. A failure is logged, not returned: the change still applies for this session,
     /// and the next successful save catches the file up.
     fn persist(app: &AppHandle, settings: &Settings) {
+        let keep_file = KEEP_FILE.load(Ordering::Acquire);
         let saved = file(app)
-            .and_then(|path| super::write_file(&path, settings).map_err(|e| e.to_string()));
-        if let Err(error) = saved {
-            applog!("settings save failed: {error}");
+            .and_then(|path| super::save(&path, settings, keep_file).map_err(|e| e.to_string()));
+        match saved {
+            Ok(false) if !SKIP_LOGGED.swap(true, Ordering::Relaxed) => {
+                applog!("settings not saved this run: the unusable file couldn't be moved aside");
+            }
+            Ok(_) => {}
+            Err(error) => applog!("settings save failed: {error}"),
         }
     }
 
@@ -610,12 +637,14 @@ pub mod runtime {
                     settings: Settings::default(),
                     rewrite: false,
                     show_settings: false,
+                    keep_file: false,
                 }
             }
         };
         let mut settings = opened.settings;
         let adopted = super::adopt_login_item(&mut settings, login_item(app));
         refresh_login_item(app, settings.launch_at_login);
+        KEEP_FILE.store(opened.keep_file, Ordering::Release);
         if opened.rewrite || adopted {
             persist(app, &settings);
         }
@@ -1617,6 +1646,9 @@ mod tests {
         let order = [
             "super::adopt_login_item(&mut settings, login_item(app));",
             "refresh_login_item(app, settings.launch_at_login);",
+            // The flag is set before install's own save, so that one is skipped too.
+            "KEEP_FILE.store(opened.keep_file, Ordering::Release);",
+            "persist(app, &settings);",
             "INSTALLED.store(true, Ordering::Release);",
         ]
         .map(|step| install.find(step).expect(step));
@@ -1799,6 +1831,7 @@ mod tests {
                 settings: custom(),
                 rewrite: false,
                 show_settings: false,
+                keep_file: false,
             }
         );
         assert_eq!(encode(&custom()).unwrap(), store_bytes(&custom()));
@@ -1817,6 +1850,7 @@ mod tests {
                 settings: defaults(),
                 rewrite: true,
                 show_settings: true,
+                keep_file: false,
             }
         );
         // The data dir doesn't exist yet either: saving creates it.
@@ -1827,6 +1861,7 @@ mod tests {
                 settings: defaults(),
                 rewrite: false,
                 show_settings: false,
+                keep_file: false,
             }
         );
     }
@@ -1879,6 +1914,7 @@ mod tests {
                     settings: defaults(),
                     rewrite: true,
                     show_settings: true,
+                    keep_file: false,
                 },
                 "{why}"
             );
@@ -1886,5 +1922,29 @@ mod tests {
             assert_eq!(fs::read(&backup).unwrap(), bytes, "{why}");
             assert!(!path.exists(), "{why}");
         }
+    }
+
+    #[test]
+    fn an_unusable_file_that_cannot_be_moved_aside_is_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        fs::write(&path, b"not json").unwrap();
+        // A directory in the backup's place makes the rename fail.
+        fs::create_dir(dir.path().join("settings.corrupt-1.json")).unwrap();
+        assert_eq!(
+            open(&path, 1),
+            Opened {
+                settings: defaults(),
+                rewrite: false,
+                show_settings: true,
+                keep_file: true,
+            }
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"not json");
+        // Every later save of the run (a change from Settings, the tray, a shortcut) skips it too.
+        assert!(!save(&path, &custom(), true).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), b"not json");
+        assert!(save(&path, &custom(), false).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), store_bytes(&custom()));
     }
 }

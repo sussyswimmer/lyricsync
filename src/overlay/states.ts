@@ -4,9 +4,19 @@ import { textShadow, type Look } from "./look";
 /** Everything the stage shows when there are no lines to sing. */
 export type StateKind = "loading" | "not-found" | "instrumental" | "error";
 
-/** The stage fades a scene out over this long, and the next one in over this long once it's gone (C6). */
+/** The stage fades a scene out over this long, and the next one in over this long once it's gone. */
 export const SCENE_FADE_OUT_MS = 250;
 export const SCENE_FADE_IN_MS = 450;
+/**
+ * Line crossfade (the stage's, and Lens's for jumps): the old line drops out fast and the new one comes
+ * in just behind it, so two different lines are never both readable in the same place.
+ */
+export const LINE_OUT_MS = 170;
+export const LINE_IN_MS = 240;
+export const LINE_IN_DELAY_MS = 80;
+/** Arc's and Lens's step to the next line; slower for unsynced lyrics. */
+export const GLIDE_MS = 460;
+export const CALM_GLIDE_MS = 800;
 /** Loading shows nothing at all for this long, then a faint pulse. */
 export const LOADING_DELAY_MS = 600;
 /** The not-found and error chips stay fully readable for this long once their scene has faded in... */

@@ -1,6 +1,6 @@
 # Desktop-layer work (X1)
 
-Windows (Codex) and macOS (Claude Code) are both implemented and share one controller. Neither has passed native acceptance on a real machine yet, so M1 is not complete. Results so far (macOS 26.5 with Spotify, logged in `HANDOFF.md`): the overlay sits at the desktop window level; the fix for WebKit pausing a covered overlay still needs a re-check with `--overlay-probe`.
+Windows and macOS are both implemented and share one controller. Neither has passed native acceptance on a real machine yet, so M1 is not complete. Results so far (macOS 26.5 with Spotify): the overlay sits at the desktop window level; the fix for WebKit pausing a covered overlay still needs a re-check with `--overlay-probe`.
 
 ## Windows approach
 

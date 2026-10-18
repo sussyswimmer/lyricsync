@@ -145,7 +145,7 @@ pub fn steps(
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 mod controller;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
-mod macos;
+pub(crate) mod macos;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 mod windows;
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]

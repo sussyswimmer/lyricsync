@@ -1,4 +1,5 @@
 import type { Line } from "../../core/lrc";
+import { clamp } from "../../core/math";
 import { wordState } from "../../core/timing";
 import { h, put } from "../dom";
 import { MIN_TEXT_PX, snap, textShadow, type Look } from "../look";
@@ -23,11 +24,7 @@ const TILT = 14;
 const REACH = 3.5;
 /** A wrapped line taller than this share of the stage is set smaller so it fits. */
 const MAX_ROW_SHARE = 0.45;
-/**
- * Room kept between the focus line's box and the stage edges, in font sizes. resolveLook keeps a
- * one-row line's center 0.75 sizes from the edges: half its box plus this. A taller wrapped line
- * moves the whole stack inward to keep the same room.
- */
+/** Room between the focus line's box and the stage edges, in font sizes, as resolveLook keeps a one-row line. */
 const EDGE_PAD = 0.75 - LINE_HEIGHT / 2;
 /** Scroll time to the next line; slower for unsynced lyrics. */
 const EASE_MS = 520;
@@ -55,7 +52,7 @@ const easeInOut = (x: number): number => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2)
  */
 export function neighborScale(size: number, depth: number): number {
   const recede = PERSPECTIVE / (PERSPECTIVE + RECEDE * depth);
-  return Math.min(NEIGHBOR_MAX_SCALE, Math.max(NEIGHBOR_SCALE, MIN_TEXT_PX / (size * recede)));
+  return clamp(MIN_TEXT_PX / (size * recede), NEIGHBOR_SCALE, NEIGHBOR_MAX_SCALE);
 }
 
 /**
@@ -82,8 +79,8 @@ export function stackOffsets(heights: readonly number[], shown: number, depth: n
   const out = new Map<number, number>();
   const n = heights.length;
   if (n === 0) return out;
-  const lo = Math.max(0, Math.min(n - 1, Math.floor(shown)));
-  const frac = Math.max(0, Math.min(1, shown - lo));
+  const lo = clamp(Math.floor(shown), 0, n - 1);
+  const frac = clamp(shown - lo, 0, 1);
   const first = Math.max(0, Math.ceil(shown - REACH));
   const last = Math.min(n - 1, Math.floor(shown + REACH));
   const slot = (i: number): number => (heights[i] ?? 0) * perPx * projection(Math.abs(i - shown), depth);
@@ -237,7 +234,7 @@ export class DriftMode implements ModeRenderer {
     const offsets = stackOffsets(this.heights, shown, depth, slotPerPx(low));
     // Keep the whole focus block on screen, however many rows it wraps to: a tall line moves the
     // stack away from the edge it would run off.
-    const lo = Math.max(0, Math.min(rows.length - 1, Math.floor(shown)));
+    const lo = clamp(Math.floor(shown), 0, rows.length - 1);
     const hLo = rows[lo]?.height ?? 0;
     const hHi = rows[lo + 1]?.height ?? hLo;
     const half = (hLo + (hHi - hLo) * (shown - lo)) / 2;

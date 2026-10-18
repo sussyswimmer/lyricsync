@@ -294,8 +294,7 @@ export class SettingsPreview {
   }
 
   private renderOff(): void {
-    // Settings without `enabled` (an older core) count as on.
-    const off = this.settings.enabled === false;
+    const off = !this.settings.enabled;
     if (this.offPill.hidden === off) this.offPill.hidden = !off;
   }
 

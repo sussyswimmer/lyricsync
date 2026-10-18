@@ -1,9 +1,9 @@
 //! SMTC reads and subscriptions run on Tauri's Tokio runtime, never on the window thread.
 use super::{
-    artwork, epoch_ms, runtime::Backend, select_candidate, track_key, windows_sample_time,
-    Announced, ArtCache, ArtKey, Candidate, KeyHalves, MediaSource, Presence, RawTrack, Settle,
+    artwork, epoch_ms, runtime::Backend, select_candidate, smtc_source, track_key,
+    windows_sample_time, Announced, ArtCache, ArtKey, Candidate, KeyHalves, MediaSource, Presence,
+    RawTrack, Settle,
 };
-use crate::contract::Source;
 use async_trait::async_trait;
 use std::{
     collections::HashMap,
@@ -288,13 +288,7 @@ impl WindowsSource {
                     continue;
                 };
                 let app_id = app_id.to_string().to_lowercase();
-                let source = if app_id.contains("spotify") {
-                    Source::Spotify
-                } else if app_id.contains("applemusic") || app_id.contains("apple-music") {
-                    Source::AppleMusic
-                } else {
-                    Source::System
-                };
+                let source = smtc_source(&app_id);
                 let sample_time = session
                     .GetTimelineProperties()
                     .and_then(|p| p.LastUpdatedTime())

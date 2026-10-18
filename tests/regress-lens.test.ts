@@ -1,21 +1,10 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
-import { parseLrc, type Line } from "../src/core/lrc";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
-import { resolveLook, shadowLayers, type Frame, type Look } from "../src/overlay/look";
+import { shadowLayers, type Frame } from "../src/overlay/look";
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
-import type { Cue } from "../src/overlay/modes/types";
-import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
+import { StageElement, stubStageDom } from "./fake-dom";
+import { cue, LINES, look, stylesheet } from "./helpers";
 
-const look = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
-  resolveLook({ ...structuredClone(DEFAULT_SETTINGS), mode: "lens", ...over }, null, {
-    width: 1280,
-    height: 720,
-    dpr: 1,
-    motion: true,
-    unsynced: false,
-    ...frame,
-  });
 
 /** The fisheye's settings (lens.ts): far words shrink to `low`, the word being sung grows to SCALE_MAX. */
 const SCALE_MAX = 1.35;
@@ -36,7 +25,7 @@ function drawnWidth(shape: Shape, low: number, lens: number, a: number, zoom: nu
   return rowWidth(shape, scales) * zoom;
 }
 
-// Regression (lens-long-line-fit): the lens was fitted to the row's at-rest width (every word at
+// The lens was fitted to the row's at-rest width (every word at
 // scale 1). Under the lens far words are at half size, so a 16-word line used 57% of the stage and
 // its far words shrank to 13 px (a 34-word line hit the 11 px floor), while a 10-word line got 19 px.
 describe("Lens: fitting a long line", () => {
@@ -122,7 +111,7 @@ function layers(shadow: string): { y: number; blur: number; alpha: number }[] {
   });
 }
 
-// Regression (lens-far-word-legibility): far words faded by element opacity took their dark shadow
+// Far words faded by element opacity took their dark shadow
 // down with them (alpha 0.46 → 0.28), and the shadow, built for the base size, shrank with the
 // word's transform to about a pixel. On a light wallpaper "drift toward home" all but vanished.
 describe("Lens: the shadow of a word drawn small and faded", () => {
@@ -163,20 +152,11 @@ describe("Lens: the shadow of a word drawn small and faded", () => {
   });
 });
 
-// Regression (lens-perf): a 200 ms text-shadow transition on every word re-laid out and re-rastered
+// A 200 ms text-shadow transition on every word re-laid out and re-rastered
 // it on every frame of each glow change and shadow step.
 describe("Lens: styles", () => {
-  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
-  // non-literal specifier, because the strict type check runs without node's types.
-  let lensCss = "";
-  beforeAll(async () => {
-    const fsModule = "node:fs";
-    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-    lensCss = fs.readFileSync(new URL("../src/styles/lens.css", import.meta.url), "utf8");
-  });
-
   it("transitions a word's color only, never its text-shadow", () => {
-    const css = lensCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    const css = stylesheet("src/styles/lens.css");
     expect(css).toContain(".lens-word");
     const rule = /\.lens-word\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     const transition = /transition:\s*([^;]*);/.exec(rule)?.[1] ?? "";
@@ -186,7 +166,7 @@ describe("Lens: styles", () => {
   });
 });
 
-// Regression (lens-fontcheck-freeze): every build asked FontFaceSet.check about the whole song
+// Every build asked FontFaceSet.check about the whole song
 // (every line joined, nothing deduplicated) against the whole fallback stack at the current size.
 // Blink looks every family up for every character, so a settings slider step cost 300-400 ms.
 describe("Lens: waiting for the lyric face", () => {
@@ -248,117 +228,9 @@ describe("Lens: waiting for the lyric face", () => {
   });
 });
 
-/*
- * Just enough DOM for Lens to build and paint in node: elements with inline styles, text half an em
- * wide per character (the baseline mark 0.8 em down), and Web Animations that only record themselves.
- */
-class FakeStyle {
-  readonly props = new Map<string, string>();
-  [key: string]: unknown;
-  setProperty(name: string, value: string): void {
-    this.props.set(name, value);
-  }
-}
 
-class FakeAnimation {
-  readonly keyframes: Keyframe[];
-  cancelled = false;
-  readonly finished = new Promise<void>(() => undefined);
-  constructor(keyframes: Keyframe[]) {
-    this.keyframes = keyframes;
-  }
-  cancel(): void {
-    this.cancelled = true;
-  }
-}
-
-class FakeElement {
-  readonly tagName: string;
-  className = "";
-  dir = "";
-  readonly style = new FakeStyle();
-  readonly animations: FakeAnimation[] = [];
-  children: FakeElement[] = [];
-  parent: FakeElement | null = null;
-  private own = "";
-  readonly offsetWidth = 0;
-  readonly classList = {
-    add: (...names: string[]): void => {
-      this.className = [...new Set([...this.className.split(" "), ...names])].filter(Boolean).join(" ");
-    },
-    remove: (...names: string[]): void => {
-      this.className = this.className
-        .split(" ")
-        .filter((c) => c && !names.includes(c))
-        .join(" ");
-    },
-    contains: (name: string): boolean => this.className.split(" ").includes(name),
-  };
-
-  constructor(tag: string) {
-    this.tagName = tag.toUpperCase();
-  }
-
-  get textContent(): string {
-    return this.own + this.children.map((c) => c.textContent).join("");
-  }
-  set textContent(value: string) {
-    for (const c of this.children) c.parent = null;
-    this.children = [];
-    this.own = value;
-  }
-  private fontSize(): number {
-    for (let el: FakeElement | null = this; el; el = el.parent) {
-      const v = el.style["fontSize"];
-      if (typeof v === "string" && v) return Number.parseFloat(v);
-    }
-    return 16;
-  }
-  getBoundingClientRect(): { width: number; left: number; top: number } {
-    const size = this.fontSize();
-    return { width: this.textContent.length * size * 0.5, left: 0, top: this.tagName === "I" ? 0.8 * size : 0 };
-  }
-  append(...nodes: FakeElement[]): void {
-    for (const n of nodes) {
-      n.remove();
-      n.parent = this;
-      this.children.push(n);
-    }
-  }
-  appendChild(node: FakeElement): FakeElement {
-    this.append(node);
-    return node;
-  }
-  after(node: FakeElement): void {
-    const p = this.parent;
-    if (!p) return;
-    node.remove();
-    node.parent = p;
-    p.children.splice(p.children.indexOf(this) + 1, 0, node);
-  }
-  remove(): void {
-    const p = this.parent;
-    if (!p) return;
-    p.children.splice(p.children.indexOf(this), 1);
-    this.parent = null;
-  }
-  contains(other: FakeElement): boolean {
-    for (let el: FakeElement | null = other; el; el = el.parent) if (el === this) return true;
-    return false;
-  }
-  setAttribute(): void {}
-  animate(keyframes: Keyframe[]): FakeAnimation {
-    const anim = new FakeAnimation(keyframes);
-    this.animations.push(anim);
-    return anim;
-  }
-}
-
-const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
-const cue = (line: number, t: number, running: boolean, waiting = false): Cue => ({ line, t, waiting, running });
-
-function lens(): { mode: LensMode; row: () => FakeElement | undefined } {
-  const host = new FakeElement("main");
+function lens(): { mode: LensMode; row: () => StageElement | undefined } {
+  const host = new StageElement("main");
   const mode = new LensMode();
   mode.build(host as unknown as HTMLElement, LINES, look());
   const box = host.children[0];
@@ -366,17 +238,17 @@ function lens(): { mode: LensMode; row: () => FakeElement | undefined } {
 }
 
 /** Each word's drawn scale (its own fisheye scale times the row's zoom), from its transform. */
-const scales = (row: FakeElement | undefined): number[] =>
+const scales = (row: StageElement | undefined): number[] =>
   (row?.children ?? []).map((span) => Number(/scale\(([\d.]+)\)/.exec(span.style.props.get("transform") ?? "")?.[1] ?? "NaN"));
 
-const glides = (row: FakeElement | undefined): boolean => (row?.animations ?? []).some((a) => !a.cancelled && a.keyframes.some((k) => "transform" in k));
+const glides = (row: StageElement | undefined): boolean => (row?.animations ?? []).some((a) => !a.cancelled && a.keyframes.some((k) => "transform" in k));
 
-// Regression (lens-paused-step): the lens blooms over a step's glide frame by frame, but no frames
+// The lens blooms over a step's glide frame by frame, but no frames
 // follow a paused paint, so a paused seek or step onto the next line left the row flat (no lens) until
 // playback resumed. Paused, a step now cuts like any other jump, with the full lens at once.
 describe("Lens: line changes while paused", () => {
   beforeEach(() => {
-    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+    stubStageDom();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -421,11 +293,11 @@ describe("Lens: line changes while paused", () => {
   });
 });
 
-// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the Height whatever
+// The next line sat NEXT_DROP focus sizes below the Height whatever
 // the Height, so at 95% and up it was drawn entirely below the screen and Lens showed one lone line.
 describe("Lens: the next line near the bottom of the stage", () => {
   beforeEach(() => {
-    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+    stubStageDom();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -446,7 +318,7 @@ describe("Lens: the next line near the bottom of the stage", () => {
       for (const yPos of [95, 100])
         for (const size of [22, 58, 140]) {
           const l = look({ size, yPos }, frame);
-          const host = new FakeElement("main");
+          const host = new StageElement("main");
           const mode = new LensMode();
           mode.build(host as unknown as HTMLElement, LINES, l);
           mode.paint(cue(0, 2000, true));

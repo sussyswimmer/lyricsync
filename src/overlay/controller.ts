@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../../contract/contract";
-import { PlaybackClock } from "../core/clock";
+import { now, PlaybackClock } from "../core/clock";
 import { PaletteCache } from "../core/palette";
 import type { Bridge, Unlisten } from "../bridge/types";
 import type { LyricStage } from "./stage";
@@ -18,8 +18,8 @@ const BUSY_FRAME_MS = 8.6;
 const QUERY_RETRY_MS = 1500;
 /** A track whose artwork hasn't arrived by now gets the manual colors instead of the last song's. */
 const ARTWORK_GRACE_MS = 1500;
-
-const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
+/** Wait before asking again when the start-up get_settings read fails. */
+const SETTINGS_RETRY_MS = 1000;
 
 export interface ControllerOptions {
   /**
@@ -58,6 +58,8 @@ export class OverlayController {
   private artworkTimer: ReturnType<typeof setTimeout> | null = null;
   private visible = false;
   private stopped = false;
+  /** Settings have arrived (a reply or an event); until then a gated stage stays hidden. */
+  private settled: boolean;
   private readonly onVisibility = (): void => this.kick();
 
   constructor(bridge: Bridge, stage: LyricStage, options: ControllerOptions = {}) {
@@ -65,6 +67,7 @@ export class OverlayController {
     this.stage = stage;
     this.gate = options.gate ?? false;
     this.followSettings = options.followSettings ?? true;
+    this.settled = !this.followSettings;
     this.palettes = options.palettes ?? new PaletteCache();
   }
 
@@ -81,6 +84,7 @@ export class OverlayController {
       else this.unlisten.push(off);
       return !this.stopped;
     };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisibility);
     let heardTrack = false;
     let heardSettings = false;
     const onNowPlaying = (np: NowPlaying | null): void => {
@@ -95,14 +99,15 @@ export class OverlayController {
     if (!keep(await b.listen("lyrics", (l) => this.onLyrics(l)))) return;
     if (this.followSettings) {
       if (!keep(await b.listen("settings-changed", onSettings))) return;
-      const settings = await b.invoke("get_settings");
+      const settings = await b.invoke("get_settings").catch(() => null);
       if (this.stopped) return;
-      if (!heardSettings) this.setSettings(settings);
+      if (settings && !heardSettings) this.setSettings(settings);
+      // The defaults would show lyrics the user turned off, so a failed read is asked again.
+      else if (!heardSettings) void this.retrySettings();
     }
-    const np = await b.invoke("get_now_playing");
+    const np = await b.invoke("get_now_playing").catch(() => null);
     if (this.stopped) return;
     if (!heardTrack) this.onNowPlaying(np);
-    if (typeof document !== "undefined") document.addEventListener("visibilitychange", this.onVisibility);
   }
 
   get track(): NowPlaying | null {
@@ -111,6 +116,7 @@ export class OverlayController {
 
   setSettings(settings: Settings): void {
     this.settings = settings;
+    this.settled = true;
     this.clock.setOffsets(settings);
     this.stage.setSettings(settings);
     this.update();
@@ -195,6 +201,17 @@ export class OverlayController {
     }
   }
 
+  /** Asks for the settings every SETTINGS_RETRY_MS until they arrive (a reply or an event) or destroy(). */
+  private async retrySettings(): Promise<void> {
+    while (!this.stopped && !this.settled) {
+      await new Promise((resolve) => setTimeout(resolve, SETTINGS_RETRY_MS));
+      if (this.stopped || this.settled) return;
+      const settings = await this.bridge.invoke("get_settings").catch(() => null);
+      // an event that arrived meanwhile is newer than this reply
+      if (settings && !this.stopped && !this.settled) this.setSettings(settings);
+    }
+  }
+
   /**
    * Album colors follow the artwork. Keeps the last song's colors until this song's art arrives, or
    * for ARTWORK_GRACE_MS after the track starts if it has none, then uses the manual colors.
@@ -204,6 +221,7 @@ export class OverlayController {
     if (this.artworkTimer) clearTimeout(this.artworkTimer);
     this.artworkTimer = null;
     void this.palettes.get(key, artwork).then((palette) => {
+      if (this.stopped) return;
       const current = this.nowPlaying;
       if (current?.trackKey !== key || current.artwork !== artwork) return;
       if (palette || artwork !== null) {
@@ -213,6 +231,7 @@ export class OverlayController {
       }
       this.artworkTimer = setTimeout(() => {
         this.artworkTimer = null;
+        if (this.stopped) return;
         if (this.nowPlaying?.trackKey === key && this.nowPlaying.artwork === null) {
           this.stage.setPalette(null);
           this.kick();
@@ -223,9 +242,7 @@ export class OverlayController {
 
   private update(): void {
     const np = this.nowPlaying;
-    // `enabled` is new in contract v3: settings without it (an older core) count as on.
-    const on = this.settings.enabled !== false;
-    this.visible = !this.gate || (np !== null && on && (this.settings.showWhen === "always" || np.isPlaying));
+    this.visible = !this.gate || (this.settled && np !== null && this.settings.enabled && (this.settings.showWhen === "always" || np.isPlaying));
     this.stage.setVisible(this.visible);
     this.stage.setPaused(!np?.isPlaying);
     this.kick();
@@ -267,8 +284,10 @@ export class OverlayController {
       else this.raf = requestAnimationFrame(this.tick);
       return;
     }
-    const wait = Math.min(MAX_SLEEP_MS, this.stage.nextChange(t));
-    this.wake(Math.max(0, wait - 4));
+    const next = this.stage.nextChange(t);
+    // Nothing left to change (no lyrics, or past the last line): sleep until kick().
+    if (next === Infinity) return;
+    this.wake(Math.max(0, Math.min(MAX_SLEEP_MS, next) - 4));
   };
 
   /** Asks for a frame once `ms` have passed. kick() and destroy() cancel the wait. */

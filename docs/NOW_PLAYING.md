@@ -1,6 +1,6 @@
 # Now playing (X2)
 
-Codex built the Windows adapter (SMTC); Claude Code built the macOS one (Spotify and Music over AppleScript). Both run in one now-playing loop (`media/runtime.rs`) that owns the 1 s resync, the watcher and publishing. Neither has passed native acceptance on a real machine yet, so M2 is not complete. Results so far (macOS 26.5 with Spotify, logged in `HANDOFF.md`): the track, artwork and LRCLIB lyrics arrive.
+There is a Windows adapter (SMTC) and a macOS one (Spotify and Music over AppleScript). Both run in one now-playing loop (`media/runtime.rs`) that owns the 1 s resync, the watcher and publishing. Neither has passed native acceptance on a real machine yet, so M2 is not complete. Results so far (macOS 26.5 with Spotify): the track, artwork and LRCLIB lyrics arrive.
 
 ## Data flow
 

@@ -1,10 +1,14 @@
 import type { NowPlaying, Settings } from "../../contract/contract";
+import { clamp } from "./math";
 
 /** The parts of a now-playing sample the clock reads. */
 export type ClockSample = Pick<NowPlaying, "trackKey" | "positionMs" | "sampledAt" | "isPlaying">;
 export type ClockOffsets = Pick<Settings, "globalOffsetMs" | "trackOffsetsMs">;
 /** What a sample did to the clock: new track, jump, smooth correction, or dropped as stale. */
 export type ClockUpdate = "reset" | "snap" | "slew" | "ignored";
+
+/** Monotonic ms for frame and animation timing (performance.now(), where there is one). */
+export const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 
 /** A sample further than this from where the clock thinks it is counts as a seek: jump to it. */
 export const SNAP_MS = 400;
@@ -79,6 +83,6 @@ export class PlaybackClock {
   /** `raw` plus whatever correction is still unwound. Frozen while paused. */
   private base(now: number): number {
     const left = this.isPlaying ? 1 - (now - this.correctionAt) / this.correctionMs : 1;
-    return this.raw(now) + this.correction * Math.min(1, Math.max(0, left));
+    return this.raw(now) + this.correction * clamp(left, 0, 1);
   }
 }

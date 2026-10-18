@@ -219,7 +219,7 @@ describe("parseLrc: word tags", () => {
     expect(line?.words[1]?.start).toBeGreaterThan(60_000);
   });
 
-  // Regression (one-tag-discards-line): a single tag outside its line's window threw away the real
+  // A single tag outside its line's window threw away the real
   // timing of every word in it, so a held last word over a duet partner's next line lit 6 s early.
   it("keeps the real starts when a closing tag runs past the next line's start", () => {
     const [line] = parseLrc("[00:10.00]<00:09.80>a <00:10.50>b <00:19.80>c <00:21.00>\n[00:20.00]next", 30_000);

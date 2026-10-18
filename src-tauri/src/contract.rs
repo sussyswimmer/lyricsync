@@ -94,7 +94,7 @@ pub enum Displays {
     Primary,
     All,
 }
-/// A global shortcut's action. Added in contract v3.
+/// A global shortcut's action.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ShortcutAction {
@@ -103,7 +103,7 @@ pub enum ShortcutAction {
     NudgeLater,
 }
 /// Global keyboard shortcuts: accelerators such as "CmdOrCtrl+Alt+Shift+L"; "" leaves that action
-/// without one. Added in contract v3.
+/// without one.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Shortcuts {
@@ -115,7 +115,7 @@ pub struct Shortcuts {
     /// −50 ms for the current song (lyrics later).
     pub nudge_later: String,
 }
-/// Whether a shortcut is working. Added in contract v3.
+/// Whether a shortcut is working.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ShortcutState {
@@ -129,7 +129,7 @@ pub enum ShortcutState {
     /// Not a usable key combination.
     Invalid,
 }
-/// `Record<ShortcutAction, ShortcutState>`: one key per action. Added in contract v3.
+/// `Record<ShortcutAction, ShortcutState>`: one key per action.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutsStatus {
@@ -167,12 +167,9 @@ pub struct Settings {
     pub global_offset_ms: f64,
     pub track_offsets_ms: BTreeMap<String, f64>,
     /// false hides the lyrics on every display (Settings, the tray and the toggle shortcut).
-    /// Added in contract v3.
     pub enabled: bool,
-    /// The OS login item follows it; at startup it adopts the login item's real state. Added in
-    /// contract v3.
+    /// The OS login item follows it; at startup it adopts the login item's real state.
     pub launch_at_login: bool,
-    /// Added in contract v3.
     pub shortcuts: Shortcuts,
 }
 impl Default for Settings {

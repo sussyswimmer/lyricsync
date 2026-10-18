@@ -2,7 +2,7 @@
 pub mod applescript;
 pub mod artwork;
 #[cfg(all(feature = "desktop", target_os = "macos"))]
-mod macos;
+pub(crate) mod macos;
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 mod runtime;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
@@ -14,6 +14,17 @@ use crate::contract::{MediaProblem, MediaStatus, NowPlaying, Source};
 use async_trait::async_trait;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// The player behind a Windows media session, from its app id.
+pub fn smtc_source(app_id: &str) -> Source {
+    let app_id = app_id.to_lowercase();
+    if app_id.contains("spotify") {
+        Source::Spotify
+    } else if app_id.contains("applemusic") || app_id.contains("apple-music") {
+        Source::AppleMusic
+    } else {
+        Source::System
+    }
+}
 #[derive(Debug, Clone)]
 pub struct RawTrack {
     pub source: Source,

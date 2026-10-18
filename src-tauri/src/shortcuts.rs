@@ -1,4 +1,4 @@
-//! X5 global shortcuts, configured in `Settings.shortcuts` (contract v3). The accelerator rules,
+//! Global shortcuts, configured in `Settings.shortcuts`. The accelerator rules,
 //! the registration plan and the suspension are portable and tested on every OS; `runtime`
 //! registers the bindings with tauri-plugin-global-shortcut, runs the same actions as the tray, and
 //! reports `shortcuts-status`.
@@ -15,7 +15,7 @@
 //! halves test against one table, `tests/fixtures/accelerators.json`.
 //!
 //! The default bindings (contract `DEFAULT_SETTINGS.shortcuts`) all include Shift, a deliberate
-//! change from AGENTS.md's Cmd/Ctrl+Alt. Windows reports AltGr as Ctrl+Alt, so a Ctrl+Alt hotkey
+//! change from the earlier Cmd/Ctrl+Alt. Windows reports AltGr as Ctrl+Alt, so a Ctrl+Alt hotkey
 //! swallows AltGr characters on many layouts (German `\`, Polish `ł`, French `]`); Microsoft's
 //! guidance is to avoid Ctrl+Alt for that reason. On macOS, ⌘⌥L is Downloads in Finder and Safari
 //! and Reformat Code in JetBrains IDEs, and ⌘⌥[ / ] move or fold lines in Xcode and VS Code. A

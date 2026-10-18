@@ -1,7 +1,8 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 import type { Bridge } from "../bridge/types";
+import { clamp } from "../core/math";
 
-/** Edits are saved this long after the last change (C7)... */
+/** Edits are saved this long after the last change... */
 export const SAVE_DEBOUNCE_MS = 120;
 /** ...or at least this often during a long drag, so the desktop overlay follows the slider. */
 export const SAVE_MAX_WAIT_MS = 300;
@@ -10,24 +11,13 @@ export const TRACK_OFFSET_LIMIT_MS = 2000;
 
 /** A per-song offset as it is saved: whole ms, within ±`TRACK_OFFSET_LIMIT_MS`. */
 export function clampTrackOffset(ms: number): number {
-  return Math.max(-TRACK_OFFSET_LIMIT_MS, Math.min(TRACK_OFFSET_LIMIT_MS, Math.round(ms)));
+  return clamp(Math.round(ms), -TRACK_OFFSET_LIMIT_MS, TRACK_OFFSET_LIMIT_MS);
 }
 
 /** One save, in the order the user made it. */
 export type Write =
   | { kind: "patch"; patch: Partial<Settings> }
   | { kind: "track"; trackKey: string; ms: number };
-
-/**
- * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`; the
- * window shows their defaults. Complete settings come back as the same object.
- */
-export function withDefaults(settings: Settings): Settings {
-  const s: Partial<Settings> = settings;
-  if (s.enabled !== undefined && s.launchAtLogin !== undefined && s.shortcuts !== undefined) return settings;
-  const defaults = structuredClone(DEFAULT_SETTINGS);
-  return { ...defaults, ...settings, shortcuts: { ...defaults.shortcuts, ...s.shortcuts } };
-}
 
 /**
  * Reset to defaults: everything but `version`, per-song offsets (kept, unless Reset also forgets them
@@ -97,7 +87,7 @@ export class SettingsSync {
 
   constructor(options: SettingsSyncOptions) {
     this.bridge = options.bridge;
-    this.base = withDefaults(options.initial);
+    this.base = options.initial;
     this.onChange = options.onChange;
     this.onError = options.onError ?? (() => {});
     this.debounceMs = options.debounceMs ?? SAVE_DEBOUNCE_MS;
@@ -119,7 +109,7 @@ export class SettingsSync {
   receive(settings: Settings): void {
     if (this.disposed) return;
     this.echoes++;
-    this.base = withDefaults(settings);
+    this.base = settings;
     this.onChange(this.view);
   }
 
@@ -131,7 +121,7 @@ export class SettingsSync {
     this.pending = { ...this.pending, ...patch };
     this.onChange(this.view);
     if (this.timer) clearTimeout(this.timer);
-    const wait = Math.max(0, Math.min(this.debounceMs, this.firstPendingAt + this.maxWaitMs - now));
+    const wait = clamp(this.firstPendingAt + this.maxWaitMs - now, 0, this.debounceMs);
     this.timer = setTimeout(() => this.flush(), wait);
   }
 
@@ -186,7 +176,7 @@ export class SettingsSync {
       .then(
         (settings) => {
           // An echo since this write went out is at least as new as this reply (see the class comment).
-          if (this.echoes === echoesBefore) this.base = withDefaults(settings);
+          if (this.echoes === echoesBefore) this.base = settings;
         },
         (error: unknown) => this.onError(error, write),
       )

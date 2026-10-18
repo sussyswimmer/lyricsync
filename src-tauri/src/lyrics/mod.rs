@@ -42,18 +42,22 @@ pub struct Failure {
     /// No network yet, a timeout, or a busy or rate-limited LRCLIB: another try a little later may
     /// work. Otherwise (a 4xx answer, unusable metadata) it would get the same answer.
     pub transient: bool,
+    /// Another track started before this one reached LRCLIB: no answer, not a failure.
+    pub skipped: bool,
 }
 impl Failure {
     pub fn transient(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             transient: true,
+            skipped: false,
         }
     }
     pub fn permanent(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             transient: false,
+            skipped: false,
         }
     }
 }
@@ -106,7 +110,7 @@ impl State {
 }
 /// One lookup's budget, from the track change through the cache, waiting for a free slot, the
 /// exact match and the searches.
-const DEADLINE: Duration = Duration::from_secs(6);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(6);
 /// After a transient failure on the current track (no network yet after wake, a busy or
 /// rate-limiting LRCLIB, the deadline), the lookup is tried again after each of these waits: about
 /// a minute and a half in all.
@@ -181,6 +185,16 @@ impl Service {
                     tokio::time::timeout_at(deadline, service.resolve(&track, &force)).await;
                 let (result, from_cache, saved_at, transient) = match outcome {
                     Ok(Ok((result, from_cache, saved_at))) => (result, from_cache, saved_at, false),
+                    Ok(Err(error)) if error.skipped => {
+                        let mut state = service.state.lock().unwrap_or_else(|e| e.into_inner());
+                        // Played again meanwhile, so `start` handed out this flight: look it up.
+                        if state.current(&track.key) {
+                            continue;
+                        }
+                        // Looked up again when it plays again; waiters see the sender drop.
+                        state.flights.remove(&track.key);
+                        break;
+                    }
                     Ok(Err(error)) => {
                         applog!("lyrics lookup failed: {error}");
                         let error_result = empty(&track.key, LyricsStatus::Error);
@@ -363,8 +377,10 @@ impl Service {
     /// or a request, which keeps a burst of skips from tripping LRCLIB's rate limit: it is looked
     /// up again when it plays again.
     async fn fetch(&self, track: &Track) -> Result<Lyrics, Failure> {
-        let skipped =
-            || Failure::permanent("skipped: another track started before it reached LRCLIB");
+        let skipped = || Failure {
+            skipped: true,
+            ..Failure::permanent("skipped: another track started before it reached LRCLIB")
+        };
         if !self.current(&track.key) {
             return Err(skipped());
         }
@@ -403,10 +419,15 @@ impl Service {
                     }
                 }
             }
-            (
-                flight,
-                state.tracks.iter().find(|track| track.key == key).cloned(),
-            )
+            let track = state
+                .tracks
+                .iter()
+                .find(|track| track.key == key)
+                // A skipped track left no answer; starting it again would cancel the playing
+                // track's retry (`quiet`) and broadcast its loading.
+                .filter(|_| state.current(key) || state.completed.contains_key(key))
+                .cloned();
+            (flight, track)
         };
         if let Some(receiver) = flight {
             return wait(receiver, key).await;

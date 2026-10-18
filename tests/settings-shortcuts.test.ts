@@ -6,11 +6,11 @@ import { PaletteCache } from "../src/core/palette";
 import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
 import { ALTGR_NOTE, MOVED_NOTE, NOTE_MS, RECORD_TIMEOUT_MS } from "../src/settings/recorder";
-import { applyWrite, defaultsPatch, SettingsSync, withDefaults, type Write } from "../src/settings/store";
+import { applyWrite, defaultsPatch, SettingsSync, type Write } from "../src/settings/store";
 import { activeElement, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
 
 /*
- * Contract v3 in the settings window: the General group (lyrics on or off, Launch at login), the
+ * The settings window's General group (lyrics on or off, Launch at login), the
  * Behavior rows' wording, the Shortcuts group and its key recorder, and Reset to defaults keeping the
  * two General switches.
  */
@@ -177,7 +177,7 @@ describe("General: lyrics on the desktop and Launch at login", () => {
     expect(caption()).toBe(without);
     p.rerender({ shortcuts: { ...OK, toggleLyrics: "invalid" } });
     expect(caption()).toBe(without);
-    // an older core, with no status at all: the binding is shown
+    // no status yet: the binding is shown
     p.rerender({ shortcuts: null });
     expect(caption()).toContain("or with ⌥⇧⌘L.");
   });
@@ -222,11 +222,6 @@ describe("the preview says when the lyrics are off on the desktop", () => {
     expect(pill.hidden).toBe(true);
     preview.setSettings({ ...structuredClone(DEFAULT_SETTINGS), enabled: false });
     expect(pill.hidden).toBe(false);
-    // settings from an older core, without the field: on
-    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-    delete old.enabled;
-    preview.setSettings(old as Settings);
-    expect(pill.hidden).toBe(true);
     preview.dispose();
   });
 });
@@ -265,7 +260,7 @@ describe("Shortcuts: the rows", () => {
     // the warning goes once the core says it works
     p.rerender({ shortcuts: OK });
     expect(p.message(0).textContent).toBe("");
-    // an older core: no status, no warnings
+    // no status yet: no warnings
     p.rerender({ shortcuts: null });
     expect(p.message(1).textContent).toBe("");
   });
@@ -732,7 +727,7 @@ describe("Reset to defaults keeps the lyrics switch and the login item", () => {
   });
 });
 
-describe("SettingsSync for contract v3", () => {
+describe("SettingsSync: switches with side effects", () => {
   const settled = async (): Promise<void> => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   };
@@ -771,19 +766,5 @@ describe("SettingsSync for contract v3", () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.[1]).toEqual({ kind: "patch", patch: { launchAtLogin: true } });
     expect(views[views.length - 1]?.launchAtLogin).toBe(false);
-  });
-
-  it("fills the v3 fields of settings from an older core with their defaults", () => {
-    const old: Partial<Settings> = { ...structuredClone(DEFAULT_SETTINGS), mode: "drift" };
-    delete old.enabled;
-    delete old.launchAtLogin;
-    delete old.shortcuts;
-    expect(withDefaults(old as Settings)).toEqual({ ...structuredClone(DEFAULT_SETTINGS), mode: "drift" });
-    const complete = structuredClone(DEFAULT_SETTINGS);
-    expect(withDefaults(complete)).toBe(complete);
-    const sync = new SettingsSync({ bridge: { invoke: (() => Promise.resolve(null)) as Bridge["invoke"] }, initial: old as Settings, onChange: () => undefined });
-    expect(sync.view.shortcuts).toEqual(D);
-    sync.receive(old as Settings);
-    expect(sync.view.enabled).toBe(true);
   });
 });

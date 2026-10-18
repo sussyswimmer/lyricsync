@@ -33,7 +33,7 @@ fn physical(monitor: &Monitor) -> Bounds {
     (position.x, position.y, size.width, size.height)
 }
 
-fn rect(frame: NSRect) -> Rect {
+pub(crate) fn rect(frame: NSRect) -> Rect {
     Rect {
         x: frame.origin.x,
         y: frame.origin.y,

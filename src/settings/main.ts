@@ -2,7 +2,7 @@ import "@fontsource/figtree/400.css";
 import "@fontsource/figtree/500.css";
 import "@fontsource/figtree/600.css";
 import "../styles/settings.css";
-import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, type ShortcutsStatus } from "../../contract/contract";
+import type { MediaStatus, NowPlaying, Settings, ShortcutsStatus } from "../../contract/contract";
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
@@ -10,7 +10,7 @@ import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
 import { SettingsPreview, type PreviewInfo } from "./preview";
-import { defaultsPatch, SettingsSync, withDefaults } from "./store";
+import { defaultsPatch, SettingsSync } from "./store";
 
 async function boot(host: HTMLElement): Promise<void> {
   const bridge = await connect();
@@ -48,17 +48,21 @@ async function boot(host: HTMLElement): Promise<void> {
   await bridge.listen("media-status", (m) => onMedia(m));
   await bridge.listen("shortcuts-status", (status) => onShortcuts(status));
   const [fetched, fetchedTrack, fetchedMedia, fetchedShortcuts] = await Promise.all([
-    bridge.invoke("get_settings").catch(() => structuredClone(DEFAULT_SETTINGS)),
+    bridge.invoke("get_settings").catch(() => null),
     bridge.invoke("get_now_playing").catch(() => null),
-    // Contract v2. A core without it rejects, and the window stays as it was before media-status.
     bridge.invoke("get_media_status").catch(() => null),
-    // Contract v3. A core without it rejects, and the shortcut rows show no status.
     bridge.invoke("get_shortcuts_status").catch(() => null),
   ]);
+  // No panel until the stored settings arrive: its whole-object edits (colors, font, shortcuts)
+  // would otherwise save defaults over them.
+  let stored = early.settings ?? fetched;
+  while (!stored) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    stored = early.settings ?? (await bridge.invoke("get_settings").catch(() => null));
+  }
 
   const track: NowPlaying | null = early.heardTrack ? early.track : fetchedTrack;
-  // An older core's settings lack the contract v3 fields; the window shows their defaults.
-  let view: Settings = withDefaults(early.settings ?? fetched);
+  let view: Settings = stored;
   let media: MediaStatus | null = early.media ?? fetchedMedia;
   let shortcuts: ShortcutsStatus | null = early.shortcuts ?? fetchedShortcuts;
   let loginError = false;
@@ -124,8 +128,8 @@ async function boot(host: HTMLElement): Promise<void> {
   const suspendShortcuts = (suspended: boolean): void => {
     suspending = suspending
       .then(() => bridge.invoke("suspend_shortcuts", { suspended }))
-      // An older core has no such command; its shortcuts just stay on while recording.
-      .catch(() => undefined);
+      // Logged, not thrown, so the chain keeps going: the shortcuts just stay on while recording.
+      .catch((error: unknown) => console.warn("Undertone: couldn't suspend shortcuts", error));
   };
 
   panel = new SettingsPanel({
