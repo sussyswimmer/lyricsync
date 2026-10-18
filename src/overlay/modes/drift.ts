@@ -68,6 +68,12 @@ const PREPARE_GAP_MS = 40;
 const JOBS_PER_FRAME = 3;
 /** The scroll's keyframes are thinned to this much of a px of position and of opacity, and of scale. */
 const SCROLL_THIN = { y: 0.25, opacity: 0.004, scale: 0.002 };
+/**
+ * A scroll this close to its end (ms) has come to rest, well under a pixel from it. The line that left
+ * focus drops its overlay this long before the end, in a frame that lets go of the scroll's animations
+ * too: ending by themselves, they would each cost Chromium frames of their own.
+ */
+export const SCROLL_RELEASE_MS = 60;
 
 interface Row {
   el: HTMLDivElement;
@@ -262,13 +268,16 @@ export class DriftMode implements ModeRenderer {
   /** the scroll (slot units) on the document timeline, and its animations in flight */
   private glide: WallGlide | null = null;
   private scrolls: { el: HTMLElement; anim: Animation }[] = [];
+  /** document-timeline time the scroll's animations end at (0: none in flight) */
+  private scrollEnd = 0;
   /** slots shown (visible, layered) right now */
   private readonly shown = new Set<number>();
   private karaoke: { line: KaraokeLine; row: Row } | null = null;
   /** the next line's overlay and plans, made ahead in idle slices */
   private prepared: { line: KaraokeLine; row: Row } | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
-  private leaving: { line: KaraokeLine; row: Row; at: number }[] = [];
+  /** lines that left focus at song time `at`, their overlays dropped at `until` */
+  private leaving: { line: KaraokeLine; row: Row; at: number; until: number }[] = [];
   private lastT = Number.NaN;
   private lastPerf = 0;
   private lastRunning = false;
@@ -459,7 +468,7 @@ export class DriftMode implements ModeRenderer {
       if (il.start > t) next = Math.min(next, il.start - t);
       if (il.end > t) next = Math.min(next, il.end - t);
     }
-    for (const l of this.leaving) next = Math.min(next, Math.max(0, l.at + LEAVE_MS - t));
+    for (const l of this.leaving) next = Math.min(next, Math.max(0, l.until - t));
     return next;
   }
 
@@ -471,6 +480,7 @@ export class DriftMode implements ModeRenderer {
     this.timeline.freeze();
     for (const s of this.scrolls) commit(s.anim, s.el);
     this.scrolls = [];
+    this.scrollEnd = 0;
     this.frozen = true;
   }
 
@@ -682,6 +692,15 @@ export class DriftMode implements ModeRenderer {
       }
     }
     this.scrolls = [];
+    this.scrollEnd = 0;
+  }
+
+  /**
+   * Drops the scroll's animations once it has come to rest (SCROLL_RELEASE_MS from their end, or a
+   * frame later): every slot already carries its final style inline.
+   */
+  private releaseScrolls(): void {
+    if (this.scrolls.length > 0 && perfNow() >= this.scrollEnd - 2 * SCROLL_RELEASE_MS) this.cancelScrolls();
   }
 
   /**
@@ -737,6 +756,7 @@ export class DriftMode implements ModeRenderer {
       });
       if (anim) this.scrolls.push({ el, anim });
     });
+    this.scrollEnd = s.startTime + s.duration;
   }
 
   /**
@@ -758,14 +778,15 @@ export class DriftMode implements ModeRenderer {
     this.flushLater();
     const later: { job: () => void; dist: number }[] = [];
     // the line leaving focus hands back to its plain text (the scroll dims the row), then drops its
-    // overlay LEAVE_MS on; sung through (the usual way out) it stops as it ends, still; leaving early
-    // (a seek back) it keeps moving with the song
+    // overlay LEAVE_MS on at the earliest, once the scroll has come to rest (tidy); sung through (the
+    // usual way out) it stops as it ends, still; leaving early (a seek back) it keeps moving with the song
     let leavingRow: Row | null = null;
     if (this.karaoke && this.karaoke.row !== focusRow) {
       const { line, row } = this.karaoke;
       const sung = cue.t >= line.sungBy;
       leavingRow = row;
-      this.leaving.push({ line, row, at: cue.t });
+      const rest = Math.max(0, this.scrollEnd - SCROLL_RELEASE_MS - perfNow());
+      this.leaving.push({ line, row, at: cue.t, until: cue.t + Math.max(LEAVE_MS, rest) });
       this.karaoke = null;
       const state = this.stateOf(row, layout, focusRow);
       const leave = (): void => {
@@ -952,14 +973,17 @@ export class DriftMode implements ModeRenderer {
   /** Drops overlays that have faded out, dots whose break is over, and layers of slots a glide left behind. */
   private tidy(cue: Cue): void {
     if (this.leaving.length > 0) {
+      const before = this.leaving.length;
       this.leaving = this.leaving.filter((l) => {
-        if (cue.running && cue.t < l.at + LEAVE_MS && cue.t >= l.at) return true;
+        if (cue.running && cue.t < l.until && cue.t >= l.at) return true;
         l.line.destroy();
         const state = l.row.state;
         l.row.state = "";
         this.styleRow(l.row, state);
         return false;
       });
+      // the same frame lets go of a scroll at rest (SCROLL_RELEASE_MS)
+      if (this.leaving.length < before) this.releaseScrolls();
     }
     const focus = this.slots[this.target];
     const focusBreak = focus?.kind === "break" ? focus.brk : null;

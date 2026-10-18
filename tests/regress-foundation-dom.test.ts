@@ -6,7 +6,7 @@ import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
 import { DEFAULT_PICK, resolveLook, textShadow, type Frame, type Look, type PickedLook } from "../src/overlay/look";
-import { DriftMode } from "../src/overlay/modes/drift";
+import { DriftMode, SCROLL_RELEASE_MS } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
@@ -633,11 +633,19 @@ describe("Drift instrumental breaks", () => {
     expect(rows[1]?.classList.contains("has-fx")).toBe(true);
     vi.advanceTimersByTime(16);
     expect(rows[1]?.classList.contains("has-fx")).toBe(false);
-    // its overlay, hidden, is taken down a little later
-    expect(mode.nextChange(8960)).toBeLessThanOrEqual(420);
-    clock += 500;
-    mode.paint(cue(1, 9500, true, true));
+    // its overlay, hidden, is taken down once the list has come to rest, in the frame that lets go of
+    // the scroll's animations
+    const rest = (scrolling(rows[1])[0]?.duration ?? 0) - SCROLL_RELEASE_MS;
+    expect(rest).toBeGreaterThan(420);
+    expect(mode.nextChange(8960)).toBeCloseTo(rest, 6);
+    clock += 400;
+    mode.paint(cue(1, 9360, true, true));
+    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
+    expect(scrolling(rows[1])).toHaveLength(1);
+    clock += rest - 400;
+    mode.paint(cue(1, 8960 + rest, true, true));
     expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(0);
+    expect(scrolling(rows[1])).toEqual([]);
   });
 });
 
@@ -1055,8 +1063,9 @@ describe("the stage and the picked look", () => {
     expect(safe).toBe(1);
     s.render(4300);
     expect(safe).toBe(2);
-    // "home" ends at 8.5 s, the next line comes at 12.5 s: a break, woken for
-    s.render(4800);
+    // "home" ends at 8.5 s, the next line comes at 12.5 s: a break, woken for (once the line change's
+    // scroll has come to rest and the line before has dropped its overlay)
+    s.render(5600);
     expect(s.nextChange(7000)).toBe(1500);
     s.render(8000);
     s.render(8600);
@@ -1211,10 +1220,15 @@ describe("Stack and Drift on the motion engine", () => {
       expect(rows[0]?.classList.contains("has-fx")).toBe(false);
       const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
       expect(xIn(wipe?.values().transform)).toBeLessThan(0);
-      // the mode wakes for its own events: the old line's overlay to drop, then the break's dots at 8.95 s
-      expect(mode.nextChange(4000)).toBe(3900 + 420 - 4000);
-      clock += 500;
-      mode.paint(cue(1, 4400));
+      // the mode wakes for its own events: the old line's overlay to drop as the list comes to rest
+      // (letting go of the scroll's animations in the same frame), then the break's dots at 8.95 s
+      const rest = (scrolling(rows[1])[0]?.duration ?? 0) - SCROLL_RELEASE_MS;
+      expect(rest).toBeGreaterThan(420);
+      expect(mode.nextChange(4000)).toBeCloseTo(3900 + rest - 4000, 6);
+      clock += rest - 16;
+      mode.paint(cue(1, 3900 + rest));
+      expect(rows[0]?.find("kw-fx")).toEqual([]);
+      expect(scrolling(rows[1])).toEqual([]);
       expect(mode.nextChange(4400)).toBe(8950 - 4400);
     } finally {
       vi.useRealTimers();
