@@ -627,8 +627,8 @@ export class LensMode implements ModeRenderer {
     const f = this.focus;
     this.focus = null;
     if (f?.kind === "line") {
-      f.row.karaoke?.destroy();
       f.row.el.remove();
+      f.row.karaoke?.destroy();
     } else if (f?.kind === "break") {
       f.brk.dots?.stop();
       f.brk.el.remove();
@@ -657,9 +657,10 @@ export class LensMode implements ModeRenderer {
         row.karaoke = null;
       }
       for (const slot of row.slots) put(slot, "will-change", "auto");
+      // taken off the page first: the overlay's teardown then writes to nothing on screen
       this.retire(row.el, animated, () => {
-        row.karaoke?.destroy();
         row.el.remove();
+        row.karaoke?.destroy();
       });
       return;
     }
@@ -980,9 +981,9 @@ export class LensMode implements ModeRenderer {
   }
 
   private dropRow(row: Row): void {
+    row.el.remove();
     row.karaoke?.destroy();
     row.karaoke = null;
-    row.el.remove();
   }
 
   /**
