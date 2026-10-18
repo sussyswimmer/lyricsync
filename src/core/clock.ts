@@ -70,6 +70,18 @@ export class PlaybackClock {
   }
 
   /**
+   * Where `position` is converging at `now`: the latest sample extrapolated, offsets applied, without
+   * the slew still blending in. Equal to `position` once a correction has run out (and after a snap).
+   * Time-anchored animations follow this one and make their own, smoother corrections.
+   */
+  target(now: number = Date.now()): number {
+    const s = this.sample;
+    if (s === null) return 0;
+    const { globalOffsetMs, trackOffsetsMs } = this.offsets;
+    return this.raw(now) + globalOffsetMs + (trackOffsetsMs[s.trackKey] ?? 0);
+  }
+
+  /**
    * How fast `position` runs at `now`, in song ms per wall ms: 0 while paused or stopped, 1 while
    * playing, and a little off 1 while a slew is blending a correction in (constant through the slew,
    * so time-anchored animations can follow it exactly).

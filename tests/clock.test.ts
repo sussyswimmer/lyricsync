@@ -191,3 +191,27 @@ describe("PlaybackClock track changes and offsets", () => {
     expect(clock.position(T0 + 500)).toBe(10_500);
   });
 });
+
+describe("PlaybackClock target", () => {
+  it("is where the position is converging: the latest sample extrapolated, without the slew still blending in", () => {
+    const clock = playing();
+    expect(clock.target(T0 + 500)).toBe(10_500);
+    // a sample 120 ms ahead of the shown position: the position slews there, the target is there at once
+    clock.update(sample({ positionMs: 11_120, sampledAt: T0 + 1000 }), T0 + 1000);
+    expect(clock.target(T0 + 1000)).toBe(11_120);
+    expect(clock.position(T0 + 1000)).toBe(11_000);
+    expect(clock.target(T0 + 1100)).toBe(11_220);
+    // once the correction has run out the two agree
+    expect(clock.position(T0 + 1000 + SLEW_MS)).toBeCloseTo(clock.target(T0 + 1000 + SLEW_MS), 9);
+  });
+
+  it("holds still while paused, takes the offsets, and is 0 with no track", () => {
+    const clock = new PlaybackClock();
+    expect(clock.target(T0)).toBe(0);
+    clock.update(sample({ isPlaying: false }), T0);
+    expect(clock.target(T0 + 5000)).toBe(10_000);
+    clock.setOffsets({ globalOffsetMs: 100, trackOffsetsMs: { [KEY]: -30 } });
+    expect(clock.target(T0 + 5000)).toBe(10_070);
+    expect(clock.target(T0 + 5000)).toBe(clock.position(T0 + 5000));
+  });
+});
