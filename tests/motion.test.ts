@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseLrc, type Line, type Word } from "../src/core/lrc";
 import { lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
 import { bloomLayers, bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
-import { clamp01, sineOut, sineOutInverse, spline } from "../src/overlay/motion/curve";
+import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overlay/motion/curve";
 import { InterludeDots } from "../src/overlay/motion/dots";
 import { findInterludes, interludeAt, INTERLUDE_AFTER_MS, planDots } from "../src/overlay/motion/interlude";
 import {
@@ -174,6 +174,32 @@ describe("curves", () => {
     expect(f(2)).toBe(1);
     expect(spline([])(0.5)).toBe(0);
     expect(spline([[0.5, 3]])(0.1)).toBe(3);
+    expect(spline([[0.5, 3]])(0.9)).toBe(3);
+  });
+
+  it("run straight between two keys, and through every one of many", () => {
+    const line = spline([
+      [0.2, 1],
+      [0.6, 3],
+    ]);
+    expect(line(0.4)).toBeCloseTo(2, 12);
+    expect(line(0.3)).toBeCloseTo(1.5, 12);
+    expect(line(0)).toBe(1);
+    expect(line(1)).toBe(3);
+    const keys: Key[] = [
+      [0, 0],
+      [0.25, 1],
+      [0.5, 0],
+      [0.75, -1],
+      [1, 0],
+    ];
+    const wave = spline(keys);
+    for (const [at, value] of keys) expect(wave(at)).toBeCloseTo(value, 9);
+    // smooth through the middle keys: no kink where two pieces meet
+    const slope = (x: number): number => (wave(x + 1e-6) - wave(x - 1e-6)) / 2e-6;
+    expect(slope(0.5 - 1e-4)).toBeCloseTo(slope(0.5 + 1e-4), 2);
+    expect(wave(0.125)).toBeGreaterThan(0);
+    expect(wave(0.625)).toBeLessThan(0);
   });
 
   it("swing past a key before a sharp turn (the lift's overshoot: BL's -1.8 % key dips to about -4 %)", () => {
@@ -245,7 +271,18 @@ describe("keyframes", () => {
     expect(num(1.5)).toBe("1.5");
     expect(num(2)).toBe("2");
     expect(num(-0.0001)).toBe("0");
+    expect(num(3.14159, 0)).toBe("3");
+    expect(num(-0.4, 0)).toBe("0");
     expect(liftScale(0, -1.23456, 1.025)).toBe("translate(0px, -1.23px) scale(1.025)");
+  });
+
+  it("cope with samples at one instant, and with empty or instant tracks", () => {
+    // samples all at one time: nothing to interpolate along, so every point that differs stays
+    expect(thin([5, 5, 5], [[0, 9, 0]], [0.01])).toEqual([0, 1, 2]);
+    expect(thin([5, 5, 5], [[0, 0, 0]], [0.01])).toEqual([0, 2]);
+    expect(keyframesAt([], [], () => ({ opacity: 1 }))).toEqual([]);
+    expect(keyframesAt([0], [0], () => ({ opacity: 1 }))).toEqual([{ opacity: 1, offset: 0 }]);
+    expect(framesOf([{ t: 0, v: [1] }], 0, ([v]) => ({ opacity: v ?? 0 }))).toEqual([{ opacity: 1, offset: 0 }]);
   });
 });
 
@@ -365,6 +402,35 @@ describe("slow motion on the beat", () => {
     expect(on("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36")).toBe(true);
     expect(on("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")).toBe(false);
     expect(on("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0 Mobile/15E148 Safari/604.1")).toBe(false);
+    // no navigator (a worker, a test), or one without a user agent: linear keyframes
+    vi.stubGlobal("navigator", undefined);
+    try {
+      expect(compositorSteps()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    vi.stubGlobal("navigator", {});
+    try {
+      expect(compositorSteps()).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leave a stretch between two kept samples at one instant alone, and one with no beat in it linear", () => {
+    // two kept samples at the same time: no stretch between them to step
+    const same = keyPoints([0, 0, 100], [0, 1, 2], [[0, 1, 1.001]], { t0: 0, quantum: [1] });
+    expect(same[0]).toEqual({ t: 0, v: [0] });
+    expect(same[1]).toEqual({ t: 0, v: [1], easing: HOLD });
+    expect(same.some((p) => p.t === 50 && p.easing === "steps(1, end)")).toBe(true);
+    expect(same[same.length - 1]).toEqual({ t: 100, v: [1.001] });
+    // a slow stretch from 10 to 40 ms holds no beat (they fall on 0 and 50): it simply ends at its sample
+    const short = keyPoints([0, 10, 40], [0, 1, 2], [[0, 5, 5.001]], { t0: 0, quantum: [0.01] });
+    expect(short).toEqual([
+      { t: 0, v: [0] },
+      { t: 10, v: [5], easing: HOLD },
+      { t: 40, v: [5.001] },
+    ]);
   });
 });
 
@@ -497,6 +563,16 @@ describe("the bloom", () => {
     });
     expect(Math.max(...alphas(bloomShadow("#f5a524", 1.3, true)))).toBe(1);
     expect(dotBloom("#f5a524", 0.6, 20)).toMatch(/^0 0 6\.2px rgba\(245, 165, 36, /u);
+  });
+
+  it("takes a strength that isn't a number as none at all (the faint floor), and caps it at 1.3", () => {
+    expect(bloomLayers(Number.NaN)).toEqual(bloomLayers(0));
+    expect(bloomLayers(Number.POSITIVE_INFINITY)).toEqual(bloomLayers(0));
+    expect(bloomLayers(5)).toEqual(bloomLayers(1.3));
+    expect(dotBloom("#f5a524", Number.NaN, 20)).toBe(dotBloom("#f5a524", 0, 20));
+    expect(dotBloom("#f5a524", 9, 20)).toBe(dotBloom("#f5a524", 1.3, 20));
+    // a dot is never drawn smaller than a pixel across
+    expect(dotBloom("#f5a524", 0.6, 0)).toBe(dotBloom("#f5a524", 0.6, 1));
   });
 });
 

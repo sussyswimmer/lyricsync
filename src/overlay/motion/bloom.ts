@@ -38,13 +38,12 @@ export function bloomShadow(highlight: string, b: number, strong = false): strin
 export function dotBloom(highlight: string, b: number, dotPx: number): string {
   const g = clamp(Number.isFinite(b) ? b : 0, 0, 1.3);
   const d = Math.max(1, dotPx);
-  return [
+  const layers: [blur: number, alpha: number][] = [
     [d * (0.25 + 0.1 * g), Math.min(1, 0.6 + 0.4 * g)],
     [d * (0.6 + 0.3 * g), Math.min(1, 0.3 + 0.45 * g)],
     [d * (1.1 + 0.8 * g), Math.min(1, 0.16 + 0.36 * g)],
-  ]
-    .map(([blur, alpha]) => `0 0 ${(blur ?? 0).toFixed(1)}px ${rgba(highlight, alpha ?? 0)}`)
-    .join(", ");
+  ];
+  return layers.map(([blur, alpha]) => `0 0 ${blur.toFixed(1)}px ${rgba(highlight, alpha)}`).join(", ");
 }
 
 /**
