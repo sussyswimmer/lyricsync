@@ -69,9 +69,12 @@ const DESCENT = 0.22;
  * past that its own curve flattens instead.
  */
 const MAX_PUSH = 1;
-/** Room above and below the baseline curve in each neighbor's SVG band, in font sizes. */
+/** Room above and below the baseline curve in each neighbor's SVG band, in font sizes... */
 const BAND_ABOVE = 1.3;
 const BAND_BELOW = 0.6;
+/** ...and beyond the text's ends, in font sizes plus px (its shadow, a glyph's overhang, a measuring error). */
+const BAND_SIDE_PAD = 1;
+const BAND_SIDE_PX = 12;
 /** `.arc-focus`'s line-height (styles/arc.css): each word box, and each letter's box in it, is this many font sizes tall. */
 const LINE_HEIGHT = 1.2;
 /** Where the baseline sits in a word box, in font sizes from its top, when nothing can be measured (no layout: tests). */
@@ -1169,16 +1172,27 @@ export class ArcMode implements ModeRenderer {
    */
   private band(id: string, line: Line, p: Placed, look: Look): Band {
     const { size, mid, bend, natural } = p;
-    const top = snap(Math.min(mid, mid + bend) - size * BAND_ABOVE, look.dpr);
-    const height = Math.ceil(Math.max(mid, mid + bend) + size * BAND_BELOW - top);
-    const width = Math.max(1, Math.ceil(look.width));
-    const svg = s("svg", { class: "arc-line", width, height, viewBox: `0 ${top} ${width} ${height}` });
-    svg.style.top = `${top}px`;
-    svg.style.transformOrigin = `${(look.width / 2).toFixed(1)}px ${(mid - top).toFixed(1)}px`;
     const halfWidth = this.halfWidth(look);
     // a flattened neighbor's path is a little shorter than the shared one
     const length = bend === this.geo.bend ? this.pathLength : 2 * arcLength(halfWidth, halfWidth, bend);
     const extend = natural > length ? (natural - length) / 2 + size : 0;
+    // Just big enough for its text and shadow: the filter rasterizes the band's whole box, so a short
+    // line on a stage-wide band cost the raster of the stage's width (and the bend's whole height). The
+    // text still draws past it if an estimate is short (overflow: visible); a line running off its path
+    // keeps the stage's width.
+    const r = extend > 0 ? 1 : reach(natural, halfWidth, bend);
+    const ends = mid + bend * r * r;
+    const pad = BAND_SIDE_PAD * size + BAND_SIDE_PX;
+    const xm = this.curveOf(look, mid, bend).xm;
+    const left = extend > 0 ? 0 : Math.max(0, Math.floor(xm - r * halfWidth - pad));
+    const right = extend > 0 ? look.width : Math.min(look.width, Math.ceil(xm + r * halfWidth + pad));
+    const top = snap(Math.min(mid, ends, extend > 0 ? mid + bend : mid) - size * BAND_ABOVE, look.dpr);
+    const height = Math.ceil(Math.max(mid, ends, extend > 0 ? mid + bend : mid) + size * BAND_BELOW - top);
+    const width = Math.max(1, Math.ceil(right - left));
+    const svg = s("svg", { class: "arc-line", width, height, viewBox: `${left} ${top} ${width} ${height}` });
+    svg.style.left = `${left}px`;
+    svg.style.top = `${top}px`;
+    svg.style.transformOrigin = `${(look.width / 2 - left).toFixed(1)}px ${(mid - top).toFixed(1)}px`;
     const path = s("path", { id, d: this.curve(look, mid, bend, extend) });
     const defs = s("defs");
     defs.append(path);
