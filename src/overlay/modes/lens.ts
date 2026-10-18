@@ -341,12 +341,14 @@ export class LensMode implements ModeRenderer {
     if (!look || !box) return false;
     this.lastCue = cue;
     const perf = perfNow();
+    // where the song-time motion is on screen before this cue moves it (a seek jumps it)
+    const shown = this.current === null ? cue.t : this.timeline.position(perf);
     this.sync(cue, perf);
     const jumped = this.jumped(cue, perf);
     this.dirty = false;
     const view = this.viewAt(cue);
     const key = keyOf(view);
-    if (key !== this.current) this.change(view, key, cue, look);
+    if (key !== this.current) this.change(view, key, cue, look, shown);
     else if (this.frozen || jumped) this.refresh(cue, look, this.frozen);
     if (this.frozen) this.dropLeaving();
     this.frozen = false;
@@ -561,7 +563,7 @@ export class LensMode implements ModeRenderer {
    * in below. Any other change fades the old lines out and the new ones in. A fresh build, a change
    * after freeze() (the stage crossfades it) and reduced motion just draw.
    */
-  private change(view: View, key: string, cue: Cue, look: Look): void {
+  private change(view: View, key: string, cue: Cue, look: Look, shown = cue.t): void {
     const previous = this.current;
     const was = this.nextShown;
     this.current = key;
@@ -570,7 +572,7 @@ export class LensMode implements ModeRenderer {
     this.settleGlides();
     const old = this.focus;
     this.focus = null;
-    if (old) this.handOut(old, cue, animated);
+    if (old) this.handOut(old, shown, animated);
     const box = this.box;
     if (!box) return;
     if (view.kind === "none") {
@@ -642,21 +644,22 @@ export class LensMode implements ModeRenderer {
   }
 
   /**
-   * The old focus leaves: a line holds its lens where it is and stops its karaoke (sung through, as it
-   * shows sung; left early, as plain text), then fades out where it is and is taken down.
+   * The old focus leaves, as it was on screen at song time `t`: a line holds its lens there and stops
+   * its karaoke (sung through, as it shows sung; left early, as plain text), then fades out where it
+   * is and is taken down. Its slots keep their layers until then: dropping them now would re-raster
+   * the row in the line change's own frame.
    */
-  private handOut(old: Focus, cue: Cue, animated: boolean): void {
+  private handOut(old: Focus, t: number, animated: boolean): void {
     if (old.kind === "line") {
       const row = old.row;
-      if (row.plan) this.pose(row, row.plan.at(cue.t));
+      if (row.plan) this.pose(row, row.plan.at(t));
       const k = row.karaoke;
-      if (k && cue.t >= k.sungBy) {
+      if (k && t >= k.sungBy) {
         k.finish();
       } else if (k) {
         k.destroy();
         row.karaoke = null;
       }
-      for (const slot of row.slots) put(slot, "will-change", "auto");
       // taken off the page first: the overlay's teardown then writes to nothing on screen
       this.retire(row.el, animated, () => {
         row.el.remove();
@@ -666,7 +669,7 @@ export class LensMode implements ModeRenderer {
     }
     const brk = old.brk;
     // gone by the break's end anyway (E): taken down at once then
-    this.retire(brk.el, animated && cue.t < brk.until, () => {
+    this.retire(brk.el, animated && t < brk.until, () => {
       brk.dots?.stop();
       brk.el.remove();
     });
