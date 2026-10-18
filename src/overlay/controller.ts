@@ -2,16 +2,17 @@ import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from ".
 import { PlaybackClock } from "../core/clock";
 import { PaletteCache } from "../core/palette";
 import type { Bridge, Unlisten } from "../bridge/types";
-import type { LyricStage } from "./stage";
+import { cleanOverride, DEFAULT_PICK, withOverride, type LookOverride, type PickedLook } from "./look";
+import type { LookChange, LyricStage } from "./stage";
 import { sameLyrics, viewFor } from "./view";
 
 /** Longest the loop sleeps between word boundaries, so a slewing clock or a missed event can't strand it. */
 const MAX_SLEEP_MS = 250;
 /**
  * The same for a mode whose words run on the compositor (stage.wakesForWords false): its motion is
- * anchored to the song, a slew keeps it painting, and every player sample kicks a frame anyway, so
- * it only needs waking for line changes. Each frame it skips saves a main-thread restyle and commit of
- * every animation in flight.
+ * anchored to the song and follows every player sample without a frame (stage.retime), so it only
+ * needs waking for its own events (stage.nextChange). Each frame it skips saves a main-thread restyle
+ * and commit of every animation in flight.
  */
 const IDLE_SLEEP_MS = 1000;
 /**
@@ -37,13 +38,19 @@ export interface ControllerOptions {
   /** Take settings from the bridge (default) or only from `setSettings` (a preview showing unsaved values). */
   followSettings?: boolean;
   palettes?: PaletteCache;
+  /**
+   * Called with the look in effect whenever it changes: the picked look with any forced parts, as the
+   * stage draws it; null while there is no track.
+   */
+  onLook?: (look: PickedLook | null) => void;
 }
 
 /**
- * Drives a stage from a bridge: playback clock, lyrics, album colors, visibility, and the frame loop.
- * The loop runs only while a track is playing and the stage is visible; between word boundaries it
- * sleeps instead of drawing identical frames, and frames that move (a glide, the Lens fisheye) come at
- * most every BUSY_FRAME_MS, however fast the display refreshes.
+ * Drives a stage from a bridge: playback clock, lyrics, album colors, the look, visibility, and the
+ * frame loop. The loop runs only while a track is playing and the stage is visible; between the
+ * stage's changes it sleeps instead of drawing identical frames, and frames that move (a glide, the
+ * Lens fisheye) come at most every BUSY_FRAME_MS, however fast the display refreshes. A player sample
+ * that changes nothing on screen reaches a compositor-drawn stage without a frame (stage.retime).
  */
 export class OverlayController {
   readonly clock = new PlaybackClock();
@@ -52,12 +59,21 @@ export class OverlayController {
   private readonly gate: boolean;
   private readonly followSettings: boolean;
   private readonly palettes: PaletteCache;
+  private readonly onLook: ((look: PickedLook | null) => void) | undefined;
   private settings: Settings = structuredClone(DEFAULT_SETTINGS);
   private nowPlaying: NowPlaying | null = null;
   private lyrics: Lyrics | null = null;
+  /** the song's picked look (a LookKeeper's, later); DEFAULT_PICK while there is none */
+  private picked: PickedLook | null = null;
+  /** parts of the look forced for QA (`?look=`, `--look`, the console) */
+  private override: LookOverride | null = null;
+  /** the look last reported through onLook, as a key ("" for null) */
+  private reported = "";
   private unlisten: Unlisten[] = [];
   private raf = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** performance.now() the pending timer fires at (Infinity without one) */
+  private wakeAt = Infinity;
   /** After a busy frame: the earliest the next frame may begin (performance.now() clock), else null. */
   private paceUntil: number | null = null;
   /** A frame has been passed over since the last kick(): this display refreshes faster than BUSY_FRAME_MS. */
@@ -73,6 +89,7 @@ export class OverlayController {
     this.gate = options.gate ?? false;
     this.followSettings = options.followSettings ?? true;
     this.palettes = options.palettes ?? new PaletteCache();
+    this.onLook = options.onLook;
   }
 
   /**
@@ -116,6 +133,11 @@ export class OverlayController {
     return this.nowPlaying;
   }
 
+  /** The look in effect: the song's pick (DEFAULT_PICK without one) with any forced parts. */
+  get look(): PickedLook {
+    return withOverride(this.picked ?? DEFAULT_PICK, this.override);
+  }
+
   setSettings(settings: Settings): void {
     this.settings = settings;
     this.clock.setOffsets(settings);
@@ -123,11 +145,36 @@ export class OverlayController {
     this.update();
   }
 
+  /**
+   * The song's picked look (null: none, DEFAULT_PICK draws). "crossfade" brings a new shape in behind
+   * a still copy of the old one (a refinement at a safe point); "now" swaps at once.
+   */
+  setPickedLook(look: PickedLook | null, how: LookChange = "now"): void {
+    this.picked = look;
+    this.applyLook(how);
+  }
+
+  /**
+   * Forces parts of the look for every song on this page (QA: `?look=`, `--look`, the console):
+   * the style, a bundled face (at its own weight), Arc's curve (-100..100). Null forces nothing.
+   */
+  forceLook(override: LookOverride | null): void {
+    this.override = cleanOverride(override);
+    this.applyLook("now");
+  }
+
+  /**
+   * The stage reached a safe point (StageOptions.onSafePoint): a look refinement waiting for one can
+   * crossfade in now. Nothing waits for one yet; the song look keeper lands here.
+   */
+  safePoint(): void {
+    // no pending refinement without a look keeper
+  }
+
   /** Paints one frame now (after anything changed while the loop is asleep). */
   kick(): void {
     if (this.stopped) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
+    this.clearTimer();
     this.paceUntil = null;
     // the window may be on another display by now
     this.fastDisplay = false;
@@ -139,23 +186,39 @@ export class OverlayController {
     for (const off of this.unlisten) off();
     this.unlisten = [];
     if (this.raf) cancelAnimationFrame(this.raf);
-    if (this.timer) clearTimeout(this.timer);
+    this.clearTimer();
     if (this.artworkTimer) clearTimeout(this.artworkTimer);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.onVisibility);
+  }
+
+  private applyLook(how: LookChange): void {
+    this.stage.setPickedLook(this.look, how);
+    this.report();
+    this.kick();
+  }
+
+  /** Tells onLook about the look in effect when it changed (null while there is no track). */
+  private report(): void {
+    const look = this.nowPlaying ? this.look : null;
+    const key = look ? JSON.stringify(look) : "";
+    if (key === this.reported) return;
+    this.reported = key;
+    this.onLook?.(look);
   }
 
   private onNowPlaying(np: NowPlaying | null): void {
     if (this.stopped) return;
     // A sample older than the clock's (one that crossed a newer one in flight) changes nothing, so
     // what this controller believes (playing, paused) always matches what its clock does.
-    const now = Date.now();
-    const result = this.clock.update(np, now);
+    const wall = Date.now();
+    const result = this.clock.update(np, wall);
     if (result === "ignored") return;
     const before = this.nowPlaying;
     this.nowPlaying = np;
-    // A resync that changes nothing on screen (same song, still playing, the clock already where the
-    // sample says) needs no frame when the stage draws its words on the compositor: those are anchored
-    // to the song and keep running. A stage that paints words itself, or any real change, gets one.
+    // A resync that changes nothing on screen (same song, still playing, the same artwork, within the
+    // clock's slew range) needs no frame when the stage draws its words on the compositor: those
+    // follow the sample on their own (stage.retime). A stage that paints words itself, or any real
+    // change, gets a frame.
     const quiet =
       result === "slew" &&
       this.stage.wakesForWords === false &&
@@ -163,8 +226,7 @@ export class OverlayController {
       before !== null &&
       np.trackKey === before.trackKey &&
       np.isPlaying === before.isPlaying &&
-      np.artwork === before.artwork &&
-      this.clock.rate(now) === 1;
+      np.artwork === before.artwork;
     if (!np) {
       this.lyrics = null;
       this.stage.show({ kind: "none" }, "");
@@ -178,7 +240,26 @@ export class OverlayController {
       // keep restarting the grace period of a track that has no artwork.
       if (np.trackKey !== before?.trackKey || np.artwork !== before.artwork) this.updatePalette(np);
     }
+    if (np?.trackKey !== before?.trackKey) this.report();
     this.update(!quiet);
+    if (quiet) this.retime(wall);
+  }
+
+  /**
+   * A quiet sample: the stage's song-time motion follows it without a frame (a slew, a jump), unless
+   * the stage says a paint is due after all. The wake may come sooner now (a slew ends, the song
+   * moved on): the sleeping loop is woken for it.
+   */
+  private retime(wall: number): void {
+    if (!this.animating) return;
+    const t = this.clock.position(wall);
+    if (this.stage.retime(t, this.clock.rate(wall), this.clock.target(wall))) {
+      this.kick();
+      return;
+    }
+    if (this.raf || !this.timer) return;
+    const ms = Math.max(0, Math.min(IDLE_SLEEP_MS, this.stage.nextChange(t)) - 4);
+    if (now() + ms < this.wakeAt - 1) this.wake(ms);
   }
 
   /** Events always apply in order. The initial `get_lyrics` reply only fills in if no event beat it. */
@@ -282,7 +363,7 @@ export class OverlayController {
     this.paceUntil = null;
     const wall = Date.now();
     const t = this.clock.position(wall);
-    const busy = this.stage.render(t, this.clock.rate(wall));
+    const busy = this.stage.render(t, this.clock.rate(wall), this.clock.target(wall));
     if (!this.animating) return;
     if (busy) {
       this.paceUntil = frame + BUSY_FRAME_MS;
@@ -295,11 +376,20 @@ export class OverlayController {
     this.wake(Math.max(0, wait - 4));
   };
 
-  /** Asks for a frame once `ms` have passed. kick() and destroy() cancel the wait. */
+  /** Asks for a frame once `ms` have passed (replacing a pending wait). kick() and destroy() cancel it. */
   private wake(ms: number): void {
+    this.clearTimer();
+    this.wakeAt = now() + ms;
     this.timer = setTimeout(() => {
       this.timer = null;
+      this.wakeAt = Infinity;
       this.raf = requestAnimationFrame(this.tick);
     }, ms);
+  }
+
+  private clearTimer(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.wakeAt = Infinity;
   }
 }

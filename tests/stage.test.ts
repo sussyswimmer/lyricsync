@@ -59,7 +59,17 @@ describe("cueMap", () => {
   });
 
   it("collects every visible change: line starts, word bounds and linger ends, sorted and unique", () => {
-    expect(cueMap(SONG).boundaries).toEqual([1000, 1500, 2400, 3000, 2400 + LINGER_MS, 8000, 9000, 10000, 12000, 10000 + LINGER_MS]);
+    // SONG's lingers end after its gap stamps (3 s, 12 s), when they no longer change anything
+    expect(cueMap(SONG).boundaries).toEqual([1000, 1500, 2400, 3000, 8000, 9000, 10000, 12000]);
+    // a linger that ends before the next line does
+    expect(cueMap(UNMARKED).boundaries).toEqual([1000, 1400, 2000, 2000 + LINGER_MS, 10000, 11000]);
+    expect(cueMap(UNMARKED).lineBoundaries).toEqual([1000, 2000 + LINGER_MS, 10000]);
+  });
+
+  it("knows the long rests between lines (safe points for a new look)", () => {
+    expect(cueMap(SONG).breaks).toEqual([{ start: 2400, end: 8000 }]);
+    expect(cueMap(UNMARKED).breakStarts).toEqual([2000]);
+    expect(cueMap({ lines: parseLrc(paperLanterns, 24_000), unsynced: false }).breaks.map((b) => b.start)).toEqual([8500]);
   });
 
   it("handles an empty timeline", () => {
@@ -160,7 +170,7 @@ describe("untilNextChange", () => {
     expect(untilNextChange(map, 999)).toBe(1);
     expect(untilNextChange(map, 1200)).toBe(300);
     expect(untilNextChange(map, 2400)).toBe(600);
-    expect(untilNextChange(map, 4000)).toBe(2400 + LINGER_MS - 4000);
+    expect(untilNextChange(map, 4000)).toBe(8000 - 4000);
   });
 
   it("looks past a boundary it is sitting on", () => {
@@ -174,8 +184,8 @@ describe("untilNextChange", () => {
   });
 
   it("is Infinity once nothing else will change", () => {
-    expect(untilNextChange(map, 10_000 + LINGER_MS - 1)).toBe(1);
-    expect(untilNextChange(map, 10_000 + LINGER_MS)).toBe(Number.POSITIVE_INFINITY);
+    expect(untilNextChange(map, 12_000 - 1)).toBe(1);
+    expect(untilNextChange(map, 12_000)).toBe(Number.POSITIVE_INFINITY);
     expect(untilNextChange(map, 1e9)).toBe(Number.POSITIVE_INFINITY);
     expect(untilNextChange(cueMap({ lines: [], unsynced: false }), 0)).toBe(Number.POSITIVE_INFINITY);
   });

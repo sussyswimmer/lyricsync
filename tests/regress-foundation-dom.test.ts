@@ -5,12 +5,14 @@ import { parseLrc, type Line } from "../src/core/lrc";
 import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
-import { resolveLook, type Frame, type Look } from "../src/overlay/look";
+import { DEFAULT_PICK, resolveLook, textShadow, type Frame, type Look, type PickedLook } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
-import { FakeAnimation, FakeAnimationHost } from "./fake-motion";
+import { bloomShadow } from "../src/overlay/motion/bloom";
+import { bloomOf } from "../src/overlay/motion/params";
+import { FakeAnimation, FakeAnimationHost, valuesAt } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 /*
@@ -425,10 +427,14 @@ function reduceMotion(): void {
 }
 
 /** A stage on a fake host, mid-song, with the clock and opacities under the test's control. */
+/** The house look in another style: the stage draws the picked look's style, not Settings.mode. */
+const pick = (style: PickedLook["style"], over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, style, ...over });
+
 function stage(): { stage: LyricStage; root: FakeElement; scenes: () => FakeElement[] } {
   const host = new FakeElement("main");
   const s = new LyricStage(asHtml(host));
-  s.setSettings(settings({ mode: "stack" }));
+  s.setPickedLook(pick("stack"));
+  s.setSettings(settings());
   const root = host.children[0] as FakeElement;
   return { stage: s, root, scenes: () => root.children.filter((c) => c.classList.contains("ut-scene")) };
 }
@@ -518,9 +524,14 @@ describe("frames on a boundary", () => {
     const map = cueMap(lyricsView.timeline);
     expect(untilNextChange(map, 4800)).toBe(200);
     expect(untilNextChange(map, 5016)).toBe(584);
-    // Paper Lanterns' line starts (1, 4.2, 9 (the gap stamp), 12.5, 16.4 s) and linger ends ("river" 3.7 s, "home" 8.5 s, ...)
-    expect(untilNextChange(map, 4800, false)).toBe(3700 + LINGER_MS - 4800);
-    expect(untilNextChange(map, 9000, false)).toBe(8500 + LINGER_MS - 9000);
+    // Paper Lanterns' line starts (1, 4.2, 9 (the gap stamp), 12.5, 16.4 s). Its lingers ("river" 3.7 s
+    // + 2.5, "home" 8.5 s + 2.5) would end after the next stamp, when they no longer change anything.
+    expect(untilNextChange(map, 4800, false)).toBe(9000 - 4800);
+    expect(untilNextChange(map, 9000, false)).toBe(12_500 - 9000);
+    // a linger that ends before the next line does hand over to it
+    const rest = cueMap({ lines: parseLrc("[00:01.00]one two\n[00:09.00]three", 12_000), unsynced: false });
+    const end = rest.lyrics[0]?.words[1]?.end ?? 0;
+    expect(untilNextChange(rest, end, false)).toBe(LINGER_MS);
   });
 
   it("lets Stack sleep through words (they run on the compositor), still following up a frame on a line start", () => {
@@ -528,9 +539,9 @@ describe("frames on a boundary", () => {
     s.show(lyricsView, "a");
     expect(s.wakesForWords).toBe(false);
     expect(s.nextChange(4200)).toBe(0);
-    expect(s.nextChange(4200)).toBe(3700 + LINGER_MS - 4200);
-    expect(s.nextChange(4800)).toBe(3700 + LINGER_MS - 4800);
-    // ...and the dots of the break after "home" (8.5 s) come in at 8.95 s, before any line boundary
+    // the next thing is the dots of the break after "home" (8.5 s), coming in at 8.95 s
+    expect(s.nextChange(4200)).toBe(8950 - 4200);
+    expect(s.nextChange(4800)).toBe(8950 - 4800);
     expect(s.nextChange(8600)).toBe(350);
   });
 
@@ -708,12 +719,13 @@ describe("the stage's reference height", () => {
     let reference = 720;
     const host = new FakeElement("main");
     const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
-    s.setSettings(settings({ mode: "stack" }));
+    s.setPickedLook(pick("stack"));
+    s.setSettings(settings());
     s.show(lyricsView, "a");
     const drift = (): FakeElement | undefined => host.find("drift")[0];
     expect(drift()?.style["fontSize"]).toBe("58px");
     reference = 360;
-    s.setSettings(settings({ mode: "stack", glow: 41 }));
+    s.setSettings(settings({ glow: 41 }));
     expect(drift()?.style["fontSize"]).toBe("116px");
   });
 });
@@ -741,9 +753,9 @@ describe("the stage while paused", () => {
     const { stage: s, scenes } = stage();
     s.show(lyricsView, "a");
     const before = scenes()[0]?.find("drift")[0];
-    s.setSettings(settings({ mode: "stack", glow: 90, opacity: 50, colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" } }));
+    s.setSettings(settings({ glow: 90, opacity: 50, colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" } }));
     expect(scenes()[0]?.find("drift")[0]).toBe(before);
-    s.setSettings(settings({ mode: "stack", size: 80 }));
+    s.setSettings(settings({ size: 80 }));
     expect(scenes()[0]?.find("drift")[0]).not.toBe(before);
   });
 });
@@ -897,15 +909,287 @@ describe("the stage with nothing to sing", () => {
   it("asks for none once the last line has lingered", () => {
     const { stage: s } = stage();
     s.show(lyricsView, "a");
-    // Paper Lanterns' last word ends at 20 s; its line stays lit for LINGER_MS, then nothing changes
-    // (Stack draws the last word's end on the compositor: no frame for it)
+    // Paper Lanterns' last word ends at 20 s; its line stays lit, and nothing changes after it (Stack
+    // draws the last word's end on the compositor: no frame for it; the last line has nothing to linger for)
     s.render(19_500);
-    expect(s.nextChange(19_500)).toBe(500 + LINGER_MS);
-    expect(s.nextChange(20_000 + LINGER_MS - 100)).toBe(100);
+    expect(s.nextChange(19_500)).toBe(Infinity);
     for (const t of [20_000 + LINGER_MS + 1, 30_000]) {
       expect(s.render(t)).toBe(false);
       expect(s.nextChange(t)).toBe(Infinity);
     }
+  });
+});
+
+/** A transform's translate y, px. */
+const yIn = (transform: string | undefined): number => Number(/translate(?:3d)?\([-\d.]+px, (-?[\d.]+)px/u.exec(transform ?? "")?.[1]);
+/** A wipe track's translateX, px. */
+const xIn = (transform: string | undefined): number => Number(/translateX\((-?[\d.]+)px\)/u.exec(transform ?? "")?.[1]);
+
+describe("the stage and the picked look", () => {
+  it("draws the picked look's style, whatever Settings.mode says", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    s.render(5000);
+    const rowTransform = (): string => scenes()[0]?.find("drift-row")[0]?.style.getPropertyValue("transform") ?? "";
+    // Stack: flat transforms
+    expect(rowTransform()).toMatch(/^translate\(/u);
+    s.setSettings(settings({ mode: "lens" }));
+    s.render(5016);
+    expect(rowTransform()).toMatch(/^translate\(/u);
+    s.setPickedLook(pick("drift"));
+    s.render(5032);
+    expect(rowTransform()).toMatch(/^translate3d\(/u);
+    expect(s.pickedLook.style).toBe("drift");
+    // no pick: the house look
+    const fresh = new LyricStage(asHtml(new FakeElement("main")));
+    expect(fresh.pickedLook).toBe(DEFAULT_PICK);
+    fresh.setPickedLook(pick("lens"));
+    fresh.setPickedLook(null);
+    expect(fresh.pickedLook).toBe(DEFAULT_PICK);
+  });
+
+  it("restyles for colors, glow and bloom, re-plans the focus line for the motion, and rebuilds for a new shape", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    s.render(4800);
+    const box = scenes()[0]?.find("drift")[0];
+    const word = (): FakeElement | undefined => scenes()[0]?.find("drift-row")[1]?.find("kw")[1];
+    const before = word()?.getAnimations() ?? [];
+    expect(before.length).toBeGreaterThan(0);
+    s.setSettings(settings({ glow: 90 }));
+    expect(scenes()[0]?.find("drift")[0]).toBe(box);
+    expect(box?.style.getPropertyValue("--ut-bloom")).toBe(bloomShadow(DEFAULT_SETTINGS.colors.highlight, bloomOf(DEFAULT_PICK.glow, 90)));
+    expect(before.every((a) => !a.cancelled)).toBe(true);
+    // a livelier pick: the same rows, the focus line planned again where the song is
+    s.setPickedLook(pick("stack", { energy: 0.9 }));
+    expect(scenes()[0]?.find("drift")[0]).toBe(box);
+    expect(before.every((a) => a.cancelled)).toBe(true);
+    const after = word()?.getAnimations() ?? [];
+    expect(after.length).toBeGreaterThan(0);
+    expect(after[0]?.currentTime).toBeCloseTo(4800 - 4200, 6);
+    // a face is a shape
+    s.setPickedLook(pick("stack", { energy: 0.9, font: { family: "Syne", weight: 800 } }));
+    expect(scenes()[0]?.find("drift")[0]).not.toBe(box);
+  });
+
+  it("crossfades a new shape in behind a still copy of what was on screen", () => {
+    const { stage: s, root, scenes } = stage();
+    s.show(lyricsView, "a");
+    clock += 1000;
+    s.render(4800);
+    clock += 100;
+    // "the" (4.8-5.0 s) is mid-pop: what it draws now
+    const sung = scenes()[0]?.find("drift-row")[1]?.find("kw")[1];
+    const shown = sung?.getAnimations()[0]?.values().transform;
+    expect(shown).toBeDefined();
+    expect(shown).not.toBe("none");
+    s.setPickedLook(pick("drift"), "crossfade");
+    const ghost = root.children.find((c) => c.classList.contains("ut-ghost"));
+    expect(ghost).toBeDefined();
+    expect(fadeOut(ghost)?.options.duration).toBe(170);
+    // the copy shows the word as it was drawn, not as its line ends
+    const copy = ghost?.find("drift-row")[1]?.find("kw")[1];
+    expect(copy?.style.getPropertyValue("transform")).toBe(shown);
+    // and the scene behind it is the new look, fading in
+    s.render(4916);
+    expect(scenes()[0]?.find("drift-row")[0]?.style.getPropertyValue("transform")).toMatch(/^translate3d\(/u);
+  });
+
+  it("calls safe points at the first paint before the first line, at each line change and as a long break starts", () => {
+    let safe = 0;
+    const host = new FakeElement("main");
+    const s = new LyricStage(asHtml(host), { onSafePoint: () => safe++ });
+    s.setPickedLook(pick("stack"));
+    s.setSettings(settings());
+    s.show(lyricsView, "a");
+    s.render(500);
+    expect(safe).toBe(1);
+    s.render(1200);
+    expect(safe).toBe(1);
+    s.render(4300);
+    expect(safe).toBe(2);
+    // "home" ends at 8.5 s, the next line comes at 12.5 s: a break, woken for
+    s.render(4800);
+    expect(s.nextChange(7000)).toBe(1500);
+    s.render(8000);
+    s.render(8600);
+    expect(safe).toBe(3);
+    s.render(9100);
+    expect(safe).toBe(4);
+    expect([500, 5000, 9000, 12_300, 17_000].map((t) => s.atSafePoint(t))).toEqual([true, false, true, false, false]);
+  });
+
+  it("follows a quiet sample with retime, and says when a paint is due after all", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    expect(s.retime(3800)).toBe(true);
+    s.render(3800);
+    expect(s.retime(3850, 1, 3870)).toBe(false);
+    // line 1's lead (3.9 s) comes before the stage's line changes (4.2 s): the list wants a paint
+    expect(s.retime(3950, 1, 3950)).toBe(true);
+    // a new line on the stage: a paint
+    expect(s.retime(4300, 1, 4300)).toBe(true);
+  });
+});
+
+describe("Stack and Drift on the motion engine", () => {
+  it("move to a line 300 ms before it starts", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(0, 3800));
+    clock += 99;
+    mode.paint(cue(0, 3899));
+    expect(rows[0]?.classList.contains("is-focus")).toBe(true);
+    expect(scrolling(rows[1])).toEqual([]);
+    clock += 1;
+    // line 1 starts at 4.2 s: the list is on its way there at 3.9 s, the line waiting, its overlay mounted
+    mode.paint(cue(0, 3900));
+    expect(rows[1]?.classList.contains("is-focus")).toBe(true);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(scrolling(rows[1])).toHaveLength(1);
+    const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
+    expect(xIn(wipe?.values().transform)).toBeLessThan(0);
+    // the mode wakes for its own events: the old line's overlay to drop once faded, then the break's dots at 8.95 s
+    expect(mode.nextChange(4000)).toBe(3900 + 420 - 4000);
+    clock += 500;
+    mode.paint(cue(1, 4400));
+    expect(mode.nextChange(4400)).toBe(8950 - 4400);
+  });
+
+  it("glide from what is on screen when the song seeks one to three lines, either way", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(1, 3500));
+    clock += 16;
+    expect(mode.crossfades(cue(3, 7500))).toBe(false);
+    mode.paint(cue(3, 7500));
+    const down = scrolling(rows[2])[0];
+    expect(down?.startTime).toBe(clock);
+    clock += 150;
+    const shown = yIn(down?.values().transform);
+    // a seek back two lines, mid-glide: the list turns around from where it is, moving
+    expect(mode.crossfades(cue(1, 3700))).toBe(false);
+    mode.paint(cue(1, 3700));
+    expect(down?.cancelled).toBe(true);
+    const up = scrolling(rows[2])[0];
+    expect(up?.startTime).toBe(clock);
+    expect(Math.abs(yIn(valuesAt(up?.keyframes ?? [], 0).transform) - shown)).toBeLessThan(0.3);
+  });
+
+  it("re-light the focus line after a seek back past what its animations still cover", () => {
+    // Paper Lanterns' last line: "Light is a promise the water keeps" 16.4-20 s; its motion is over by
+    // about 21.3 s, and a paint at 21.7 s drops it. Seeking back to 17 s must not leave it fully lit.
+    const { mode, rows } = drift(0);
+    mode.paint(cue(3, 16_500));
+    // the wipes drawing anything (an engine drops finished animations; the fake keeps them)
+    const tracks = (): FakeAnimation[] =>
+      wordsOf(rows[3])
+        .flatMap((w) => w.find("kw-track"))
+        .flatMap((e) => e.getAnimations())
+        .filter((a) => a.playState !== "finished");
+    const first = tracks();
+    clock += 16;
+    mode.paint(cue(3, 18_000));
+    // a seek the animations still cover needs nothing new
+    expect(tracks()).toEqual(first);
+    clock += 16;
+    mode.paint(cue(3, 21_700));
+    clock += 16;
+    mode.paint(cue(3, 17_000));
+    const after = tracks();
+    expect(after).toHaveLength(first.length);
+    expect(after.some((a) => first.includes(a))).toBe(false);
+    // "promise" (17.3 s) waits unlit at 17 s, "is" (16.9-17.1 s) is being lit
+    const drawing = (el: FakeElement | undefined): FakeAnimation | undefined => el?.getAnimations().find((a) => a.playState !== "finished");
+    const promise = drawing(partOf(rows[3], 3, "kw-track"));
+    expect(xIn(promise?.values().transform)).toBeLessThan(-50);
+    const is = drawing(partOf(rows[3], 1, "kw-track"));
+    expect(xIn(is?.values().transform)).toBeLessThan(0);
+    expect(xIn(is?.values().transform)).toBeGreaterThan(xIn(promise?.values().transform));
+  });
+
+  it("leave a ghost on a far seek that shows what was on screen, not the line's end", () => {
+    const { stage: s, root, scenes } = stage();
+    s.show({ kind: "lyrics", timeline: { lines: EIGHT, unsynced: false } }, "a");
+    clock += 1000;
+    s.render(1100);
+    clock += 300;
+    const word = scenes()[0]?.find("drift-row")[0]?.find("kw")[0];
+    const shown = word?.getAnimations()[0]?.values().transform;
+    expect(shown).not.toBe("translate(0px, 0px) scale(1)");
+    s.render(13_500);
+    const ghost = root.children.find((c) => c.classList.contains("ut-ghost"));
+    expect(ghost?.find("drift-row")[0]?.find("kw")[0]?.style.getPropertyValue("transform")).toBe(shown);
+  });
+
+  it("keep the scroll but draw the reduced karaoke in the lite tier", () => {
+    const { mode, rows } = drift(0, lookFor({}, { power: "lite" }));
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    expect(scrolling(rows[1])).toHaveLength(1);
+    const w = wordsOf(rows[1])[0];
+    expect(w?.getAnimations()).toEqual([]);
+    expect(w?.find("kw-win")[0]?.getAnimations()).toHaveLength(1);
+    expect(w?.find("kw-win")[0]?.style.getPropertyValue("mask-image")).toBe("");
+    expect(w?.find("kw-dark")[0]?.find("kl")).toEqual([]);
+    // a steady 0.6 bloom while it is sung, faded in and out
+    expect(w?.find("kw-glow")[0]?.getAnimations()[0]?.keyframes.map((k) => k.opacity)).toEqual([0, 0.6, 0.6, 0, 0]);
+  });
+
+  it("only fade under reduced motion, and cut every line change for the stage to crossfade", () => {
+    const { mode, rows } = drift(0, lookFor({}, { motion: false }));
+    mode.paint(cue(0, 2000));
+    expect(mode.crossfades(cue(1, 4300))).toBe(true);
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    expect(scrolling(rows[1])).toEqual([]);
+    expect(wordsOf(rows[1]).every((w) => w.getAnimations().length === 0)).toBe(true);
+    // no lead without motion: the list follows the stage's line; next, the old overlay goes, then the dots
+    expect(mode.nextChange(4300)).toBe(420);
+    clock += 500;
+    mode.paint(cue(1, 4800));
+    expect(mode.nextChange(4800)).toBe(8950 - 4800);
+  });
+
+  it("fold the break's slot away once the list has moved past it", () => {
+    const { mode, host } = drift(0);
+    const slot = host.find("drift-break")[0];
+    mode.paint(cue(1, 8000));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("hidden");
+    clock += 16;
+    mode.paint(cue(2, 10_000, true, true));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("visible");
+    expect(slot?.style.getPropertyValue("will-change")).toBe("transform, opacity");
+    // E = 12.2 s: the list moves on to "Fold a wish...", the slot folding as it goes
+    clock += 16;
+    mode.paint(cue(2, 12_250, true, true));
+    expect(host.find("drift-row")[2]?.classList.contains("is-focus")).toBe(true);
+    clock += 3000;
+    mode.paint(cue(2, 15_000));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("hidden");
+    expect(slot?.style.getPropertyValue("will-change")).toBe("auto");
+  });
+
+  it("set the look's letter-spacing and case, and measure with them", () => {
+    const l = resolveLook(settings(), null, { width: 1280, height: 720, dpr: 1, motion: true, unsynced: false }, pick("stack", { letterSpacing: 0.04, textCase: "upper" }));
+    const { mode, host, rows } = drift(0, l);
+    expect(host.find("drift")[0]?.style["letterSpacing"]).toBe("0.04em");
+    expect(rows[0]?.textContent).toBe("PAPER LANTERNS OVER THE RIVER");
+    mode.paint(cue(0, 2000));
+    expect(wordsOf(rows[0])[0]?.find("kw-win")[0]?.find("kl").map((x) => x.textContent).join("")).toBe("PAPER");
+  });
+
+  it("carry the karaoke's CSS variables, the dark shadow drawn for each row's own size", () => {
+    const long = parseLrc(`[00:01.00]${"placeholder words that keep on going ".repeat(9)}\n[00:09.00]short line`, 12_000);
+    const look = lookFor({ size: 140 });
+    const { host, rows } = drift(0, look, long);
+    const box = host.find("drift")[0];
+    expect(box?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, look.size));
+    expect(box?.style.getPropertyValue("--ut-bloom")).toBe(bloomShadow(look.colors.highlight, look.bloom));
+    expect(box?.style.getPropertyValue("--ut-hl")).toBe(look.colors.highlight);
+    const size = Number.parseFloat(String(rows[0]?.style["fontSize"]));
+    expect(size).toBeLessThan(look.size);
+    expect(rows[0]?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, size));
+    expect(rows[1]?.style.getPropertyValue("--ut-dark")).toBe("");
   });
 });
 
@@ -996,14 +1280,15 @@ describe("the overlay's frame loop on a real stage", () => {
 
   async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; controller: OverlayController }> {
     const bridge = new StubBridge();
-    bridge.answers.get_settings = settings({ mode: "stack" });
+    bridge.answers.get_settings = settings();
     bridge.answers.get_now_playing = track("a");
     bridge.answers.get_lyrics = result("a", "loading");
-    // as overlay/main.ts wires them
+    // as overlay/main.ts wires them (with `?look=stack`)
     const host = new FakeElement("main");
     let controller: OverlayController | null = null;
-    const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick() });
+    const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick(), onSafePoint: () => controller?.safePoint() });
     controller = new OverlayController(bridge, s, { gate: true, palettes: new PaletteCache(async () => null) });
+    controller.forceLook({ style: "stack" });
     const paints: number[] = [];
     const render = s.render.bind(s);
     s.render = (t: number): boolean => {
