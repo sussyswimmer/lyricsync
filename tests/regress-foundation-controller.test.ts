@@ -70,8 +70,10 @@ class FakeStage {
   }
   /** What render returns: true while the stage has motion of its own in flight (a glide, Lens following a word). */
   busy = false;
-  /** What nextChange returns: song time to the next word boundary, Infinity when nothing will change. */
+  /** What nextChange returns: song time to the next word boundary, Infinity when nothing will change... */
   next = Infinity;
+  /** ...or, when set, the song time of the next change, which nextChange counts down to as a real stage's does. */
+  nextAt: number | null = null;
   /** When each paint happened (fake wall-clock ms). */
   frames: number[] = [];
   /** The clock's target handed with each paint. */
@@ -79,10 +81,12 @@ class FakeStage {
   render(t: number, _rate?: number, target = t): boolean {
     this.frames.push(Date.now());
     this.targets.push(target);
+    // painted at (or past) its next change: there is none after it
+    if (this.nextAt !== null && t >= this.nextAt) this.nextAt = null;
     return this.busy;
   }
-  nextChange(): number {
-    return this.next;
+  nextChange(t: number): number {
+    return this.nextAt === null ? this.next : this.nextAt - t;
   }
   /** false: words drawn on the compositor (Stack, Drift), so quiet resyncs go through retime. */
   wakesForWords: boolean | undefined = undefined;
@@ -805,6 +809,7 @@ describe("quiet resyncs", () => {
     stage.next = Infinity;
     paintsIn(stage, 1500);
     const painted = stage.frames.length;
+    stage.retimes = [];
     resync(60);
     expect(stage.retimes).toHaveLength(1);
     const [t, rate, target] = stage.retimes[0] ?? [0, 0, 0];
@@ -828,15 +833,47 @@ describe("quiet resyncs", () => {
   });
 
   it("wake the loop sooner when the stage's next change comes closer (a slew ending)", async () => {
-    const { stage, controller, resync } = await playing();
+    const { stage, controller, resync, started } = await playing();
     stage.next = Infinity;
     paintsIn(stage, 1100);
     // asleep for its 1 s idle wait; the resync starts a slew that ends in 300 ms
-    stage.next = 300;
+    stage.nextAt = Date.now() - started + 300;
     resync(80);
     const times = paintsIn(stage, 600);
     expect(times.length).toBeGreaterThanOrEqual(1);
     expect((times[0] ?? 0) - Date.now() + 600).toBeLessThanOrEqual(300 + 16);
+    controller.destroy();
+  });
+
+  it("check in once a second without a frame while nothing is due, and frame for what is", async () => {
+    const { stage, controller, started } = await playing();
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    stage.retimes = [];
+    // asleep: each check-in follows the clock (retime) and sleeps on
+    expect(paintsIn(stage, 5000)).toEqual([]);
+    expect(stage.retimes.length).toBeGreaterThanOrEqual(4);
+    expect(stage.retimes.length).toBeLessThanOrEqual(6);
+    // a change 2.5 s on: the check-ins before it sleep on, and it is painted within a frame of it
+    const due = Date.now() + 2500;
+    stage.nextAt = due - started;
+    const times = paintsIn(stage, 3000);
+    expect(times).toHaveLength(1);
+    expect(Math.abs((times[0] ?? 0) - due)).toBeLessThanOrEqual(16);
+    // a check-in that finds a paint due (the stage's retime says so) frames at once
+    stage.nextAt = null;
+    stage.retimeAnswer = true;
+    const answered = paintsIn(stage, 1100);
+    expect(answered).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("frame at every safety wake when the stage paints words itself", async () => {
+    const { stage, controller } = await playing(false);
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(3);
+    expect(stage.retimes).toEqual([]);
     controller.destroy();
   });
 

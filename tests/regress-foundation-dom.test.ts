@@ -1480,7 +1480,7 @@ describe("the overlay's frame loop on a real stage", () => {
     source: "lrclib",
   });
 
-  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; controller: OverlayController }> {
+  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; checks: number[]; controller: OverlayController }> {
     const bridge = new StubBridge();
     bridge.answers.get_settings = settings();
     bridge.answers.get_now_playing = track("a");
@@ -1497,18 +1497,26 @@ describe("the overlay's frame loop on a real stage", () => {
       paints.push(Date.now());
       return render(t);
     };
+    // the loop's check-ins without a frame (and quiet resyncs) go through retime
+    const checks: number[] = [];
+    const retime = s.retime.bind(s);
+    s.retime = (t: number, rate?: number, target?: number): boolean => {
+      checks.push(Date.now());
+      return retime(t, rate, target);
+    };
     await controller.start();
-    return { bridge, host, paints, controller };
+    return { bridge, host, paints, checks, controller };
   }
 
   /**
-   * Over the next `ms`, the loop only takes its safety wake (`sleep` ms: 250, or 1000 for a mode whose
-   * words run on the compositor): the timer plus the next vsync, never two paints closer, yet awake.
+   * Over the next `ms`, the loop only takes its safety wake (every `sleep` ms): the timer plus the next
+   * vsync, never two paints closer, yet awake. `wakes` are the paints, or for a mode whose words run on
+   * the compositor (sleep 1000), the check-ins that follow the clock without a frame.
    */
-  function expectAsleep(paints: number[], ms: number, what: string, sleep = 250): void {
-    const from = paints.length;
+  function expectAsleep(wakes: number[], ms: number, what: string, sleep = 250): void {
+    const from = wakes.length;
     run(ms);
-    const times = paints.slice(from);
+    const times = wakes.slice(from);
     const gaps = times.slice(1).map((t, i) => t - (times[i] ?? t));
     expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / (sleep + 12)));
     expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / (sleep - 4)));
@@ -1516,7 +1524,7 @@ describe("the overlay's frame loop on a real stage", () => {
   }
 
   it("sleeps through loading, after the last line and in empty states, and stops on pause", async () => {
-    const { bridge, host, paints, controller } = await overlay();
+    const { bridge, host, paints, checks, controller } = await overlay();
     // past the start-up kicks and the 1.5 s wait for artwork
     run(1600);
     expectAsleep(paints, 2000, "loading");
@@ -1525,8 +1533,11 @@ describe("the overlay's frame loop on a real stage", () => {
     bridge.emit("lyrics", result("a", "found", paperLanterns));
     expect(host.find("drift-row").length).toBeGreaterThan(0);
     run(20_000 + LINGER_MS + 600 - (Date.now() - T0));
-    // Stack's words run on the compositor: past its last line it only takes a safety wake a second
-    expectAsleep(paints, 5000, "after the last line", 1000);
+    // Stack's words run on the compositor: past its last line it only checks in once a second, and
+    // without a frame
+    const painted = paints.length;
+    expectAsleep(checks, 5000, "after the last line", 1000);
+    expect(paints.length).toBe(painted);
 
     for (const status of ["instrumental", "not-found"] as const) {
       bridge.emit("now-playing", track(status));

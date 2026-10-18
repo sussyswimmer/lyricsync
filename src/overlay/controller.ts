@@ -16,6 +16,11 @@ const MAX_SLEEP_MS = 250;
  */
 const IDLE_SLEEP_MS = 1000;
 /**
+ * Such a loop, woken by its timer, asks for a frame only with an event due within this long (it wakes
+ * a little ahead of each); otherwise it follows the clock without one and sleeps on (checkIn).
+ */
+const DUE_MS = 12;
+/**
  * Busy frames (a glide, Lens following the sung word) start at most this often. requestAnimationFrame
  * runs at the display's refresh rate, 120 or 144 times a second on many Windows laptops, and a Lens
  * frame restyles every word of its line. Just over one 120 Hz frame: a display up to 100 Hz still gets
@@ -259,7 +264,7 @@ export class OverlayController {
     }
     if (this.raf || !this.timer) return;
     const ms = Math.max(0, Math.min(IDLE_SLEEP_MS, this.stage.nextChange(t)) - 4);
-    if (now() + ms < this.wakeAt - 1) this.wake(ms);
+    if (now() + ms < this.wakeAt - 1) this.wake(ms, true);
   }
 
   /** Events always apply in order. The initial `get_lyrics` reply only fills in if no event beat it. */
@@ -373,19 +378,41 @@ export class OverlayController {
       else this.raf = requestAnimationFrame(this.tick);
       return;
     }
-    const wait = Math.min(this.stage.wakesForWords === false ? IDLE_SLEEP_MS : MAX_SLEEP_MS, this.stage.nextChange(t));
-    this.wake(Math.max(0, wait - 4));
+    const compositor = this.stage.wakesForWords === false;
+    const wait = Math.min(compositor ? IDLE_SLEEP_MS : MAX_SLEEP_MS, this.stage.nextChange(t));
+    this.wake(Math.max(0, wait - 4), compositor);
   };
 
-  /** Asks for a frame once `ms` have passed (replacing a pending wait). kick() and destroy() cancel it. */
-  private wake(ms: number): void {
+  /**
+   * Asks for a frame once `ms` have passed (replacing a pending wait). kick() and destroy() cancel it.
+   * A `check`ed wait (a compositor-run stage asleep) first checks in, and may sleep on instead.
+   */
+  private wake(ms: number, check = false): void {
     this.clearTimer();
     this.wakeAt = now() + ms;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.wakeAt = Infinity;
+      if (check && this.checkIn()) return;
       this.raf = requestAnimationFrame(this.tick);
     }, ms);
+  }
+
+  /**
+   * A compositor-run stage's loop, woken from its sleep (the IDLE_SLEEP_MS check-in, or the wait for an
+   * event that a slew has since moved): the stage follows the clock without a frame (stage.retime), and
+   * the loop sleeps on unless something is due within DUE_MS. A frame here would restyle every
+   * animation in flight and change nothing. True when it went back to sleep.
+   */
+  private checkIn(): boolean {
+    if (this.stopped || !this.animating || this.stage.wakesForWords !== false) return false;
+    const wall = Date.now();
+    const t = this.clock.position(wall);
+    if (this.stage.retime(t, this.clock.rate(wall), this.clock.target(wall))) return false;
+    const next = this.stage.nextChange(t);
+    if (next <= DUE_MS) return false;
+    this.wake(Math.max(0, Math.min(IDLE_SLEEP_MS, next) - 4), true);
+    return true;
   }
 
   private clearTimer(): void {
