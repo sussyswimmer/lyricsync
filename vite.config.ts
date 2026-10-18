@@ -3,11 +3,7 @@ import { fileURLToPath } from "node:url";
 
 /** CLAUDE.md C8: at least 90% coverage on the parser, word timing and the playback clock, enforced by `pnpm coverage` (CI). */
 const CORE_FLOOR = { lines: 90, branches: 90, functions: 90, statements: 90 };
-/**
- * The look picker and the motion engine (contract v4): 85% of lines, statements and functions, 75% of
- * branches. The engine's other modules (curve, keyframes, timeline, and schedule and params) take the
- * same floor with the engine's v4 versions.
- */
+/** The look picker and the motion engine (contract v4): 85% of lines, statements and functions, 75% of branches. */
 const MOTION_FLOOR = { lines: 85, branches: 75, functions: 85, statements: 85 };
 
 export default defineConfig({
@@ -36,8 +32,13 @@ export default defineConfig({
         "src/core/clock.ts": CORE_FLOOR,
         "src/core/songlook.ts": MOTION_FLOOR,
         "src/overlay/motion/spring.ts": MOTION_FLOOR,
+        "src/overlay/motion/curve.ts": MOTION_FLOOR,
+        "src/overlay/motion/keyframes.ts": MOTION_FLOOR,
         "src/overlay/motion/karaoke.ts": MOTION_FLOOR,
         "src/overlay/motion/interlude.ts": MOTION_FLOOR,
+        "src/overlay/motion/schedule.ts": MOTION_FLOOR,
+        "src/overlay/motion/params.ts": MOTION_FLOOR,
+        "src/overlay/motion/timeline.ts": MOTION_FLOOR,
       },
     },
   },
