@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cjkLang, FONTS, fontFor, stackFor, type CjkLang } from "../src/overlay/fonts";
+import { cjkLang, FONTS, fontFor, stackFor, type CjkLang } from "../src/core/faces";
+import * as overlayFonts from "../src/overlay/fonts";
 
 /** A stack's families, quotes removed. */
 const families = (stack: string): string[] => stack.split(",").map((f) => f.trim().replace(/^"|"$/g, ""));
@@ -83,5 +84,50 @@ describe("stackFor", () => {
   it("is each face's default stack without a CJK language", () => {
     for (const font of FONTS) expect(font.stack).toBe(stackFor(font, null));
     expect(families(fontFor("Fraunces").stack).slice(0, 6)).toEqual(["Fraunces", "Georgia", "Hiragino Mincho ProN", "Yu Mincho", "Songti SC", "SimSun"]);
+  });
+});
+
+describe("the catalog lives in core/faces, and overlay/fonts re-exports it", () => {
+  it("is the very same catalog through either module", () => {
+    expect(overlayFonts.FONTS).toBe(FONTS);
+    expect(overlayFonts.fontFor).toBe(fontFor);
+    expect(overlayFonts.stackFor).toBe(stackFor);
+    expect(overlayFonts.cjkLang).toBe(cjkLang);
+  });
+
+  it("falls back to the default face for an unknown family", () => {
+    expect(fontFor("Comic Neue")).toBe(FONTS[0]);
+    expect(fontFor("Bricolage Grotesque").label).toBe("Bricolage");
+  });
+});
+
+// The look picker never sets a song in a face without its letters, so these flags must say exactly
+// what each face's bundled CSS (the @fontsource/<face>/<weight>.css overlay/fonts.ts imports) ships.
+describe("coverage flags", () => {
+  const SUBSETS = ["vietnamese", "cyrillic", "greek"] as const;
+
+  it("match the subsets each face's Fontsource CSS ships at its bundled weight", async () => {
+    const fsModule = "node:fs";
+    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+    const fontsTs = fs.readFileSync(new URL("../src/overlay/fonts.ts", import.meta.url), "utf8");
+    for (const face of FONTS) {
+      if (face.family === "System") continue;
+      const dir = face.family.toLowerCase().replace(/ /g, "-");
+      expect(fontsTs, face.family).toContain(`import "@fontsource/${dir}/${face.weight}.css";`);
+      const css = fs.readFileSync(new URL(`../node_modules/@fontsource/${dir}/${face.weight}.css`, import.meta.url), "utf8");
+      // every @font-face rule is labeled /* <dir>-<subset>-<weight>-normal */
+      const label = new RegExp(`/\\* ${dir}-([a-z-]+)-${face.weight}-normal \\*/`, "g");
+      const shipped = new Set([...css.matchAll(label)].map((m) => m[1]));
+      expect(shipped.has("latin"), face.family).toBe(true);
+      for (const subset of SUBSETS) expect(face[subset], `${face.family} ${subset}`).toBe(shipped.has(subset));
+    }
+  });
+
+  it("gives the system stack every script, and names the faces the picker may use for each", () => {
+    for (const subset of SUBSETS) expect(fontFor("System")[subset], subset).toBe(true);
+    const having = (subset: (typeof SUBSETS)[number]): string[] => FONTS.filter((f) => f[subset]).map((f) => f.family);
+    expect(having("cyrillic")).toEqual(["Unbounded", "Caveat", "JetBrains Mono", "System"]);
+    expect(having("greek")).toEqual(["Syne", "JetBrains Mono", "System"]);
+    expect(having("vietnamese")).toEqual(["Fraunces", "Unbounded", "Bricolage Grotesque", "JetBrains Mono", "System"]);
   });
 });
