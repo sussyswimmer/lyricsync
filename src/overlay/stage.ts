@@ -175,6 +175,7 @@ export interface StageOptions {
    * Called at a moment a look change can crossfade in without breaking a line in the middle (SPEC
    * §4.6): a lyrics scene's first paint before its first line, every focus-line change, and the start
    * of a break of SAFE_BREAK_MS or more. `atSafePoint` answers the same question at any time.
+   * `addSafePointListener` hears the same moments (an OverlayController listens that way).
    */
   onSafePoint?: () => void;
 }
@@ -240,6 +241,8 @@ export class LyricStage {
   private fontKey = "";
   private fontTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
+  /** addSafePointListener's listeners, on top of StageOptions.onSafePoint */
+  private readonly safeListeners = new Set<() => void>();
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
@@ -293,7 +296,9 @@ export class LyricStage {
   /**
    * Draws with `look` (null: DEFAULT_PICK) from now on. A change of shape (the style, face, size...)
    * rebuilds the scene: at once, or with "crossfade" behind a still copy of what was on screen that
-   * fades out (freeze, copy, rebuild). Colors, glow and the motion's character only restyle.
+   * fades out (freeze, copy, rebuild). Colors, glow and the motion's character only restyle. Only
+   * lyrics crossfade: a state rebuilds where its animation was (buildState), since a copy of it would
+   * start its animation over (a chip that had faded out would show again as the copy fades).
    */
   setPickedLook(look: PickedLook | null, how: LookChange = "now"): void {
     const next = look ?? DEFAULT_PICK;
@@ -301,7 +306,7 @@ export class LyricStage {
     this.picked = next;
     this.loadFace();
     const scene = this.scene;
-    if (how === "crossfade" && scene && scene.view.kind !== "none") {
+    if (how === "crossfade" && scene && scene.view.kind === "lyrics") {
       const fresh = this.look(scene);
       if (lookKeys(fresh).shape !== this.shapeKey) {
         this.ghost(scene);
@@ -317,10 +322,20 @@ export class LyricStage {
    * Shows a view for a track. A new key or a different view fades the old content out first, and the
    * new one in once nothing old is left on screen. Something that never became visible (a loading
    * state still in its quiet first 600 ms) is simply dropped and holds nothing up.
+   *
+   * With a `look` (null: DEFAULT_PICK), the new scene is drawn with it, as setPickedLook would from
+   * then on, while the old one fades out as it was drawn: a song comes in with its own look.
    */
-  show(view: StageView, key: string): void {
+  show(view: StageView, key: string, look?: PickedLook | null): void {
     const old = this.scene;
-    if (old && old.key === key && old.view === view) return;
+    if (old && old.key === key && old.view === view) {
+      if (look !== undefined) this.setPickedLook(look);
+      return;
+    }
+    if (look !== undefined) {
+      this.picked = look ?? DEFAULT_PICK;
+      this.loadFace();
+    }
     const t = now();
     const scene: Scene = {
       el: h("div", "ut-scene"),
@@ -385,8 +400,20 @@ export class LyricStage {
     this.lastCue = cue;
     this.lastT = t;
     const busy = scene.mode.paint(cue);
-    if (this.options.onSafePoint && this.scene === scene && this.safeAt(scene.cues, cue, last, lastT)) this.options.onSafePoint();
+    if (this.watchesSafePoints && this.scene === scene && this.safeAt(scene.cues, cue, last, lastT)) this.safePoint();
     return busy;
+  }
+
+  /**
+   * Calls `fn` at every safe point too (see StageOptions.onSafePoint), until the returned function is
+   * called. An OverlayController listens this way, so a stage built without the option (the settings
+   * preview's) still brings a song's look refinement in at the same moments as the overlay.
+   */
+  addSafePointListener(fn: () => void): () => void {
+    this.safeListeners.add(fn);
+    return () => {
+      this.safeListeners.delete(fn);
+    };
   }
 
   /**
@@ -405,12 +432,14 @@ export class LyricStage {
   }
 
   /**
-   * Whether a look change could crossfade in at `t` without cutting into a line: no lyrics on screen,
-   * before the first line, or inside a break of SAFE_BREAK_MS or more (before the next line's lead).
+   * Whether a look change could crossfade in at `t` without cutting into a line: no lyrics on screen
+   * (a state, or lyrics still waiting for the scene before them to fade out), before the first line,
+   * or inside a break of SAFE_BREAK_MS or more (before the next line's lead).
    */
   atSafePoint(t: number): boolean {
-    const cues = this.scene?.cues;
-    if (!cues) return true;
+    const scene = this.scene;
+    const cues = scene?.cues;
+    if (!scene || !cues || now() < scene.revealAt) return true;
     const first = cues.lyrics[0];
     if (!first || t < first.start - LEAD_MS) return true;
     return cues.breaks.some((b) => t >= b.start && t < b.end - LEAD_MS);
@@ -441,12 +470,13 @@ export class LyricStage {
       return 0;
     }
     const own = mode?.nextChange?.(t) ?? Infinity;
-    const safe = this.options.onSafePoint ? untilNext(cues.breakStarts, t) : Infinity;
+    const safe = this.watchesSafePoints ? untilNext(cues.breakStarts, t) : Infinity;
     return Math.min(untilNextChange(cues, t, words), Math.max(0, own), safe);
   }
 
   destroy(): void {
     this.destroyed = true;
+    this.safeListeners.clear();
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
     this.dprQuery?.removeEventListener("change", this.onDpr);
@@ -457,6 +487,16 @@ export class LyricStage {
     this.scene?.mode?.destroy();
     this.root.remove();
     this.host.classList.remove("ut-stage", "ut-hidden");
+  }
+
+  /** Someone wants to hear of safe points (onSafePoint, addSafePointListener): breaks starting are woken for. */
+  private get watchesSafePoints(): boolean {
+    return this.options.onSafePoint !== undefined || this.safeListeners.size > 0;
+  }
+
+  private safePoint(): void {
+    this.options.onSafePoint?.();
+    for (const fn of [...this.safeListeners]) fn();
   }
 
   private cueOf(cues: CueMap, t: number, rate: number, target: number): Cue {
