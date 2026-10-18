@@ -271,6 +271,41 @@ describe("parseLrc: word tags", () => {
   });
 });
 
+describe("parseLrc: syllables inside a word", () => {
+  it("times a word's syllables from the tags inside it", () => {
+    const counting = parseLrc(paperLanterns, 24_000)[1]?.words[0];
+    expect(counting).toMatchObject({ text: "Counting ", start: 4200, end: 4800 });
+    expect(counting?.parts).toEqual([
+      { text: "Count", start: 4200, end: 4500 },
+      { text: "ing ", start: 4500, end: 4800 },
+    ]);
+    // a word with no tag inside has no parts
+    expect(parseLrc(paperLanterns, 24_000)[1]?.words[1]?.parts).toBeUndefined();
+  });
+
+  it("covers the word: parts join to its text, end to end in time", () => {
+    const [line] = parseLrc("[00:10.00]<00:10.00>Mo<00:10.20>tor<00:10.45>bikes <00:11.00>hum<00:12.00>", 20_000);
+    const word = line?.words[0];
+    expect(word?.parts?.map((p) => p.text).join("")).toBe(word?.text);
+    expect(word?.parts?.map((p) => [p.start, p.end])).toEqual([
+      [10_000, 10_200],
+      [10_200, 10_450],
+      [10_450, 11_000],
+    ]);
+    expect(line?.words[1]?.parts).toBeUndefined();
+  });
+
+  it("keeps parts inside the word, and only for a word that starts on its own tag", () => {
+    // the inner tag lands after the word's own end: clamped to it
+    const [late] = parseLrc("[00:10.00]<00:10.00>Hel<00:12.50>lo <00:11.00>you<00:12.00>", 20_000);
+    expect(late?.words).toHaveLength(2);
+    // "two" shares the tag of "one": its time is an estimate, so its inner tag times nothing
+    const [shared] = parseLrc("[00:10.00]<00:10.00>one tw<00:10.60>o<00:12.00>", 20_000);
+    expect(shared?.words[1]?.text).toBe("two");
+    expect(shared?.words[1]?.parts).toBeUndefined();
+  });
+});
+
 describe("lrcShape", () => {
   it("counts timed lyric rows, their distinct stamps and untimed text rows", () => {
     expect(lrcShape(neonMonsoon)).toEqual({ timedLyricRows: 8, distinctLyricStamps: 8, untimedTextRows: 0 });

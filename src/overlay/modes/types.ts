@@ -37,6 +37,12 @@ export interface Cue {
  *   measuring, and keeps any motion in flight. Modes without it are rebuilt.
  */
 export interface ModeRenderer {
+  /**
+   * False when the mode draws word timing without the page's help (its motion is handed to the
+   * compositor ahead of time): the stage then wakes only for line changes and `nextChange`, not at
+   * every word's start and end. Default true.
+   */
+  readonly wordWakes?: boolean;
   build(host: HTMLElement, lines: readonly Line[], look: Look): void;
   paint(cue: Cue): boolean;
   restyle?(look: Look): void;

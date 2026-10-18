@@ -4,7 +4,7 @@ import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { bloomShadow, dotBloom } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
 import { findInterludes, interludeAt, planDots, type Interlude } from "../motion/interlude";
-import { songEnergy, type Track } from "../motion/karaoke";
+import { PLAN_MS, songEnergy, type Track } from "../motion/karaoke";
 import { keyframesAt, num, sampleTimes, thin } from "../motion/keyframes";
 import { KaraokeLine } from "../motion/line";
 import { Glide, type SpringSpec, type SpringState } from "../motion/spring";
@@ -194,6 +194,8 @@ export function lineLevel(off: number): number {
  * starts the page does nothing; paint asks for frames only while the clock slews.
  */
 export class DriftMode implements ModeRenderer {
+  /** Nothing happens at a word boundary that the compositor isn't already drawing: sleep through them. */
+  readonly wordWakes = false;
   private readonly depth: number;
   private readonly timeline = new SongTimeline();
   private look: Look | null = null;
@@ -326,7 +328,6 @@ export class DriftMode implements ModeRenderer {
     if (focus !== this.target) this.moveTo(focus, cue, look);
     else if (!cue.running && this.glide) this.land(look);
     else if (jumped) this.refreshFocus(cue);
-    this.karaoke?.line.update(cue.t);
     this.tidy(cue);
     this.timeline.prune(cue.t);
     return sync.slewing && cue.running;
@@ -490,7 +491,7 @@ export class DriftMode implements ModeRenderer {
     const glide = this.glide;
     if (!glide) return;
     const duration = Math.min(2600, Math.max(200, glide.settle(0.002)));
-    const times = sampleTimes(duration);
+    const times = sampleTimes(duration, PLAN_MS);
     const frames = times.map((ms) => this.layout(glide.at(ms).x, look));
     const final = this.layout(this.target, look);
     this.slots.forEach((slot, i) => {
@@ -559,14 +560,14 @@ export class DriftMode implements ModeRenderer {
       );
       focusRow.el.classList.add("has-fx");
       this.karaoke = { line, row: focusRow };
-      line.resync(cue.t, cue.running);
+      line.mount(cue.t, cue.running);
     }
     if (focusSlot?.kind === "break") this.startBreak(focusSlot.brk, cue, look);
   }
 
   /** After a seek that kept the focus: the focus line's words and the break's dots to the new time. */
   private refreshFocus(cue: Cue): void {
-    this.karaoke?.line.resync(cue.t);
+    // the focus line's animations span the whole line: the song timeline has already moved them
     const slot = this.slots[this.target];
     const look = this.look;
     if (slot?.kind === "break" && look) {

@@ -8,7 +8,7 @@ import { fontFor } from "../src/overlay/fonts";
 import { resolveLook, type Frame, type Look } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
-import { LINGER_MS, LyricStage, type StageView } from "../src/overlay/stage";
+import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -349,18 +349,29 @@ describe("Drift asks for frames only while something moves", () => {
 
 // Regression (word-boundary-late): a word drew unlit at exactly its start time.
 describe("Drift word states", () => {
+  /** The value of the first keyframe at or after `offset` in an animation's keyframes. */
+  const at = (anim: FakeAnimation | undefined, offset: number): string =>
+    String(anim?.keyframes.find((k) => Number(k.offset) >= offset - 1e-9)?.transform ?? "");
+
   it("lights a word, with its glow, at the very millisecond it starts", () => {
     const { mode, rows } = drift();
     const word = LINES[1]?.words[1];
     expect(word).toMatchObject({ text: "the ", start: 4800 });
     mode.paint(cue(1, 4800));
-    // handed to the compositor: the lit window rests open (its wipe animation runs over that), the bloom runs
-    expect(partOf(rows[1], 1, "kw-win")?.style.getPropertyValue("transform")).toBe("translateX(0px)");
-    expect(partOf(rows[1], 1, "kw-win")?.getAnimations().length).toBeGreaterThan(0);
-    expect(partOf(rows[1], 1, "kw-glow")?.getAnimations().length).toBe(1);
-    // the next word hasn't started: its window rests closed, nothing runs on it
-    expect(partOf(rows[1], 2, "kw-win")?.style.getPropertyValue("transform")).toMatch(/^translateX\(-/u);
-    expect(partOf(rows[1], 2, "kw-win")?.getAnimations()).toEqual([]);
+    // the line is handed to the compositor at once: one window from its first word to when it settles
+    const wipe = (i: number): FakeAnimation | undefined => partOf(rows[1], i, "kw-track")?.getAnimations()[0];
+    const span = Number(wipe(1)?.options.duration);
+    const offset = (ms: number): number => (ms - 4200) / span;
+    // "the" starts its wipe at 4.8 s: closed up to then, moving right after
+    expect(at(wipe(1), offset(4800))).toMatch(/^translateX\(-/u);
+    expect(at(wipe(1), offset(4801))).not.toBe(at(wipe(1), offset(4800)));
+    expect(partOf(rows[1], 1, "kw-glow")?.getAnimations()).toHaveLength(1);
+    // "boats" holds closed until 5 s
+    expect(at(wipe(2), 0)).toBe(at(wipe(2), offset(4999)));
+    // every animation of the line shares that window, so the browser starts and ends them together
+    const all = wordsOf(rows[1]).flatMap((w) => [w, ...w.find("kw-track"), ...w.find("kw-glow"), ...w.find("kl")]).flatMap((e) => e.getAnimations());
+    expect(all.length).toBeGreaterThan(10);
+    expect(new Set(all.map((x) => x.options.duration))).toEqual(new Set([span]));
   });
 });
 
@@ -525,14 +536,86 @@ describe("fades start from what is on screen", () => {
 });
 
 describe("frames on a boundary", () => {
-  it("asks for one more frame when a frame lands exactly on a word start, once", () => {
+  it("knows every word boundary, and the line boundaries alone", () => {
+    const map = cueMap(lyricsView.timeline);
+    expect(untilNextChange(map, 4800)).toBe(200);
+    expect(untilNextChange(map, 5016)).toBe(584);
+    // Paper Lanterns' line starts (1, 4.2, 9 (the gap stamp), 12.5, 16.4 s) and linger ends ("river" 3.7 s, "home" 8.5 s, ...)
+    expect(untilNextChange(map, 4800, false)).toBe(3700 + LINGER_MS - 4800);
+    expect(untilNextChange(map, 9000, false)).toBe(8500 + LINGER_MS - 9000);
+  });
+
+  it("lets Stack sleep through words (they run on the compositor), still following up a frame on a line start", () => {
     const { stage: s } = stage();
     s.show(lyricsView, "a");
-    expect(s.nextChange(4800)).toBe(0);
-    expect(s.nextChange(4800)).toBe(200);
-    expect(s.nextChange(4900)).toBe(100);
-    expect(s.nextChange(5000)).toBe(0);
-    expect(s.nextChange(5016)).toBe(584);
+    expect(s.wakesForWords).toBe(false);
+    expect(s.nextChange(4200)).toBe(0);
+    expect(s.nextChange(4200)).toBe(3700 + LINGER_MS - 4200);
+    expect(s.nextChange(4800)).toBe(3700 + LINGER_MS - 4800);
+    // ...and the dots of the break after "home" (8.5 s) come in at 8.95 s, before any line boundary
+    expect(s.nextChange(8600)).toBe(350);
+  });
+
+  it("also wakes for the mode's own events: Stack's dots at the start of an instrumental break", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    s.render(8600);
+    // Paper Lanterns: "home" ends at 8.5 s, the empty stamp at 9 s; the dots come in at 8.95 s
+    expect(s.nextChange(8600)).toBe(350);
+  });
+
+  it("passes the clock's rate to the mode: 0 while paused", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    const seen: (number | undefined)[] = [];
+    const scene = (s as unknown as { scene: { mode: DriftMode } }).scene;
+    const paint = scene.mode.paint.bind(scene.mode);
+    scene.mode.paint = (c: Cue): boolean => {
+      seen.push(c.rate);
+      return paint(c);
+    };
+    s.render(5000, 1.1);
+    s.setPaused(true);
+    s.render(5000, 1);
+    expect(seen).toEqual([1.1, 0]);
+  });
+});
+
+describe("Drift instrumental breaks", () => {
+  it("brings three dots into focus for a long break, then the next line, then drops the dots", () => {
+    const { mode, host, rows } = drift(0);
+    mode.paint(cue(1, 8000));
+    expect(host.find("ut-dot")).toHaveLength(0);
+    clock += 16;
+    mode.paint(cue(2, 10_000, true, true));
+    expect(host.find("ut-dot")).toHaveLength(3);
+    expect(host.find("drift-break")[0]?.style.getPropertyValue("visibility")).toBe("visible");
+    // the dots run on the compositor: the group's pop and fade, each dot and its glow
+    expect(host.find("ut-dots")[0]?.getAnimations()).toHaveLength(2);
+    expect(host.find("ut-dot").every((d) => d.getAnimations().length === 1)).toBe(true);
+    // no line sings karaoke during the break
+    expect(rows.some((r) => r.classList.contains("has-fx"))).toBe(false);
+    clock += 16;
+    mode.paint(cue(2, 12_600));
+    expect(rows[2]?.classList.contains("is-focus")).toBe(true);
+    clock += 16;
+    mode.paint(cue(2, 17_000));
+    expect(host.find("ut-dot")).toHaveLength(0);
+  });
+
+  it("sends the line before a break back to plain text once its overlay has faded", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(1, 8000));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
+    clock += 16;
+    mode.paint(cue(1, 8960, true, false));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    // still fading
+    expect(mode.nextChange(8960)).toBeLessThanOrEqual(420);
+    clock += 500;
+    mode.paint(cue(1, 9500, true, true));
+    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(0);
   });
 });
 
@@ -807,8 +890,9 @@ describe("the stage with nothing to sing", () => {
     const { stage: s } = stage();
     s.show(lyricsView, "a");
     // Paper Lanterns' last word ends at 20 s; its line stays lit for LINGER_MS, then nothing changes
+    // (Stack draws the last word's end on the compositor: no frame for it)
     s.render(19_500);
-    expect(s.nextChange(19_500)).toBe(500);
+    expect(s.nextChange(19_500)).toBe(500 + LINGER_MS);
     expect(s.nextChange(20_000 + LINGER_MS - 100)).toBe(100);
     for (const t of [20_000 + LINGER_MS + 1, 30_000]) {
       expect(s.render(t)).toBe(false);
@@ -923,17 +1007,17 @@ describe("the overlay's frame loop on a real stage", () => {
   }
 
   /**
-   * Over the next `ms`, the loop only takes its 250 ms safety wake: the timer (246 ms) plus the next
-   * vsync, never two paints closer together, yet still awake.
+   * Over the next `ms`, the loop only takes its safety wake (`sleep` ms: 250, or 1000 for a mode whose
+   * words run on the compositor): the timer plus the next vsync, never two paints closer, yet awake.
    */
-  function expectAsleep(paints: number[], ms: number, what: string): void {
+  function expectAsleep(paints: number[], ms: number, what: string, sleep = 250): void {
     const from = paints.length;
     run(ms);
     const times = paints.slice(from);
     const gaps = times.slice(1).map((t, i) => t - (times[i] ?? t));
-    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / 262));
-    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / 246));
-    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(246);
+    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / (sleep + 12)));
+    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / (sleep - 4)));
+    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(sleep - 4);
   }
 
   it("sleeps through loading, after the last line and in empty states, and stops on pause", async () => {
@@ -946,7 +1030,8 @@ describe("the overlay's frame loop on a real stage", () => {
     bridge.emit("lyrics", result("a", "found", paperLanterns));
     expect(host.find("drift-row").length).toBeGreaterThan(0);
     run(20_000 + LINGER_MS + 600 - (Date.now() - T0));
-    expectAsleep(paints, 5000, "after the last line");
+    // Stack's words run on the compositor: past its last line it only takes a safety wake a second
+    expectAsleep(paints, 5000, "after the last line", 1000);
 
     for (const status of ["instrumental", "not-found"] as const) {
       bridge.emit("now-playing", track(status));

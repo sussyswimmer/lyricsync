@@ -8,6 +8,13 @@ import { sameLyrics, viewFor } from "./view";
 /** Longest the loop sleeps between word boundaries, so a slewing clock or a missed event can't strand it. */
 const MAX_SLEEP_MS = 250;
 /**
+ * The same for a mode whose words run on the compositor (stage.wakesForWords false): its motion is
+ * anchored to the song, a slew keeps it painting, and every player sample kicks a frame anyway, so
+ * it only needs waking for line changes. Each frame it skips saves a main-thread restyle and commit of
+ * every animation in flight.
+ */
+const IDLE_SLEEP_MS = 1000;
+/**
  * Busy frames (a glide, Lens following the sung word) start at most this often. requestAnimationFrame
  * runs at the display's refresh rate, 120 or 144 times a second on many Windows laptops, and a Lens
  * frame restyles every word of its line. Just over one 120 Hz frame: a display up to 100 Hz still gets
@@ -268,7 +275,7 @@ export class OverlayController {
       else this.raf = requestAnimationFrame(this.tick);
       return;
     }
-    const wait = Math.min(MAX_SLEEP_MS, this.stage.nextChange(t));
+    const wait = Math.min(this.stage.wakesForWords ? MAX_SLEEP_MS : IDLE_SLEEP_MS, this.stage.nextChange(t));
     this.wake(Math.max(0, wait - 4));
   };
 

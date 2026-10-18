@@ -39,6 +39,8 @@ interface CueMap {
   nextLyric: number[];
   /** every time something visible changes (word starts and ends, line starts, linger ends), sorted */
   boundaries: number[];
+  /** the same without word starts and ends, for modes that draw words on their own (wordWakes false) */
+  lineBoundaries: number[];
   unsynced: boolean;
 }
 
@@ -54,8 +56,10 @@ export function cueMap(timeline: Timeline): CueMap {
     if (li >= 0) next = li;
   }
   const times = new Set<number>();
+  const lineTimes = new Set<number>();
   for (const line of all) {
     times.add(line.start);
+    lineTimes.add(line.start);
     // Unsynced lyrics draw no per-word change and never linger: only line starts matter.
     if (timeline.unsynced) continue;
     for (const w of line.words) {
@@ -63,9 +67,13 @@ export function cueMap(timeline: Timeline): CueMap {
       times.add(w.end);
     }
     const last = line.words[line.words.length - 1];
-    if (last) times.add(last.end + LINGER_MS);
+    if (last) {
+      times.add(last.end + LINGER_MS);
+      lineTimes.add(last.end + LINGER_MS);
+    }
   }
-  return { all, lyrics, lyricOf, nextLyric, boundaries: [...times].sort((a, b) => a - b), unsynced: timeline.unsynced };
+  const sorted = (set: Set<number>): number[] => [...set].sort((a, b) => a - b);
+  return { all, lyrics, lyricOf, nextLyric, boundaries: sorted(times), lineBoundaries: sorted(lineTimes), unsynced: timeline.unsynced };
 }
 
 /** Which line is in focus at `t`, and whether it is still waiting to start. */
@@ -87,8 +95,8 @@ export function cueAt(map: CueMap, t: number): Omit<Cue, "running"> {
  * Time from `t` to the next visible change, in ms (Infinity when nothing else will change). Every
  * span is [start, end): a boundary at exactly `t` has already happened, as `wordState` paints it.
  */
-export function untilNextChange(map: CueMap, t: number): number {
-  const b = map.boundaries;
+export function untilNextChange(map: CueMap, t: number, words = true): number {
+  const b = words ? map.boundaries : map.lineBoundaries;
   let lo = 0;
   let hi = b.length;
   while (lo < hi) {
@@ -101,8 +109,8 @@ export function untilNextChange(map: CueMap, t: number): number {
 }
 
 /** Whether `t` is exactly one of the map's boundaries. */
-function onBoundary(map: CueMap, t: number): boolean {
-  const b = map.boundaries;
+function onBoundary(map: CueMap, t: number, words = true): boolean {
+  const b = words ? map.boundaries : map.lineBoundaries;
   let lo = 0;
   let hi = b.length;
   while (lo < hi) {
@@ -309,6 +317,14 @@ export class LyricStage {
   }
 
   /**
+   * Whether the current scene needs frames at word boundaries (false: its mode draws words on the
+   * compositor, see ModeRenderer.wordWakes). States and modes that paint words themselves do.
+   */
+  get wakesForWords(): boolean {
+    return this.scene?.mode?.wordWakes !== false;
+  }
+
+  /**
    * Ms of song time until the next word or line boundary; the controller can sleep that long. A frame
    * that lands exactly on a boundary gets another one straight after (0). Painted by `wordState`, a
    * word is already lit at its first millisecond, but a renderer that lights a word only once
@@ -318,12 +334,14 @@ export class LyricStage {
   nextChange(t: number): number {
     const cues = this.scene?.cues;
     if (!cues) return Infinity;
-    if (t !== this.followedUp && onBoundary(cues, t)) {
+    const mode = this.scene?.mode;
+    const words = mode?.wordWakes !== false;
+    if (t !== this.followedUp && onBoundary(cues, t, words)) {
       this.followedUp = t;
       return 0;
     }
-    const own = this.scene?.mode?.nextChange?.(t) ?? Infinity;
-    return Math.min(untilNextChange(cues, t), Math.max(0, own));
+    const own = mode?.nextChange?.(t) ?? Infinity;
+    return Math.min(untilNextChange(cues, t, words), Math.max(0, own));
   }
 
   destroy(): void {

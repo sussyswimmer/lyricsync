@@ -76,7 +76,7 @@
   opacity: 0;
 }
 
-.kw-base,
+.kw-track,
 .kw-in {
   position: absolute;
   left: 0;
@@ -110,9 +110,11 @@
   text-shadow: var(--ut-bloom-strong);
 }
 
-/* The lit window: slides over the word with a feathered leading edge (its mask moves with it), its
-   contents slide back the other way so the lit letters stay where the word is. */
-.kw-win {
+/* The wipe: a track slides across the word carrying two windows that meet at one feathered edge,
+   the unlit letters in one and the lit ones in the other (each mask moves with its window); the
+   windows' contents slide back the other way, so the letters stay where the word is. */
+.kw-win,
+.kw-bwin {
   position: absolute;
   top: -0.5em;
   height: calc(100% + 1em);
@@ -122,9 +124,10 @@
 
 .kw-in {
   top: 0.5em;
+}
+
+.kw-win .kw-in {
   color: var(--ut-hl);
-  /* the base letters underneath carry the dark legibility shadow */
-  text-shadow: none;
 }
 
 /* ---------- instrumental breaks ---------- */

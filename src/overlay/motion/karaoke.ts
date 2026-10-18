@@ -11,14 +11,15 @@
  * - glow: the word's bloom rises in the first ~15 % of the word, holds, and fades by its end.
  * - letters: every letter rises in turn as the wipe crosses it (a ripple scaled by the song's energy);
  *   a held syllable (EMPHASIS_MS or longer, EMPHASIS_CHARS or fewer) lights letter by letter along a
- *   sine ease-out, each letter lifting about twice as far and glowing until the syllable ends.
+ *   sine ease-out, each letter lifting further than a word does and glowing until the syllable ends.
  *
- * Times are song ms. Each track runs from its own `t0` for `duration` ms.
+ * Times are song ms. Each track runs from its own `t0` for `duration` ms; `rebase` stretches tracks
+ * onto one shared window so a whole line can start and end its animations together.
  */
 import type { Line } from "../../core/lrc";
 import { syllables } from "../../core/timing";
 import { clamp01, sineOut, spline } from "./curve";
-import { keyframesAt, liftScale, num, sampleTimes, SAMPLE_MS, thin } from "./keyframes";
+import { keyframesAt, liftScale, num, sampleTimes, thin } from "./keyframes";
 import { chase, type SpringSpec } from "./spring";
 
 /** One timed piece of a word: a syllable from enhanced LRC, or the whole word. */
@@ -62,6 +63,11 @@ export interface MotionOptions {
   energy: number;
   /** false under prefers-reduced-motion: color and glow crossfades only */
   motion: boolean;
+  /**
+   * The pose the word starts its pop from: "rest" (small and low, as an upcoming word waits), or
+   * "full" for a word sung the moment its line comes into focus (it never had time to settle into rest).
+   */
+  from?: "rest" | "full";
 }
 
 /** A keyframe animation to run from song time `t0`. */
@@ -78,15 +84,20 @@ export interface WordMotion {
   until: number;
   /** transform of the whole word (pop) */
   pop: Track | null;
-  /** translateX of the lit window, and of its contents (the opposite, so the text stays put) */
+  /**
+   * translateX of the windows' track (the lit window and the base window move together, their shared
+   * feather the wipe's edge), and of each window's contents (the opposite, so the text stays put)
+   */
   window: Track | null;
   inner: Track | null;
   /** reduced motion: the lit copy fades in instead of wiping */
   litFade: Track | null;
   /** opacity of the word's bloom */
   glow: Track | null;
-  /** transform per letter (base and lit copies alike), null where a letter doesn't move */
+  /** transform per letter of the lit copy, null where a letter doesn't move */
   letters: (Track | null)[];
+  /** whether the base copy (and the letter's bloom) moves with it: letters of a held syllable rise while they light */
+  moveBase: boolean[];
   /** opacity of each letter's own bloom (emphasized letters only) */
   letterGlows: (Track | null)[];
   /** each letter's transform before its word is sung ("" = none) */
@@ -148,12 +159,14 @@ const RIPPLE_HOLD_MAX_MS = 260;
 const EMPHASIS_LIFT = 2.4;
 /** Peak opacity of a word's bloom (emphasized words bloom fully). */
 const GLOW_PEAK = 0.92;
-/** Springs run on this long after the word before they count as settled... */
-const TAIL_MS = 1600;
-/** ...within these: px for lifts, scale units, opacity. */
-const LIFT_TOL = 0.06;
-const SCALE_TOL = 0.0006;
-const OPACITY_TOL = 0.004;
+/** Springs run on this long after the word at most... */
+const TAIL_MS = 1300;
+/** ...and stop once they are this close to rest: px for lifts, scale units, opacity. */
+const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005 };
+/** Keyframes are kept where straight lines between them would miss by more than this (all sub-pixel). */
+const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25 };
+/** Plans are sampled this often; the compositor interpolates linearly in between. */
+export const PLAN_MS = 1000 / 30;
 /** Reduced motion: the lit copy and the glow fade in this fast. */
 const FADE_MS = 140;
 const STATIC_GLOW = 0.6;
@@ -193,12 +206,6 @@ export function songEnergy(lines: readonly Pick<Line, "words">[]): number {
   return clamp01((median - 1.5) / 3.5);
 }
 
-/** A sampled spring channel trimmed to where it has settled on `final`. */
-function settledLength(values: readonly number[], final: number, tol: number): number {
-  for (let i = values.length - 1; i >= 0; i--) if (Math.abs((values[i] ?? final) - final) > tol) return i + 2;
-  return 1;
-}
-
 /**
  * Where the wipe's edge (the end of the fully lit part) is `ms` after the word starts, in px from the
  * word's leading edge, by the word's parts: from -feather at the start to the far edge (plus the
@@ -210,17 +217,14 @@ export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordSh
   const over = OVERHANG * shape.size;
   // each part's span along the word, in reading order from the leading edge
   const lead = (l: LetterBox): number => (shape.rtl ? W - l.x - l.w : l.x);
-  const bounds = parts.map((_, j) => {
+  const ends = parts.map((_, j) => {
     const mine = shape.letters.filter((l) => l.part === j);
-    if (mine.length === 0) return null;
-    return { from: Math.min(...mine.map(lead)), to: Math.max(...mine.map((l) => lead(l) + l.w)) };
+    return mine.length === 0 ? null : Math.max(...mine.map((l) => lead(l) + l.w));
   });
   const segments: { t0: number; t1: number; x0: number; x1: number; ease: boolean }[] = [];
   let x = -feather;
   parts.forEach((p, j) => {
-    const b = bounds[j];
-    const last = j === parts.length - 1;
-    const to = last ? W + over : (b?.to ?? x);
+    const to = j === parts.length - 1 ? W + over : (ends[j] ?? x);
     segments.push({ t0: p.start - word.start, t1: p.end - word.start, x0: x, x1: Math.max(x, to), ease: isEmphasized(p) });
     x = Math.max(x, to);
   });
@@ -250,117 +254,128 @@ function timeAtEdge(edge: (ms: number) => number, x: number, span: number): numb
   return hi;
 }
 
-/** Transform keyframes from lift and scale channels sampled at `times`. */
-function transformTrack(t0: number, times: number[], lift: number[], scale: number[] | null): Track {
-  const keep = thin(times, scale ? [lift, scale] : [lift], scale ? [LIFT_TOL, SCALE_TOL] : [LIFT_TOL]);
-  const frames = keyframesAt(times, keep, (i) => ({ transform: liftScale(0, lift[i] ?? 0, scale ? (scale[i] ?? 1) : 1) }));
-  return { t0, duration: times[times.length - 1] ?? 0, frames };
-}
-
-function opacityTrack(t0: number, times: number[], values: number[]): Track {
-  const keep = thin(times, [values], [OPACITY_TOL]);
-  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, (i) => ({ opacity: num(clamp01(values[i] ?? 0), 3) })) };
-}
-
-/** Samples `count + 1` times (every SAMPLE_MS) of a spring chasing `target`, trimmed once settled on `final`. */
+/** A spring following `target` (ms from the word's start) from rest at `from`, stopped once settled on `final`. */
 function springChannel(target: (ms: number) => number, spec: SpringSpec, from: number, spanMs: number, final: number, tol: number): number[] {
-  const values = chase(target, spec, { x: from, v: 0 }, spanMs, SAMPLE_MS);
-  return values.slice(0, Math.min(values.length, settledLength(values, final, tol)));
+  const values = chase(target, spec, { x: from, v: 0 }, spanMs, PLAN_MS);
+  let n = values.length;
+  while (n > 1 && Math.abs((values[n - 1] ?? final) - final) <= tol && Math.abs((values[n - 2] ?? final) - final) <= tol) n--;
+  values.length = Math.min(values.length, n + 1);
+  return values;
 }
 
-/** Pads channels to one length with their final values and returns the shared sample times. */
+/** Pads channels to one length with their final values (ending exactly on them) and returns the sample times. */
 function align(channels: number[][], finals: number[]): number[] {
   const n = Math.max(2, ...channels.map((c) => c.length));
   channels.forEach((c, i) => {
     while (c.length < n) c.push(finals[i] ?? 0);
     c[n - 1] = finals[i] ?? 0;
   });
-  return sampleTimes((n - 1) * SAMPLE_MS);
+  return sampleTimes((n - 1) * PLAN_MS, PLAN_MS);
+}
+
+function transformTrack(t0: number, times: number[], lift: number[], scale: number[]): Track {
+  const keep = thin(times, [lift, scale], [THIN.lift, THIN.scale]);
+  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, (i) => ({ transform: liftScale(0, lift[i] ?? 0, scale[i] ?? 1) })) };
+}
+
+function opacityTrack(t0: number, times: number[], values: number[]): Track {
+  const keep = thin(times, [values], [THIN.opacity]);
+  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, (i) => ({ opacity: num(clamp01(values[i] ?? 0), 3) })) };
 }
 
 /** Plans one word's motion. `text` is the word without its trailing space. */
 export function planWord(word: WordTiming, text: string, shape: WordShape, options: MotionOptions): WordMotion {
   const parts = partsOf(word, text);
   const emphasis = parts.some(isEmphasized);
-  const span = Math.max(0, word.end - word.start);
+  // A word with no time to it still lights (in one step) when its time comes.
+  const span = Math.max(1, word.end - word.start);
   const size = shape.size;
   const none: WordMotion = {
     emphasis,
-    until: word.end,
+    until: word.start + span,
     pop: null,
     window: null,
     inner: null,
     litFade: null,
     glow: null,
     letters: shape.letters.map(() => null),
+    moveBase: shape.letters.map(() => false),
     letterGlows: shape.letters.map(() => null),
-    letterRest: shape.letters.map(() => ""),
+    letterRest: letterRest(word, text, shape, options.motion),
   };
   if (!options.motion) {
     // Reduced motion: the lit copy and a steady glow fade in at the word's start; the glow fades out at its end.
-    const glowFrames: Keyframe[] = [
-      { opacity: 0, offset: 0 },
-      { opacity: STATIC_GLOW, offset: Math.min(1, FADE_MS / (span + FADE_MS)) },
-      { opacity: STATIC_GLOW, offset: span / (span + FADE_MS) },
-      { opacity: 0, offset: 1 },
-    ];
+    const total = span + FADE_MS;
     return {
       ...none,
-      until: word.end + FADE_MS,
+      until: word.start + total,
       litFade: { t0: word.start, duration: FADE_MS, frames: [{ opacity: 0 }, { opacity: 1 }] },
-      glow: span > 0 ? { t0: word.start, duration: span + FADE_MS, frames: glowFrames } : null,
+      glow: {
+        t0: word.start,
+        duration: total,
+        frames: [
+          { opacity: 0, offset: 0 },
+          { opacity: STATIC_GLOW, offset: Math.min(FADE_MS, span) / total },
+          { opacity: STATIC_GLOW, offset: span / total },
+          { opacity: 0, offset: 1 },
+        ],
+      },
     };
   }
-  if (span <= 0) return none;
 
   const progress = (ms: number): number => clamp01(ms / span);
   const runMs = span + TAIL_MS;
+  const fromFull = options.from === "full";
 
   // the pop
-  const lift = springChannel((ms) => LIFT_CURVE(progress(ms)) * size, LIFT_SPRING, REST_LIFT * size, runMs, 0, LIFT_TOL);
-  const scale = springChannel((ms) => SCALE_CURVE(progress(ms)), SCALE_SPRING, REST_SCALE, runMs, 1, SCALE_TOL);
-  const popTimes = align([lift, scale], [0, 1]);
-  const pop = transformTrack(word.start, popTimes, lift, scale);
+  const lift = springChannel((ms) => LIFT_CURVE(progress(ms)) * size, LIFT_SPRING, fromFull ? 0 : REST_LIFT * size, runMs, 0, SETTLED.lift);
+  const scale = springChannel((ms) => SCALE_CURVE(progress(ms)), SCALE_SPRING, fromFull ? 1 : REST_SCALE, runMs, 1, SETTLED.scale);
+  const pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale);
 
   // the bloom
-  const glowValues = springChannel((ms) => Math.max(0, GLOW_CURVE(progress(ms))), GLOW_SPRING, 0, runMs, 0, OPACITY_TOL).map(
-    (g) => Math.max(0, g) * (emphasis ? 1 : GLOW_PEAK),
-  );
-  const glowTimes = align([glowValues], [0]);
-  const glow = opacityTrack(word.start, glowTimes, glowValues);
+  const peak = emphasis ? 1 : GLOW_PEAK;
+  const glowValues = springChannel((ms) => Math.max(0, GLOW_CURVE(progress(ms))), GLOW_SPRING, 0, runMs, 0, SETTLED.opacity).map((g) => Math.max(0, g) * peak);
+  const glow = opacityTrack(word.start, align([glowValues], [0]), glowValues);
 
-  // the wipe
+  // the wipe: linear between syllable boundaries, sampled where a held syllable eases out
   const edge = wipeEdge(word, parts, shape);
   const sign = shape.rtl ? -1 : 1;
-  // linear between syllable boundaries; sampled where a held syllable eases out
-  const bounds = [...new Set([0, ...parts.map((p) => clamp(p.end - word.start, 0, span)), span])].sort((a, b) => a - b);
-  const wipeTimes = emphasis ? sampleTimes(span) : bounds;
+  const bounds = [...new Set([0, ...parts.map((p) => Math.min(span, Math.max(0, p.end - word.start))), span])].sort((a, b) => a - b);
+  const wipeTimes = emphasis ? sampleTimes(span, PLAN_MS) : bounds;
   const xs = wipeTimes.map((ms) => sign * (edge(ms) - (shape.width + OVERHANG * size)));
-  const keepX = thin(wipeTimes, [xs], [0.2]);
-  const windowTrack: Track = {
-    t0: word.start,
-    duration: span,
-    frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(xs[i] ?? 0, 2)}px)` })),
-  };
-  const innerTrack: Track = {
-    t0: word.start,
-    duration: span,
-    frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(-(xs[i] ?? 0), 2)}px)` })),
-  };
+  const keepX = thin(wipeTimes, [xs], [THIN.x]);
+  const window: Track = { t0: word.start, duration: span, frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(xs[i] ?? 0, 2)}px)` })) };
+  const inner: Track = { t0: word.start, duration: span, frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(-(xs[i] ?? 0), 2)}px)` })) };
 
   // the letters
   const ripple = size * (RIPPLE_MIN + RIPPLE_GAIN * clamp01(options.energy));
+  // how long the wipe takes to cross an average letter and the feather: the hop's hold
+  const plain = shape.letters.filter((l) => {
+    const part = parts[l.part] ?? parts[0];
+    return part !== undefined && !isEmphasized(part);
+  });
+  const avg = plain.length > 0 ? plain.reduce((n, l) => n + l.w, 0) / plain.length : 0;
+  const crossing = (span * (avg + FEATHER * shape.width)) / Math.max(1, shape.width * (1 + FEATHER) + OVERHANG * size);
+  const hold = Math.min(RIPPLE_HOLD_MAX_MS, Math.max(RIPPLE_HOLD_MS, crossing));
+  let hopTrack: Track | null = null;
+  const hopFor = (height: number): Track => {
+    if (hopTrack) return hopTrack;
+    const hLift = springChannel((ms) => (ms < hold ? -height : 0), RIPPLE_SPRING, 0, hold + 700, 0, SETTLED.lift);
+    const hScale = hLift.map((y) => 1 + (-y / size) * 0.9);
+    hopTrack = transformTrack(0, align([hLift, hScale], [0, 1]), hLift, hScale);
+    return hopTrack;
+  };
+  const lead = (l: LetterBox): number => (shape.rtl ? shape.width - l.x - l.w : l.x);
   const letters: (Track | null)[] = [];
   const letterGlows: (Track | null)[] = [];
-  const letterRest: string[] = [];
-  const lead = (l: LetterBox): number => (shape.rtl ? shape.width - l.x - l.w : l.x);
-  shape.letters.forEach((letter) => {
+  const moveBase: boolean[] = [];
+  for (const letter of shape.letters) {
+    moveBase.push(false);
     const part = parts[letter.part] ?? parts[0];
     if (shape.letters.length < 2 || !part) {
       letters.push(null);
       letterGlows.push(null);
-      letterRest.push("");
-      return;
+      continue;
     }
     if (isEmphasized(part)) {
       // letter by letter along a sine ease-out of the syllable; each letter's glow lasts to the syllable's end
@@ -372,43 +387,24 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
       const alpha = (ms: number): number => sineOut((ms - p0) / pSpan);
       const own = (ms: number): number => clamp01((alpha(ms) - j / k) * k);
       const lit = (ms: number): number => clamp01((alpha(ms) - j / k) / (1 - j / k));
-      const restLift = REST_LIFT * size * EMPHASIS_LIFT;
-      const lLift = springChannel((ms) => LIFT_CURVE(own(ms)) * size * EMPHASIS_LIFT, LIFT_SPRING, restLift, runMs, 0, LIFT_TOL);
-      const lScale = springChannel((ms) => LETTER_SCALE_CURVE(own(ms)), SCALE_SPRING, LETTER_SCALE_CURVE(0), runMs, 1, SCALE_TOL);
-      const times = align([lLift, lScale], [0, 1]);
-      letters.push(transformTrack(word.start, times, lLift, lScale));
-      const g = springChannel((ms) => Math.max(0, GLOW_CURVE(lit(ms))), LETTER_GLOW_SPRING, 0, runMs, 0, OPACITY_TOL);
+      const lLift = springChannel((ms) => LIFT_CURVE(own(ms)) * size * EMPHASIS_LIFT, LIFT_SPRING, REST_LIFT * size * EMPHASIS_LIFT, runMs, 0, SETTLED.lift);
+      const lScale = springChannel((ms) => LETTER_SCALE_CURVE(own(ms)), SCALE_SPRING, LETTER_SCALE_CURVE(0), runMs, 1, SETTLED.scale);
+      letters.push(transformTrack(word.start, align([lLift, lScale], [0, 1]), lLift, lScale));
+      moveBase[moveBase.length - 1] = true;
+      const g = springChannel((ms) => Math.max(0, GLOW_CURVE(lit(ms))), LETTER_GLOW_SPRING, 0, runMs, 0, SETTLED.opacity);
       letterGlows.push(opacityTrack(word.start, align([g], [0]), g));
-      letterRest.push(liftScale(0, restLift, LETTER_SCALE_CURVE(0)));
-      return;
+      continue;
     }
-    // the ripple: rise as the wipe's feather crosses the letter's middle, hold briefly, spring back
-    const middle = lead(letter) + letter.w / 2;
-    const hit = timeAtEdge(edge, middle - (FEATHER * shape.width) / 2, span);
-    const crossing = timeAtEdge(edge, lead(letter) + letter.w, span) - timeAtEdge(edge, lead(letter) - FEATHER * shape.width, span);
-    const hold = clamp(crossing, RIPPLE_HOLD_MS, RIPPLE_HOLD_MAX_MS);
-    const from = Math.max(0, hit - 40);
-    const rLift = springChannel((ms) => (ms >= from && ms < hit + hold ? -ripple : 0), RIPPLE_SPRING, 0, hit + hold + 900, 0, LIFT_TOL);
-    const rScale = rLift.map((y) => 1 + (-y / size) * 0.9);
-    const times = align([rLift, rScale], [0, 1]);
-    letters.push(transformTrack(word.start, times, rLift, rScale));
+    // the ripple: each letter hops once it is fully lit (only the lit copy shows there), the same hop
+    // for every letter of the word, shifted to its time
+    const at = timeAtEdge(edge, lead(letter) + letter.w, span);
+    const hop = hopFor(ripple);
+    letters.push({ t0: word.start + Math.max(0, at - 20), duration: hop.duration, frames: hop.frames });
     letterGlows.push(null);
-    letterRest.push("");
-  });
+  }
 
-  const ends = [pop, glow, windowTrack, ...letters, ...letterGlows].filter((x): x is Track => x !== null).map((x) => x.t0 + x.duration);
-  return {
-    emphasis,
-    until: Math.max(word.end, ...ends),
-    pop,
-    window: windowTrack,
-    inner: innerTrack,
-    litFade: null,
-    glow,
-    letters,
-    letterGlows,
-    letterRest,
-  };
+  const ends = [pop, glow, window, ...letters, ...letterGlows].filter((x): x is Track => x !== null).map((x) => x.t0 + x.duration);
+  return { ...none, until: Math.max(word.start + span, ...ends), pop, window, inner, glow, letters, moveBase, letterGlows };
 }
 
 /**
@@ -429,12 +425,49 @@ export function restTransform(size: number): string {
   return liftScale(0, REST_LIFT * size, REST_SCALE);
 }
 
+/** The same transform function list at full size, no lift. */
+export const FULL_TRANSFORM = liftScale(0, 0, 1);
+
 /** Where the lit window rests before its word is sung: translated so nothing is lit. */
 export function closedWindow(shape: WordShape): number {
   const sign = shape.rtl ? -1 : 1;
   return -sign * (shape.width + OVERHANG * shape.size + FEATHER * shape.width);
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
+/**
+ * A track stretched onto the window [origin, end] (song ms): it holds its first frame from the origin
+ * until it starts, and its last from when it ends until `end`. `lead` frames (with song times) can
+ * replace the hold before it starts. Every animation of a line shares one window, so the browser
+ * starts and finishes them together: one main-thread frame each way instead of one per animation.
+ */
+export function rebase(track: Track, origin: number, end: number, lead: readonly { at: number; frame: Keyframe }[] = []): Keyframe[] {
+  const span = Math.max(1, end - origin);
+  const at = (t: number): number => Math.min(1, Math.max(0, (t - origin) / span));
+  const strip = (f: Keyframe): Keyframe => {
+    const { offset: _offset, ...rest } = f;
+    void _offset;
+    return rest;
+  };
+  const out: Keyframe[] = [];
+  const first = track.frames[0];
+  if (lead.length > 0) for (const l of lead) out.push({ ...strip(l.frame), offset: at(l.at) });
+  else if (first && track.t0 > origin) out.push({ ...strip(first), offset: 0 });
+  const n = track.frames.length;
+  track.frames.forEach((f, i) => {
+    const local = typeof f.offset === "number" ? f.offset : n > 1 ? i / (n - 1) : 0;
+    out.push({ ...strip(f), offset: at(track.t0 + local * track.duration) });
+  });
+  const last = track.frames[n - 1];
+  if (last && track.t0 + track.duration < end) out.push({ ...strip(last), offset: 1 });
+  if (out.length > 0) {
+    // a window starting with the track still needs a frame at 0, and offsets must never run backwards
+    const head = out[0];
+    if (head && head.offset !== 0) out.unshift({ ...strip(head), offset: 0 });
+    for (let i = 1; i < out.length; i++) {
+      const prev = out[i - 1]?.offset;
+      const cur = out[i];
+      if (cur && typeof prev === "number" && typeof cur.offset === "number" && cur.offset < prev) cur.offset = prev;
+    }
+  }
+  return out;
 }

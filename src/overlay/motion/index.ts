@@ -7,11 +7,16 @@ export { bloomShadow, dotBloom } from "./bloom";
 export { clamp01, sineOut, spline, type Key } from "./curve";
 export { findInterludes, interludeAt, planDots, INTERLUDE_MIN_MS, type DotsMotion, type Interlude } from "./interlude";
 export {
+  closedWindow,
   emphasized,
+  letterRest,
   planWord,
+  rebase,
   restTransform,
   songEnergy,
   wipeEdge,
+  FULL_TRANSFORM,
+  PLAN_MS,
   EMPHASIS_CHARS,
   EMPHASIS_MS,
   FEATHER,
@@ -25,6 +30,6 @@ export {
 } from "./karaoke";
 export { keyframesAt, liftScale, sampleTimes, thin, SAMPLE_MS } from "./keyframes";
 export { canvasMeasure, graphemes, isRtl, measureLetters, splittable } from "./letters";
-export { KaraokeLine, LOOKAHEAD_MS, type KaraokeLook } from "./line";
+export { KaraokeLine, SETTLE_IN_MS, type KaraokeLook } from "./line";
 export { chase, Glide, settleMs, springStep, type SpringSpec, type SpringState } from "./spring";
 export { SongTimeline, type SongCue, type SyncResult } from "./timeline";

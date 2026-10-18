@@ -143,6 +143,29 @@ describe("PlaybackClock seek and slew", () => {
   });
 });
 
+describe("PlaybackClock rate", () => {
+  it("is 0 paused or with no track, 1 playing", () => {
+    expect(new PlaybackClock().rate(T0)).toBe(0);
+    const paused = new PlaybackClock();
+    paused.update(sample({ isPlaying: false }), T0);
+    expect(paused.rate(T0 + 500)).toBe(0);
+    expect(playing().rate(T0 + 500)).toBe(1);
+  });
+
+  it("bends while a slew blends a correction in, as fast as the position actually moves, then is 1 again", () => {
+    const clock = playing();
+    // 60 ms ahead of where the clock thinks the song is
+    expect(clock.update(sample({ positionMs: 11_060, sampledAt: T0 + 1000 }), T0 + 1000)).toBe("slew");
+    const rate = clock.rate(T0 + 1100);
+    expect(rate).toBeCloseTo(1 + 60 / SLEW_MS, 9);
+    expect(clock.position(T0 + 1200) - clock.position(T0 + 1100)).toBeCloseTo(100 * rate, 6);
+    expect(clock.rate(T0 + 1000 + SLEW_MS)).toBe(1);
+    // a sample that agrees exactly bends nothing
+    clock.update(sample({ positionMs: clock.position(T0 + 2000), sampledAt: T0 + 2000 }), T0 + 2000);
+    expect(clock.rate(T0 + 2050)).toBe(1);
+  });
+});
+
 describe("PlaybackClock track changes and offsets", () => {
   it("resets on a new track instead of slewing", () => {
     const clock = playing();

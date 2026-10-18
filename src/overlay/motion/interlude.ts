@@ -9,9 +9,9 @@
  */
 import type { Line } from "../../core/lrc";
 import { clamp01, spline } from "./curve";
-import { keyframesAt, liftScale, num, sampleTimes, SAMPLE_MS, thin } from "./keyframes";
+import { keyframesAt, liftScale, num, sampleTimes, thin } from "./keyframes";
 import { chase, type SpringSpec } from "./spring";
-import type { Track } from "./karaoke";
+import { PLAN_MS, type Track } from "./karaoke";
 
 export interface Interlude {
   /** index (among the lyric lines) of the line the break leads into */
@@ -107,7 +107,7 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
   const len = Math.max(1, il.end - il.start);
   const slot = (FILL_SHARE * len) / 3;
   const total = len + POP_OUT_MS;
-  const times = sampleTimes(total, motion ? SAMPLE_MS : 50);
+  const times = sampleTimes(total, motion ? PLAN_MS : 50);
   const swellAt = len - SWELL_MS;
 
   // the group
@@ -120,7 +120,7 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
       // breathe from the middle, rising first
       return 1 + BREATH * Math.sin((2 * Math.PI * ms) / BREATH_MS);
     };
-    scale = chase(target, GROUP_SPRING, { x: 0, v: 0 }, total, SAMPLE_MS).map((s) => Math.max(0, s));
+    scale = chase(target, GROUP_SPRING, { x: 0, v: 0 }, total, PLAN_MS).map((s) => Math.max(0, s));
     opacity = times.map((ms) => (ms < len ? clamp01(ms / FADE_IN_MS) : clamp01(1 - (ms - len) / (POP_OUT_MS * 0.6))));
   } else {
     scale = times.map(() => 1);
@@ -128,6 +128,9 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
   }
   while (scale.length < times.length) scale.push(0);
   scale.length = times.length;
+  // gone at the end, exactly
+  scale[scale.length - 1] = 0;
+  opacity[opacity.length - 1] = 0;
   const keepGroup = thin(times, [scale], [0.002]);
   const keepOpacity = thin(times, [opacity], [0.01]);
   const group = {
@@ -147,10 +150,10 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
       glows.push(track(il.start, times, keep, (i) => ({ opacity: num(clamp01(((bright[i] ?? 1) - 0.35) / 0.65) * 0.7, 3) })));
       continue;
     }
-    const lift = chase((ms) => DOT_LIFT(p(ms)) * dotPx, DOT_LIFT_SPRING, { x: DOT_LIFT(0) * dotPx, v: 0 }, total, SAMPLE_MS);
-    const size = chase((ms) => DOT_SCALE(p(ms)), DOT_SCALE_SPRING, { x: DOT_SCALE(0), v: 0 }, total, SAMPLE_MS);
-    const glow = chase((ms) => DOT_GLOW(p(ms)), DOT_GLOW_SPRING, { x: 0, v: 0 }, total, SAMPLE_MS);
-    const bright = chase((ms) => DOT_OPACITY(p(ms)), DOT_GLOW_SPRING, { x: DOT_OPACITY(0), v: 0 }, total, SAMPLE_MS);
+    const lift = chase((ms) => DOT_LIFT(p(ms)) * dotPx, DOT_LIFT_SPRING, { x: DOT_LIFT(0) * dotPx, v: 0 }, total, PLAN_MS);
+    const size = chase((ms) => DOT_SCALE(p(ms)), DOT_SCALE_SPRING, { x: DOT_SCALE(0), v: 0 }, total, PLAN_MS);
+    const glow = chase((ms) => DOT_GLOW(p(ms)), DOT_GLOW_SPRING, { x: 0, v: 0 }, total, PLAN_MS);
+    const bright = chase((ms) => DOT_OPACITY(p(ms)), DOT_GLOW_SPRING, { x: DOT_OPACITY(0), v: 0 }, total, PLAN_MS);
     for (const ch of [lift, size, glow, bright]) ch.length = times.length;
     const keep = thin(times, [lift, size, bright], [0.05, 0.002, 0.01]);
     dots.push(

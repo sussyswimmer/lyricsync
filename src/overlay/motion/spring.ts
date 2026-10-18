@@ -56,7 +56,7 @@ export function springStep(state: SpringState, target: number, dt: number, spec:
 }
 
 /** Internal integration step, ms. The solution is exact per step; this only bounds how a moving target is followed. */
-export const STEP_MS = 4;
+export const STEP_MS = 8;
 
 /**
  * Follows `target(t)` (t in ms from 0) with a spring starting at `from`, and reports the position
@@ -90,9 +90,10 @@ export function settleMs(spec: SpringSpec, offset: number, tolerance: number): n
   const z = spec.damping;
   const size = Math.abs(offset);
   if (size <= tolerance || !(w > 0)) return 0;
-  // slowest decay rate of the envelope; overdamped springs creep at the slower root
-  const rate = z < 1 ? z * w : w * (z - Math.sqrt(z * z - 1));
-  // underdamped envelopes reach 1/sqrt(1 - ζ²) times the offset; critical ones (1 + ωt) a little more
+  // The slowest decay of the envelope, and how far above the offset the envelope starts: underdamped
+  // e^(-ζωt)/sqrt(1 - ζ²); critical (1 + ωt)·e^(-ωt), which stays under 2·e^(-ωt/2); overdamped
+  // springs creep at the slower root (bounded the same way near critical damping).
+  const rate = z < 1 ? z * w : w * Math.min(0.5, z - Math.sqrt(z * z - 1));
   const peak = z < 1 ? 1 / Math.sqrt(1 - z * z) : 2;
   return (Math.log((size * peak) / tolerance) / rate) * 1000;
 }
