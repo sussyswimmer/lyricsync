@@ -16,7 +16,7 @@ import { progress } from "../../core/timing";
 import { MIN_TEXT_PX } from "../look";
 import { clamp01 } from "../motion/curve";
 import { PLAN_MS, type Track } from "../motion/karaoke";
-import { framesOf, HOLD, holds, keyPoints, liftScale, num, sampleTimes, thin } from "../motion/keyframes";
+import { framesOf, HOLD, holds, keyPoints, liftScale, num, sampleTimes, STEP_MS, thin } from "../motion/keyframes";
 import { chase, type SpringSpec } from "../motion/spring";
 
 /**
@@ -97,7 +97,7 @@ export interface LensInput {
   motion: boolean;
   /** slow stretches step on the song-time beat (compositorSteps()) */
   steps?: boolean;
-  /** the lite tier: every pose holds until the next sample (HOLD), so software compositing redraws 30 times a second */
+  /** the lite tier: every pose holds to the next song-time beat (HOLD, STEP_MS), so software compositing redraws at most 20 times a second */
   hold?: boolean;
 }
 
@@ -258,35 +258,47 @@ export function planLens(input: LensInput): LensPlan {
       (os[j] as number[])[k] = pose.opacity[j] ?? 1;
     }
   }
+  const last = times.length - 1;
+  /** A channel's value `ms` into the window, linear between samples (held at the ends). */
+  const valueAt = (c: readonly number[], ms: number): number => {
+    const at = Math.min(duration, Math.max(0, ms));
+    const i = Math.max(0, Math.min(last - 1, Math.floor(at / PLAN_MS)));
+    const t0 = times[i] ?? 0;
+    const t1 = times[i + 1] ?? t0;
+    const p = t1 > t0 ? Math.min(1, Math.max(0, (at - t0) / (t1 - t0))) : 1;
+    const a = c[i] ?? 0;
+    return a + ((c[i + 1] ?? a) - a) * p;
+  };
   const tolerance = [THIN.x, THIN.scale, THIN.opacity];
+  // The lite tier: each pose holds from one song-time beat to the next (STEP_MS, the beat every stepped
+  // track shares), so software compositing redraws the lens at most 20 times a second, on the same
+  // instants as the rest of the scene's stepped motion.
+  const beats: number[] = [0];
+  if (input.hold === true) {
+    for (let b = (Math.floor(origin / STEP_MS) + 1) * STEP_MS; b < end; b += STEP_MS) beats.push(b - origin);
+    beats.push(duration);
+  }
   const tracks = words.map((_, j): Track => {
     const channels = [xs[j] as number[], ss[j] as number[], os[j] as number[]];
     const frame = ([x, s, o]: readonly number[]): Keyframe => ({ transform: lensTransform(x ?? 0, y, s ?? 1), opacity: num(clamp01(o ?? 1), 3) });
     if (input.hold === true) {
-      // the lite tier: each pose held to the next kept one, on the plan's 30 Hz grid
-      const keep = holds(channels, tolerance);
-      const frames = keep.map((i) => ({ ...frame(channels.map((c) => c[i] ?? 0)), offset: Math.min(1, (times[i] ?? 0) / duration), easing: HOLD }));
+      const onBeats = channels.map((c) => beats.map((ms) => valueAt(c, ms)));
+      const keep = holds(onBeats, tolerance);
+      const frames = keep.map((i) => ({ ...frame(onBeats.map((c) => c[i] ?? 0)), offset: Math.min(1, (beats[i] ?? 0) / duration), easing: HOLD }));
       return { t0: origin, duration, frames };
     }
     const keep = thin(times, channels, tolerance);
     const points = keyPoints(times, keep, channels, input.steps === true ? { t0: origin, quantum: [STEP_QUANTUM.x, STEP_QUANTUM.scale, STEP_QUANTUM.opacity] } : null);
     return { t0: origin, duration, frames: framesOf(points, duration, frame) };
   });
-  const last = times.length - 1;
   const sampleAt = (k: number): LensPose => ({
     x: xs.map((c) => c[k] ?? 0),
     scale: ss.map((c) => c[k] ?? 1),
     opacity: os.map((c) => c[k] ?? 1),
   });
   const at = (t: number): LensPose => {
-    const ms = Math.min(duration, Math.max(0, t - origin));
-    const i = Math.min(last - 1, Math.floor(ms / PLAN_MS));
-    if (i < 0) return sampleAt(0);
-    const t0 = times[i] ?? 0;
-    const t1 = times[i + 1] ?? t0;
-    const p = t1 > t0 ? Math.min(1, Math.max(0, (ms - t0) / (t1 - t0))) : 1;
-    const mix = (c: number[]): number => (c[i] ?? 0) + ((c[i + 1] ?? c[i] ?? 0) - (c[i] ?? 0)) * p;
-    return { x: xs.map(mix), scale: ss.map(mix), opacity: os.map(mix) };
+    const ms = t - origin;
+    return { x: xs.map((c) => valueAt(c, ms)), scale: ss.map((c) => valueAt(c, ms)), opacity: os.map((c) => valueAt(c, ms)) };
   };
   return { origin, end, rampFrom, tracks, final: sampleAt(last), at };
 }

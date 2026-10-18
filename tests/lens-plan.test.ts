@@ -20,7 +20,7 @@ import {
   type Shape,
 } from "../src/overlay/modes/lens-plan";
 import { PLAN_MS, type Track } from "../src/overlay/motion/karaoke";
-import { HOLD } from "../src/overlay/motion/keyframes";
+import { HOLD, STEP_MS } from "../src/overlay/motion/keyframes";
 import { valuesAt } from "./fake-motion";
 
 const SIZE = 58;
@@ -221,8 +221,18 @@ describe("Lens plan: the fisheye as tracks", () => {
   });
 
   it("holds every pose to the next in the lite tier, and steps slow stretches on the beat with steps", () => {
-    const lite = plan({ hold: true });
-    for (const track of lite.tracks) expect(track.frames.every((f) => f.easing === HOLD)).toBe(true);
+    const lite = plan({ hold: true, origin: 712 });
+    for (const track of lite.tracks) {
+      expect(track.frames.every((f) => f.easing === HOLD)).toBe(true);
+      // every pose but the first and the last starts on the shared song-time beat: at most 20 a second
+      const at = track.frames.slice(1, -1).map((f) => track.t0 + (f.offset as number) * track.duration);
+      for (const t of at) expect(Math.abs(t / STEP_MS - Math.round(t / STEP_MS)), `at ${t}`).toBeLessThan(1e-6);
+      for (let i = 1; i < at.length; i++) expect((at[i] ?? 0) - (at[i - 1] ?? 0)).toBeGreaterThanOrEqual(STEP_MS - 1e-6);
+      // and it lands on the plan's own pose there
+      const t = at[Math.floor(at.length / 2)] ?? 0;
+      const j = lite.tracks.indexOf(track);
+      expect(drawn(track, t + 1).s).toBeCloseTo(lite.at(t).scale[j] ?? 0, 2);
+    }
     // a long held word: slow stretches of the lens step on the shared beat
     const held = plan({ words: [{ start: 1000, end: 6000 }, { start: 6000, end: 6400 }], shape: row(2, SIZE * 3), steps: true });
     const easings = held.tracks.flatMap((track) => track.frames.map((f) => f.easing)).filter((e) => e !== undefined);
