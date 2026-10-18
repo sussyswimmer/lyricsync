@@ -6,9 +6,10 @@ Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex rea
 
 A desktop app for **macOS and Windows** that shows the synced lyrics of whatever is playing on the **desktop layer**. That layer is above the wallpaper and below desktop icons and every window. The user can still drag folders and windows over it, and clicks pass straight through.
 
-- Highlights word by word as the song plays.
+- Highlights word by word as the song plays, and the words move as they're sung.
+- A look picked for each song: the style (Arc / Lens / Drift / Stack), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
 - Default colors come from the album cover. The user can override every color.
-- Fully customizable: style (Arc / Lens / Drift / Stack), font, size, curve, height, glow, opacity.
+- Customizable: size, height, effects (how much the words move), glow, opacity and colors.
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
