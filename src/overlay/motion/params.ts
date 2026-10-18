@@ -270,14 +270,12 @@ export const DOTS = {
   /** ...breathes 1 ± breath every breathMs... */
   breath: 0.045,
   breathMs: 4500,
-  /** ...swells to this size over the last swellMs of the break... */
+  /** ...swells to this size over the swellMs before it pops out... */
   swell: 1.15,
   swellMs: 250,
-  /** ...and from the break's end pops out on this spring, fading over fadeOutMs. */
+  /** ...and pops out on this spring over the break's last fadeOutMs, fading as it goes: gone by E. */
   popOutSpring: { hz: 5, damping: 0.7 } as SpringSpec,
   fadeOutMs: 200,
-  /** planned this long past the break's end (the pop-out's tail, all invisible by then) */
-  tailMs: 320,
   /** reduced motion and lite: the group fades in over this long, each dot brightens over brightenMs */
   calmFadeInMs: 300,
   brightenMs: 250,

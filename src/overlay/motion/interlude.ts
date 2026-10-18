@@ -4,8 +4,8 @@
  * A break is the song's intro, or a gap between two sung lines, of INTERLUDE_MIN_MS or more (an empty
  * timed LRC line usually marks one; a long rest between lines counts too). Three dots stand where the
  * next line will be. They light one after another across 92.5 % of the break: each grows (0.75 to
- * about 1.05, then 1), brightens, rises and starts to glow. The group pops in, breathes gently, swells
- * over the break's last 250 ms, and pops out as the break ends at E: the next line's lead (LEAD_MS
+ * about 1.05, then 1), brightens, rises and starts to glow. The group pops in, breathes gently, swells,
+ * and pops out over the break's last 200 ms, so the dots are gone by E: the next line's lead (LEAD_MS
  * before it starts), when the view moves on to it. All numbers are in params.ts (DOTS).
  */
 import type { Line } from "../../core/lrc";
@@ -20,7 +20,7 @@ export interface Interlude {
   next: number;
   /** song ms the dots appear */
   start: number;
-  /** E: song ms the break ends and the view moves to the next line (its start - LEAD_MS); the dots pop out from here */
+  /** E: song ms the break ends and the view moves to the next line (its start - LEAD_MS); the dots are gone by here */
   end: number;
 }
 
@@ -100,26 +100,28 @@ export function planDots(il: Interlude, dotPx: number, params: MotionParams, ste
   const moving = amp > 0;
   const len = Math.max(1, il.end - il.start);
   const slot = (DOTS.fillShare * len) / 3;
-  const total = len + DOTS.tailMs;
+  // the pop-out takes the break's last fadeOutMs, so nothing is left at E; nothing is planned past it
+  const exit = Math.max(0, len - DOTS.fadeOutMs);
+  const total = len;
   const times = sampleTimes(total, moving ? PLAN_MS : 50);
 
   // the group
   const opacity = times.map((ms) =>
-    ms < len ? clamp01(ms / (moving ? DOTS.fadeInMs : DOTS.calmFadeInMs)) : clamp01(1 - (ms - len) / DOTS.fadeOutMs),
+    ms < exit ? clamp01(ms / (moving ? DOTS.fadeInMs : DOTS.calmFadeInMs)) : clamp01(1 - (ms - exit) / DOTS.fadeOutMs),
   );
   opacity[opacity.length - 1] = 0;
   const keepOpacity = thin(times, [opacity], [0.01]);
   let transform: Track | null = null;
   if (moving) {
     const away = 1 - amp;
-    const swellAt = len - DOTS.swellMs;
+    const swellAt = exit - DOTS.swellMs;
     const target = (ms: number): number => {
-      if (ms >= len) return away;
+      if (ms >= exit) return away;
       if (ms >= swellAt) return 1 + (DOTS.swell - 1) * amp;
       // breathe from the middle, rising first
       return 1 + DOTS.breath * amp * Math.sin((2 * Math.PI * ms) / DOTS.breathMs);
     };
-    const scale = chaseTwo(target, DOTS.popInSpring, DOTS.popOutSpring, len, away, times).map((s) => Math.max(0, s));
+    const scale = chaseTwo(target, DOTS.popInSpring, DOTS.popOutSpring, exit, away, times).map((s) => Math.max(0, s));
     scale[scale.length - 1] = away;
     const keepGroup = thin(times, [scale], [0.002]);
     transform = track(il.start, times, keepGroup, [scale], q(STEP_QUANTUM.scale), ([s]) => ({ transform: `scale(${num(s ?? 0, 4)})` }));

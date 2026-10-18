@@ -820,24 +820,29 @@ describe("instrumental breaks", () => {
     expect(interludeAt(breaks, 12_200)).toBeNull();
   });
 
-  it("light their dots one after another, swell over the last 250 ms, and pop out from E", () => {
+  it("light their dots one after another, swell, then pop out over the break's last 200 ms: gone by E", () => {
     const il = { next: 2, start: 10_000, end: 16_000 };
     const plan = planDots(il, 20, BL);
     const group = plan.group.transform as Track;
     const scale = (t: number): number => valueAt(group, t, scaleOfFrame);
     const opacity = (t: number): number => valueAt(plan.group.opacity, t, opacityOf);
+    const exit = il.end - DOTS.fadeOutMs;
     expect(String(group.frames[0]?.transform)).toBe("scale(0)");
     expect(String(group.frames[group.frames.length - 1]?.transform)).toBe("scale(0)");
-    // breathing through the break, swollen by its end
+    // breathing through the break, swollen as the pop-out starts
     expect(scale(13_000)).toBeGreaterThan(0.9);
     expect(scale(13_000)).toBeLessThan(1.1);
-    expect(scale(il.end - DOTS.swellMs - 10)).toBeLessThan(1.08);
-    expect(scale(il.end)).toBeGreaterThan(1.1);
-    // gone right after E
-    expect(scale(il.end + 120)).toBeLessThan(scale(il.end) - 0.3);
-    expect(opacity(il.end - 1)).toBeCloseTo(1, 2);
-    expect(opacity(il.end + DOTS.fadeOutMs)).toBe(0);
-    expect(plan.until).toBe(il.end + DOTS.tailMs);
+    expect(scale(exit - DOTS.swellMs - 10)).toBeLessThan(1.08);
+    expect(scale(exit)).toBeGreaterThan(1.1);
+    // popping out, then gone by E, when the view moves on
+    expect(scale(exit + 120)).toBeLessThan(scale(exit) - 0.3);
+    expect(opacity(exit - 1)).toBeCloseTo(1, 2);
+    expect(opacity(exit + DOTS.fadeOutMs / 2)).toBeCloseTo(0.5, 1);
+    expect(opacity(il.end)).toBe(0);
+    expect(scale(il.end)).toBe(0);
+    expect(plan.until).toBe(il.end);
+    expect(group.t0 + group.duration).toBe(il.end);
+    expect(plan.group.opacity.t0 + plan.group.opacity.duration).toBe(il.end);
     // when each dot reaches full brightness: in turn, all within the break
     const lit = plan.dots.map((d) => {
       const f = d.frames.find((k) => Number(k.opacity) > 0.95);
@@ -853,7 +858,9 @@ describe("instrumental breaks", () => {
       const plan = planDots({ next: 2, start: 10_000, end: 16_000 }, 20, p);
       expect(plan.group.transform).toBeNull();
       expect(plan.dots.every((d) => d.frames.every((f) => f.transform === undefined))).toBe(true);
-      expect(valueAt(plan.group.opacity, 16_000 + DOTS.fadeOutMs, opacityOf)).toBe(0);
+      expect(valueAt(plan.group.opacity, 16_000 - DOTS.fadeOutMs - 1, opacityOf)).toBeCloseTo(1, 2);
+      expect(valueAt(plan.group.opacity, 16_000, opacityOf)).toBe(0);
+      expect(plan.until).toBe(16_000);
     }
   });
 
@@ -1495,7 +1502,7 @@ describe("the interlude dots", () => {
     expect(el.find("ut-dot")).toHaveLength(3);
     expect(el.style.gap).toBe("11.00px");
     const until = dots.play({ next: 1, start: 10_000, end: 16_000 }, tl, BL, "dots");
-    expect(until).toBe(16_000 + DOTS.tailMs);
+    expect(until).toBe(16_000);
     expect(el.getAnimations()).toHaveLength(2);
     expect(el.find("ut-dot").every((d) => d.getAnimations().length === 1 && d.children[0]?.getAnimations().length === 1)).toBe(true);
     dots.stop();
