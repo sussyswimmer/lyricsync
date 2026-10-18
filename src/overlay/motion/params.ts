@@ -85,15 +85,23 @@ export interface MotionParams {
   dotAmp: number;
   /** Springs are planned at most this long after their word... */
   tailMs: number;
-  /** ...and "fade" karaoke fades in this fast, to a steady bloom of this opacity. */
+  /** ...and "fade" karaoke fades in this fast, to a steady bloom of this opacity... */
   fadeMs: number;
   steadyGlow: number;
+  /**
+   * ...in this many steps where the compositor runs stepped keyframes (0: smoothly). The lite tier
+   * steps: software compositing redraws for every changed frame, and a 140 ms fade reads the same
+   * in three.
+   */
+  fadeSteps: number;
 }
 
 /** A at its largest: Effects 100 on a lively song. */
 export const A_MAX = 2.5;
 /** The energy at which Effects 50 moves exactly as much as BL (A = 1). */
 export const BL_ENERGY = 0.3;
+/** The lite tier's fades step this many times (MotionParams.fadeSteps). */
+export const LITE_FADE_STEPS = 3;
 
 const clamp = (x: number, lo: number, hi: number): number => (x <= lo ? lo : x >= hi ? hi : x);
 const finite = (x: number, fallback: number): number => (Number.isFinite(x) ? x : fallback);
@@ -156,12 +164,13 @@ export function motionParams(input: MotionInput): MotionParams {
     tailMs: 1300,
     fadeMs: 140,
     steadyGlow: 0.6,
+    fadeSteps: input.power === "lite" ? LITE_FADE_STEPS : 0,
   };
 }
 
 /** A key for "the parameters changed": a restyle re-plans the focus line only then. */
 export function paramsKey(p: MotionParams): string {
-  return JSON.stringify([p.amp, p.pace, p.karaoke, p.emphasis]);
+  return JSON.stringify([p.amp, p.pace, p.karaoke, p.fadeSteps, p.emphasis]);
 }
 
 /**
@@ -225,6 +234,11 @@ export const BLUR_STEPS = 4;
 export const DRIFT_PERSPECTIVE_EM = 15.5;
 export const DRIFT_RECEDE_EM = 2.4;
 export const DRIFT_TILT_DEG = 14;
+/**
+ * The lite tier's scroll holds each position for this long (30 a second) where the compositor runs
+ * stepped keyframes: software compositing redraws the whole list for every frame it moves.
+ */
+export const LITE_SCROLL_MS = 1000 / 30;
 /** A jump further than this many lines (a seek) cuts, with the stage's crossfade, instead of gliding. */
 export const MAX_GLIDE_LINES = 3;
 /** A line coming into focus eases its upcoming words into their rest pose over this long. */

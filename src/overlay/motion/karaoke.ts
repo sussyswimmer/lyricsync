@@ -280,19 +280,24 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, param
   };
   if (params.karaoke === "fade") {
     // The lit copy and a steady bloom fade in at the word's start; the bloom fades out at its end.
+    // Where the compositor runs stepped keyframes, a tier that steps its fades (params.fadeSteps)
+    // jumps through them evenly, the first jump on the word's start: one word's fade-out and the
+    // next one's fade-in then share their frames.
     const fade = params.fadeMs;
     const total = span + fade;
+    const n = options.steps === true ? Math.max(0, Math.round(params.fadeSteps)) : 0;
+    const stepped = (f: Keyframe): Keyframe => (n > 0 ? { ...f, easing: `steps(${n}, start)` } : f);
     return {
       ...none,
       until: word.start + total,
-      litFade: { t0: word.start, duration: fade, frames: [{ opacity: 0 }, { opacity: 1 }] },
+      litFade: { t0: word.start, duration: fade, frames: [stepped({ opacity: 0 }), { opacity: 1 }] },
       glow: {
         t0: word.start,
         duration: total,
         frames: [
-          { opacity: 0, offset: 0 },
+          stepped({ opacity: 0, offset: 0 }),
           { opacity: params.steadyGlow, offset: Math.min(fade, span) / total },
-          { opacity: params.steadyGlow, offset: span / total },
+          stepped({ opacity: params.steadyGlow, offset: span / total }),
           { opacity: 0, offset: 1 },
         ],
       },

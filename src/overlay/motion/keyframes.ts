@@ -50,6 +50,28 @@ export function thin(times: readonly number[], channels: readonly (readonly numb
   return out;
 }
 
+/**
+ * Indices of the samples to keep for a track that holds each kept value until the next one (HOLD on
+ * every keyframe): a sample is kept once some channel `c` has moved more than `quantum[c]` from the
+ * last kept sample. The first and last samples are always kept, so where motion is slow it takes fewer,
+ * larger steps, and where it has settled, none.
+ */
+export function holds(channels: readonly (readonly number[])[], quantum: readonly number[]): number[] {
+  const n = Math.max(0, ...channels.map((c) => c.length));
+  if (n <= 2) return Array.from({ length: n }, (_, i) => i);
+  const out = [0];
+  let last = 0;
+  for (let i = 1; i < n - 1; i++) {
+    const moved = channels.some((ch, c) => Math.abs((ch[i] ?? 0) - (ch[last] ?? 0)) > (quantum[c] ?? 0));
+    if (moved) {
+      out.push(i);
+      last = i;
+    }
+  }
+  out.push(n - 1);
+  return out;
+}
+
 /** Sample times 0, every, 2·every, ..., duration (the last one exactly at the end). */
 export function sampleTimes(durationMs: number, everyMs = SAMPLE_MS): number[] {
   const count = Math.max(1, Math.ceil(durationMs / everyMs - 1e-9));

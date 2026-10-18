@@ -11,7 +11,8 @@ import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
 import { bloomShadow } from "../src/overlay/motion/bloom";
-import { bloomOf } from "../src/overlay/motion/params";
+import { HOLD } from "../src/overlay/motion/keyframes";
+import { bloomOf, LITE_SCROLL_MS } from "../src/overlay/motion/params";
 import { FakeAnimation, FakeAnimationHost, valuesAt } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -1308,6 +1309,32 @@ describe("Stack and Drift on the motion engine", () => {
     expect(w?.find("kw-dark")[0]?.find("kl")).toEqual([]);
     // a steady 0.6 bloom while it is sung, faded in and out
     expect(w?.find("kw-glow")[0]?.getAnimations()[0]?.keyframes.map((k) => k.opacity)).toEqual([0, 0.6, 0.6, 0, 0]);
+    // an engine that wouldn't composite stepped keyframes (node's, WebKit) glides and fades smoothly
+    expect(scrolling(rows[1])[0]?.keyframes.every((k) => k.easing === undefined)).toBe(true);
+    expect(w?.find("kw-glow")[0]?.getAnimations()[0]?.keyframes.every((k) => k.easing === undefined)).toBe(true);
+  });
+
+  it("step the lite tier's scroll and fades where the compositor runs stepped keyframes", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36" });
+    const { mode, rows } = drift(0, lookFor({}, { power: "lite" }));
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    // the scroll holds each place for a 30th of a second, every row on the same beat
+    const glide = scrolling(rows[1])[0];
+    const frames = glide?.keyframes ?? [];
+    expect(frames.length).toBeGreaterThan(3);
+    expect(frames.slice(0, -1).every((k) => k.easing === HOLD)).toBe(true);
+    const beats = frames.slice(0, -1).map((k) => (Number(k.offset) * Number(glide?.duration)) / LITE_SCROLL_MS);
+    expect(beats.every((b) => Math.abs(b - Math.round(b)) < 1e-6)).toBe(true);
+    expect(scrolling(rows[2])[0]?.startTime).toBe(glide?.startTime);
+    // ending where the full tier's glide ends
+    expect(frames[frames.length - 1]?.transform).toBe(rows[1]?.style.getPropertyValue("transform"));
+    // the lit copy and the bloom fade in three steps
+    const w = wordsOf(rows[1])[0];
+    const eases = (el: FakeElement | undefined): Set<string> => new Set((el?.getAnimations()[0]?.keyframes ?? []).flatMap((k) => (k.easing ? [k.easing] : [])));
+    expect(eases(w?.find("kw-win")[0])).toEqual(new Set(["steps(3, start)"]));
+    expect(eases(w?.find("kw-glow")[0])).toEqual(new Set(["steps(3, start)"]));
   });
 
   it("only fade under reduced motion, and cut every line change for the stage to crossfade", () => {

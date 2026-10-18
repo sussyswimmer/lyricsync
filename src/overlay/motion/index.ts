@@ -35,6 +35,7 @@ export {
 export {
   compositorSteps,
   framesOf,
+  holds,
   keyframesAt,
   keyPoints,
   liftScale,
@@ -62,6 +63,8 @@ export {
   CALM_SCROLL_SPRING,
   DOTS,
   LEAD_MS,
+  LITE_FADE_STEPS,
+  LITE_SCROLL_MS,
   SCROLL_SPRING,
   type EmphasisRule,
   type MotionInput,

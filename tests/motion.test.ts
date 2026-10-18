@@ -26,6 +26,7 @@ import {
   compositorSteps,
   framesOf,
   HOLD,
+  holds,
   keyframesAt,
   keyPoints,
   liftScale,
@@ -46,6 +47,7 @@ import {
   DOTS,
   glowGain,
   LEAD_MS,
+  LITE_FADE_STEPS,
   motionParams,
   paramsKey,
   SCROLL_SPRING,
@@ -76,15 +78,16 @@ const opacityOf = (f: Keyframe): number => Number(f.opacity);
 
 /**
  * A track's value at song time `t` the way an engine evaluates it: linear between keyframes, or in
- * steps(n, end) where a keyframe's easing says so; held at either end.
+ * steps(n, end) or steps(n, start) where a keyframe's easing says so; held at either end. Keyframes
+ * without offsets are spaced evenly.
  */
 function valueAt(track: Track, t: number, read: (f: Keyframe) => number): number {
-  const fr = track.frames;
+  const fr = track.frames.map((f, i, all) => ({ offset: all.length > 1 ? i / (all.length - 1) : 0, ...f }));
   const first = fr[0];
   const last = fr[fr.length - 1];
   if (!first || !last) return Number.NaN;
   const local = track.duration > 0 ? (t - track.t0) / track.duration : 1;
-  if (local <= Number(first.offset)) return read(first);
+  if (local < Number(first.offset)) return read(first);
   for (let i = 0; i + 1 < fr.length; i++) {
     const a = fr[i] as Keyframe;
     const b = fr[i + 1] as Keyframe;
@@ -92,8 +95,10 @@ function valueAt(track: Track, t: number, read: (f: Keyframe) => number): number
     const ob = Number(b.offset);
     if (local >= ob) continue;
     let p = ob > oa ? (local - oa) / (ob - oa) : 1;
-    const steps = /^steps\((\d+), end\)$/u.exec(String(a.easing ?? ""));
-    if (steps) p = Math.floor(p * Number(steps[1]) + 1e-9) / Number(steps[1]);
+    const steps = /^steps\((\d+), (end|start)\)$/u.exec(String(a.easing ?? ""));
+    const n = Number(steps?.[1]);
+    if (steps?.[2] === "end") p = Math.floor(p * n + 1e-9) / n;
+    if (steps?.[2] === "start") p = Math.min(1, (Math.floor(p * n + 1e-9) + 1) / n);
     return read(a) + (read(b) - read(a)) * p;
   }
   return read(last);
@@ -274,6 +279,16 @@ describe("keyframes", () => {
     expect(num(3.14159, 0)).toBe("3");
     expect(num(-0.4, 0)).toBe("0");
     expect(liftScale(0, -1.23456, 1.025)).toBe("translate(0px, -1.23px) scale(1.025)");
+  });
+
+  it("keep a held track's samples once they have moved a quantum, and its ends", () => {
+    expect(holds([[0, 0.1, 0.2, 0.3, 1, 1, 1]], [0.25])).toEqual([0, 3, 4, 6]);
+    // any channel moving far enough keeps a sample
+    expect(holds([[0, 0, 0], [0, 1, 1]], [1, 0.5])).toEqual([0, 1, 2]);
+    expect(holds([[0, 0, 0, 0]], [0.1])).toEqual([0, 3]);
+    expect(holds([[1, 2]], [5])).toEqual([0, 1]);
+    expect(holds([[7]], [1])).toEqual([0]);
+    expect(holds([], [])).toEqual([]);
   });
 
   it("cope with samples at one instant, and with empty or instant tracks", () => {
@@ -506,6 +521,10 @@ describe("the motion's parameters", () => {
     expect(params({ effects: 0 }).karaoke).toBe("full");
     expect(params({ motion: false }).karaoke).toBe("fade");
     expect(params({ power: "lite" }).karaoke).toBe("fade");
+    // only the lite tier steps its fades
+    expect(params({ power: "lite" }).fadeSteps).toBe(LITE_FADE_STEPS);
+    expect(params({ motion: false }).fadeSteps).toBe(0);
+    expect(params({}).fadeSteps).toBe(0);
   });
 
   it("take the springs' pace from the song's snap", () => {
@@ -523,6 +542,9 @@ describe("the motion's parameters", () => {
     for (const over of [{ energy: 0.6 }, { effects: 80 }, { snap: 0.9 }, { emphasis: null }, { motion: false }] as Partial<MotionInput>[]) {
       expect(paramsKey(motionParams({ ...BL_INPUT, energy: 0.45, ...over })), JSON.stringify(over)).not.toBe(base);
     }
+    // the same fades, stepped or not
+    const calm = paramsKey(motionParams({ ...BL_INPUT, motion: false }));
+    expect(paramsKey(motionParams({ ...BL_INPUT, motion: false, power: "lite" }))).not.toBe(calm);
   });
 });
 
@@ -863,6 +885,37 @@ describe("a word's motion", () => {
       expect(plan.glow?.frames.map((f) => f.opacity)).toEqual([0, 0.6, 0.6, 0]);
       expect(plan.until).toBe(wordUntil({ start: 5800, end: 6150 }, p));
     }
+  });
+
+  it("steps the lite tier's fades where the compositor runs stepped keyframes", () => {
+    const lite = params({ power: "lite" });
+    const shape = (text: string): WordShape => shapeOf(text, [{ text }]);
+    const words: [WordTiming, string][] = [
+      [{ start: 5800, end: 6150 }, "paper"],
+      [{ start: 6150, end: 6500 }, "boats"],
+    ];
+    const tracksOf = (steps: boolean): { track: Track; read: (f: Keyframe) => number }[] =>
+      words.flatMap(([w, text]) => {
+        const plan = planWord(w, text, shape(text), lite, { steps });
+        return [plan.litFade, plan.glow].map((track) => ({ track: track as Track, read: opacityOf }));
+      });
+    const [lit, glow] = tracksOf(true);
+    // three even jumps, the first on the word's start: a third lit at once, whole 93 ms in
+    expect(valueAt(lit?.track as Track, 5799, opacityOf)).toBe(0);
+    expect(valueAt(lit?.track as Track, 5800, opacityOf)).toBeCloseTo(1 / 3, 9);
+    expect(valueAt(lit?.track as Track, 5850, opacityOf)).toBeCloseTo(2 / 3, 9);
+    expect(valueAt(lit?.track as Track, 5894, opacityOf)).toBe(1);
+    // the bloom likewise, up to its steady 0.6, and down from it after the word in three more
+    expect(valueAt(glow?.track as Track, 5800, opacityOf)).toBeCloseTo(0.2, 9);
+    expect(valueAt(glow?.track as Track, 6000, opacityOf)).toBeCloseTo(0.6, 9);
+    expect(valueAt(glow?.track as Track, 6150, opacityOf)).toBeCloseTo(0.4, 9);
+    expect(valueAt(glow?.track as Track, 6250, opacityOf)).toBe(0);
+    // one word's fade-out and the next one's fade-in share their frames: 9 frames for two words, not 27
+    expect(changeFrames(tracksOf(true), 5700, 6700)).toHaveLength(9);
+    expect(changeFrames(tracksOf(false), 5700, 6700).length).toBeGreaterThan(20);
+    // smooth under reduced motion (no tier asks), and wherever the compositor wouldn't step
+    expect(planWord(words[0][0], "paper", shape("paper"), params({ motion: false }), { steps: true }).litFade?.frames).toEqual([{ opacity: 0 }, { opacity: 1 }]);
+    expect(planWord(words[0][0], "paper", shape("paper"), lite).litFade?.frames).toEqual([{ opacity: 0 }, { opacity: 1 }]);
   });
 
   it("still lights a word with no time to it, at once when its time comes", () => {

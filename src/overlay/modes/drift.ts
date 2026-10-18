@@ -5,7 +5,7 @@ import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
 import { InterludeDots } from "../motion/dots";
 import { findInterludes, type Interlude } from "../motion/interlude";
-import { compositorSteps, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
+import { compositorSteps, HOLD, holds, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
 import { casedLines } from "../motion/letters";
 import { KaraokeLine, nextFrame, SLICE_MS } from "../motion/line";
 import {
@@ -18,6 +18,7 @@ import {
   DRIFT_RECEDE_EM,
   DRIFT_TILT_DEG,
   LEAVE_MS,
+  LITE_SCROLL_MS,
   MAX_GLIDE_LINES,
   motionParams,
   paramsKey,
@@ -694,7 +695,9 @@ export class DriftMode implements ModeRenderer {
     this.glide ??= new WallGlide(this.target, spec, now);
     this.glide.to(this.target, now, spec);
     this.cancelScrolls();
-    const s = this.glide.samples(SAMPLE_MS);
+    // the lite tier holds each place for a 30th of a second (LITE_SCROLL_MS), every row on the same beat
+    const hold = look.power === "lite" && this.steps;
+    const s = this.glide.samples(hold ? LITE_SCROLL_MS : SAMPLE_MS);
     const frames = s.xs.map((x) => this.layout(x, look));
     const final = this.layout(this.target, look);
     this.slots.forEach((slot, i) => {
@@ -719,12 +722,15 @@ export class DriftMode implements ModeRenderer {
       const opacity = frames.map((f) => f.get(i)?.opacity ?? 0);
       const ys = styles.map((st) => st?.y ?? 0);
       const scales = styles.map((st) => st?.scale ?? 1);
-      const keep = thin(s.times, [ys, opacity, scales], [SCROLL_THIN.y, SCROLL_THIN.opacity, SCROLL_THIN.scale]);
+      const tolerance = [SCROLL_THIN.y, SCROLL_THIN.opacity, SCROLL_THIN.scale];
+      const keep = hold ? holds([ys, opacity, scales], tolerance) : thin(s.times, [ys, opacity, scales], tolerance);
       const depth = this.depth;
       const anim = playWall(el, {
         frames: keyframesAt(s.times, keep, (k) => {
           const st = styles[k];
-          return { transform: st ? transformOf(st, depth) : "none", opacity: num(opacity[k] ?? 0, 3) };
+          const f: Keyframe = { transform: st ? transformOf(st, depth) : "none", opacity: num(opacity[k] ?? 0, 3) };
+          if (hold) f.easing = HOLD;
+          return f;
         }),
         duration: s.duration,
         startTime: s.startTime,
