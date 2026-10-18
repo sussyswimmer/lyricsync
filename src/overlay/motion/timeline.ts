@@ -40,8 +40,12 @@ interface Entry {
 const DRIFT_MS = 8;
 /** While slewing, re-anchor as soon as this much has built up. */
 const SLEW_DRIFT_MS = 2;
-/** A rate this far from 1 is a slew worth following. */
-const SLEW_RATE = 0.02;
+/**
+ * A rate this far from 1 is a slew worth following frame by frame: a correction of more than about
+ * 25 ms (the clock blends one in over 300 ms). Smaller ones are taken up by one re-anchor at the next
+ * paint, a jump too small to see, so the resync jitter of a real player doesn't keep the page awake.
+ */
+const SLEW_RATE = 0.08;
 
 const perfNow = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 

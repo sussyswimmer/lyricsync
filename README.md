@@ -156,7 +156,7 @@ Debug builds read four more flags: `--media-test` prints each now-playing and ly
 
 `pnpm dev` serves the frontend at <http://localhost:1420>. In a plain browser there is no Tauri, so both pages run against the **mock bridge**, a fake player that sends the same events as the Rust core. Open the overlay at <http://localhost:1420/> and the settings window at <http://localhost:1420/settings.html> side by side: they share the player and settings, so a change in one shows up in the other.
 
-The mock plays six demo tracks with original placeholder lyrics:
+The mock plays seven demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
@@ -166,6 +166,7 @@ The mock plays six demo tracks with original placeholder lyrics:
 | 3 | Ultraviolet Static | not found |
 | 4 | Tidal Interlude | instrumental, no cover art |
 | 5 | Script Sampler | scripts and line shapes for visual QA: Japanese, Chinese, Korean, Vietnamese, right-to-left, very long and one-word lines, 42 s |
+| 6 | Glass Harbor | the motion demo: syllable-timed enhanced LRC, held line endings that light letter by letter, and an intro and a mid-song break long enough for the interlude dots, 38 s |
 
 Keys in mock mode (ignored while a form control has focus):
 
@@ -183,7 +184,7 @@ URL parameters (combine them with `&`):
 | Parameter | Effect |
 |---|---|
 | `?mock` | Use the mock even inside the Tauri webview. A plain browser always uses it. |
-| `?track=N` | Start on demo track N (0–5). |
+| `?track=N` | Start on demo track N (0–6). |
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |

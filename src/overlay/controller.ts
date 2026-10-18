@@ -148,9 +148,23 @@ export class OverlayController {
     if (this.stopped) return;
     // A sample older than the clock's (one that crossed a newer one in flight) changes nothing, so
     // what this controller believes (playing, paused) always matches what its clock does.
-    if (this.clock.update(np, Date.now()) === "ignored") return;
+    const now = Date.now();
+    const result = this.clock.update(np, now);
+    if (result === "ignored") return;
     const before = this.nowPlaying;
     this.nowPlaying = np;
+    // A resync that changes nothing on screen (same song, still playing, the clock already where the
+    // sample says) needs no frame when the stage draws its words on the compositor: those are anchored
+    // to the song and keep running. A stage that paints words itself, or any real change, gets one.
+    const quiet =
+      result === "slew" &&
+      this.stage.wakesForWords === false &&
+      np !== null &&
+      before !== null &&
+      np.trackKey === before.trackKey &&
+      np.isPlaying === before.isPlaying &&
+      np.artwork === before.artwork &&
+      this.clock.rate(now) === 1;
     if (!np) {
       this.lyrics = null;
       this.stage.show({ kind: "none" }, "");
@@ -164,7 +178,7 @@ export class OverlayController {
       // keep restarting the grace period of a track that has no artwork.
       if (np.trackKey !== before?.trackKey || np.artwork !== before.artwork) this.updatePalette(np);
     }
-    this.update();
+    this.update(!quiet);
   }
 
   /** Events always apply in order. The initial `get_lyrics` reply only fills in if no event beat it. */
@@ -228,14 +242,16 @@ export class OverlayController {
     });
   }
 
-  private update(): void {
+  private update(paint = true): void {
     const np = this.nowPlaying;
     // `enabled` is new in contract v3: settings without it (an older core) count as on.
     const on = this.settings.enabled !== false;
-    this.visible = !this.gate || (np !== null && on && (this.settings.showWhen === "always" || np.isPlaying));
+    const visible = !this.gate || (np !== null && on && (this.settings.showWhen === "always" || np.isPlaying));
+    const changed = visible !== this.visible;
+    this.visible = visible;
     this.stage.setVisible(this.visible);
     this.stage.setPaused(!np?.isPlaying);
-    this.kick();
+    if (paint || changed) this.kick();
   }
 
   private get animating(): boolean {
@@ -275,7 +291,7 @@ export class OverlayController {
       else this.raf = requestAnimationFrame(this.tick);
       return;
     }
-    const wait = Math.min(this.stage.wakesForWords ? MAX_SLEEP_MS : IDLE_SLEEP_MS, this.stage.nextChange(t));
+    const wait = Math.min(this.stage.wakesForWords === false ? IDLE_SLEEP_MS : MAX_SLEEP_MS, this.stage.nextChange(t));
     this.wake(Math.max(0, wait - 4));
   };
 

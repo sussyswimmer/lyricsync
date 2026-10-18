@@ -39,6 +39,7 @@ import {
   restTransform,
   type Part,
   type Track,
+  type WordMotion,
   type WordShape,
 } from "./karaoke";
 import { canvasMeasure, isRtl, measureLetters, roughMeasure } from "./letters";
@@ -90,6 +91,7 @@ export class KaraokeLine {
   private readonly look: KaraokeLook;
   private origin = 0;
   private end = 0;
+  private readonly plans = new Map<string, WordMotion>();
 
   /** `els[i]` is the `.kw` box of `words[i]`. Builds the overlays; `mount` starts the motion. */
   constructor(words: readonly Word[], els: readonly HTMLElement[], look: KaraokeLook, timeline: SongTimeline, group: string) {
@@ -120,14 +122,10 @@ export class KaraokeLine {
    */
   mount(t: number, settleIn: boolean): void {
     this.timeline.cancel(this.group);
-    const first = this.views[0]?.word.start ?? t;
-    const origin = Math.min(t, first);
-    const { motion, energy, size } = this.look;
+    const origin = this.originAt(t);
+    const { motion, size } = this.look;
     const settles = (v: WordView): boolean => settleIn && motion && v.word.start - origin >= SETTLE_IN_MS;
-    const plans = this.views.map((v) =>
-      // a word sung as its line arrives never settled into rest: its pop starts from full size
-      planWord(v.word, v.text, v.shape, { energy, motion, from: settleIn && !settles(v) ? "full" : "rest" }),
-    );
+    const plans = this.plansFor(origin, settleIn);
     this.origin = origin;
     this.end = Math.max(origin + 1, ...plans.map((p) => p.until));
     this.views.forEach((v, i) => {
@@ -154,6 +152,37 @@ export class KaraokeLine {
         const g = v.letterGlows[j];
         if (g) this.play(g, track);
       });
+    });
+  }
+
+  /**
+   * Plans every word ahead of time for a line coming into focus as its first word starts (the usual
+   * case), so that the line change itself only starts animations. A different arrival re-plans just
+   * the words whose starting pose differs.
+   */
+  prepare(): void {
+    const first = this.views[0]?.word.start ?? 0;
+    this.plansFor(first, true);
+  }
+
+  /** Where a line coming into focus at `t` starts its shared animation window. */
+  private originAt(t: number): number {
+    return Math.min(t, this.views[0]?.word.start ?? t);
+  }
+
+  /** Each word's plan for a line starting at `origin`, memoized by the pose its pop starts from. */
+  private plansFor(origin: number, settleIn: boolean): WordMotion[] {
+    const { motion, energy } = this.look;
+    return this.views.map((v, i) => {
+      // a word sung as its line arrives never settled into rest: its pop starts from full size
+      const from = settleIn && !(motion && v.word.start - origin >= SETTLE_IN_MS) ? "full" : "rest";
+      const key = `${i}:${from}`;
+      let plan = this.plans.get(key);
+      if (!plan) {
+        plan = planWord(v.word, v.text, v.shape, { energy, motion, from });
+        this.plans.set(key, plan);
+      }
+      return plan;
     });
   }
 
@@ -229,7 +258,11 @@ export class KaraokeLine {
         box?.append(sp);
         return sp;
       });
-    const base = letterSpans(inners[0]);
+    // The base copy only moves letter by letter in a held syllable; otherwise it is one run of text,
+    // laid out by the browser exactly as the plain text is.
+    const held = emphasized(word, word.text) && shape.letters.length > 1;
+    const base = held ? letterSpans(inners[0]) : [];
+    if (!held) inners[0]?.append(h("span", "kl", text));
     const lit = letterSpans(inners[1]);
     track.append(bwin, win);
     fx.append(glow, track);
@@ -239,10 +272,9 @@ export class KaraokeLine {
     return view;
   }
 
-  /** Not sung yet: small and low, nothing lit, no glow (until the line mounts its motion). */
+  /** Not sung yet: nothing lit, no glow (until the line mounts its motion; the word box stays as it is). */
   private restStyle(v: WordView): void {
     const motion = this.look.motion;
-    put(v.el, "transform", motion ? restTransform(this.look.size) : "none");
     const closed = motion ? closedWindow(v.shape) : 0;
     put(v.track, "transform", `translateX(${px(closed)})`);
     for (const inner of v.inners) put(inner, "transform", `translateX(${px(-closed)})`);

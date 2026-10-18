@@ -57,6 +57,8 @@ const DOT_EM = 0.4;
 const SEEK_MS = 250;
 /** A line leaving focus keeps its overlay this long, while it fades back to plain text. */
 const LEAVE_MS = 420;
+/** The next line is prepared this long after a line change, once that change's frames are out. */
+const PREPARE_DELAY_MS = 600;
 
 interface Row {
   el: HTMLDivElement;
@@ -213,6 +215,9 @@ export class DriftMode implements ModeRenderer {
   private glide: Glide | null = null;
   private glideAt = 0;
   private karaoke: { line: KaraokeLine; row: Row } | null = null;
+  /** the next line's overlay and plans, made ahead in a task of their own */
+  private prepared: { line: KaraokeLine; row: Row } | null = null;
+  private prepareTimer: ReturnType<typeof setTimeout> | null = null;
   private leaving: { line: KaraokeLine; row: Row; at: number }[] = [];
   private lastT = Number.NaN;
   private lastRunning = false;
@@ -343,6 +348,10 @@ export class DriftMode implements ModeRenderer {
 
   destroy(): void {
     this.timeline.cancel();
+    if (this.prepareTimer) clearTimeout(this.prepareTimer);
+    this.prepareTimer = null;
+    this.prepared?.line.destroy();
+    this.prepared = null;
     this.karaoke?.line.destroy();
     this.karaoke = null;
     for (const l of this.leaving) l.line.destroy();
@@ -551,18 +560,49 @@ export class DriftMode implements ModeRenderer {
       // a line coming back while still fading out takes its overlay back
       const back = this.leaving.findIndex((l) => l.row === focusRow);
       if (back >= 0) this.leaving.splice(back, 1)[0]?.line.destroy();
-      const line = new KaraokeLine(
-        focusRow.line.words,
-        focusRow.words,
-        { size: focusRow.size, font: `${look.weight} ${focusRow.size.toFixed(2)}px ${look.font}`, motion: look.motion, energy: this.energy },
-        this.timeline,
-        `kw${focusRow.index}`,
-      );
+      const ready = this.prepared?.row === focusRow ? this.prepared.line : null;
+      if (!ready) this.prepared?.line.destroy();
+      this.prepared = null;
+      const line = ready ?? this.karaokeFor(focusRow, look);
       focusRow.el.classList.add("has-fx");
       this.karaoke = { line, row: focusRow };
       line.mount(cue.t, cue.running);
     }
     if (focusSlot?.kind === "break") this.startBreak(focusSlot.brk, cue, look);
+    this.schedulePrepare();
+  }
+
+  private karaokeFor(row: Row, look: Look): KaraokeLine {
+    return new KaraokeLine(
+      row.line.words,
+      row.words,
+      { size: row.size, font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`, motion: look.motion, energy: this.energy },
+      this.timeline,
+      `kw${row.index}`,
+    );
+  }
+
+  /**
+   * Builds the next line's overlay (hidden until it is in focus) and plans its words a moment after
+   * this line change, in a task of its own, so the next change only has animations to start.
+   */
+  private schedulePrepare(): void {
+    if (this.prepareTimer) clearTimeout(this.prepareTimer);
+    this.prepareTimer = null;
+    const look = this.look;
+    if (!look || look.unsynced || typeof setTimeout !== "function") return;
+    const box = this.box;
+    this.prepareTimer = setTimeout(() => {
+      this.prepareTimer = null;
+      if (this.box !== box || !box) return;
+      const slot = this.slots[this.target];
+      const next = slot ? this.rows[(slot.kind === "line" ? slot.row.index : slot.brk.il.next - 1) + 1] : undefined;
+      if (!next || next === this.prepared?.row || next === this.karaoke?.row || next.line.words.length === 0) return;
+      this.prepared?.line.destroy();
+      const line = this.karaokeFor(next, look);
+      line.prepare();
+      this.prepared = { line, row: next };
+    }, PREPARE_DELAY_MS);
   }
 
   /** After a seek that kept the focus: the focus line's words and the break's dots to the new time. */

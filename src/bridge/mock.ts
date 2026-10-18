@@ -13,6 +13,7 @@ import {
 import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, recordKey, SHORTCUT_ACTIONS, type KeyLayout } from "../core/accelerator";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
+import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
 import { demoCover } from "./covers";
 import type { ArgsOf, Bridge, Command, Commands, Event, Events, ResultOf, Unlisten } from "./types";
 
@@ -83,6 +84,9 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   track("Tidal Interlude", 18_000, null, "instrumental"),
   // Not a lyrics state: visual QA for scripts and line shapes. Cycle every font over it (?track=5).
   track("Script Sampler", 42_000, 0, "found", { synced: SCRIPT_SAMPLER }),
+  // The motion demo (?track=6): an intro and a mid-song break long enough for the interlude dots,
+  // syllable-timed enhanced LRC, and held line endings that light letter by letter.
+  track("Glass Harbor", 38_000, 2, "found", { synced: glassHarbor }),
 ];
 
 /** Built exactly as SPEC defines it. */
