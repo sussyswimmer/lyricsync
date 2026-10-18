@@ -3,6 +3,27 @@ import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 /** Lyric, highlight and dim colors as #rrggbb. */
 export type Palette = Settings["colors"];
 
+/**
+ * What a cover looks like, for the look picker (core/songlook.ts). Read from the palette's own 48×48
+ * sample, in the same pass, and rounded to three decimals.
+ */
+export interface CoverStats {
+  /** mean HSL lightness, 0..1 */
+  lightness: number;
+  /** standard deviation of lightness, 0..0.5 */
+  contrast: number;
+  /** mean chroma ((max − min) / 255), 0..1 */
+  chroma: number;
+  /** Hasler–Süsstrunk colorfulness ÷ 110, capped at 1 (extremely colorful) */
+  colorfulness: number;
+  /** −1 cool (blue) .. +1 warm (orange), faded toward 0 on near-gray covers */
+  warmth: number;
+  /** share of pixels with chroma below 0.08 */
+  gray: number;
+  /** chroma-weighted mean hue 0..1, or null for a gray cover (92% gray pixels or more) */
+  hue: number | null;
+}
+
 /** Artwork is sampled at this many pixels square. */
 export const SAMPLE_SIZE = 48;
 /** A color needs this share of the cover to be picked as the highlight. */
@@ -13,6 +34,10 @@ const GRAY_CHROMA = 0.08;
 const ACCENT_CHROMA = 0.2;
 /** Keeps near-black or near-white covers from tinting the lyrics with a hue you can't see in them. */
 const TINT_PER_CHROMA = 1.5;
+/** The warmest hue (orange), in turns; its opposite (blue) is the coolest. */
+const WARM_HUE = 40 / 360;
+/** A cover with at least this share of gray pixels has no hue. */
+const GRAY_COVER = 0.92;
 
 /** Average color of one 4-bit-per-channel bucket. h, s, l and chroma c are 0..1. */
 interface Bucket {
@@ -51,27 +76,113 @@ export function hexToHsl(hex: string): [number, number, number] {
 }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+/** 0 at or below a, 1 at or above b, smooth in between. */
+function smoothstep(x: number, a: number, b: number): number {
+  const t = clamp((x - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+/** Three decimals, never −0. */
+const round3 = (v: number): number => Math.round(v * 1000) / 1000 + 0;
 
-function buckets(rgba: ArrayLike<number>): Bucket[] {
-  const sums = new Map<number, { r: number; g: number; b: number; n: number }>();
+/** Calls `visit` with each pixel of an RGBA sample that is at least half opaque. */
+function eachOpaque(rgba: ArrayLike<number>, visit: (r: number, g: number, b: number) => void): void {
   for (let i = 0; i + 3 < rgba.length; i += 4) {
     if ((rgba[i + 3] ?? 0) < 128) continue;
-    const r = rgba[i] ?? 0;
-    const g = rgba[i + 1] ?? 0;
-    const b = rgba[i + 2] ?? 0;
+    visit(rgba[i] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0);
+  }
+}
+
+/** The palette's 4-bit-per-channel buckets, filled one pixel at a time. */
+class BucketSums {
+  private readonly sums = new Map<number, { r: number; g: number; b: number; n: number }>();
+
+  add(r: number, g: number, b: number): void {
     const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4);
-    const sum = sums.get(key) ?? { r: 0, g: 0, b: 0, n: 0 };
+    const sum = this.sums.get(key) ?? { r: 0, g: 0, b: 0, n: 0 };
     sum.r += r;
     sum.g += g;
     sum.b += b;
     sum.n++;
-    sums.set(key, sum);
+    this.sums.set(key, sum);
   }
-  return [...sums.values()].map(({ r, g, b, n }) => {
-    const [ar, ag, ab] = [r / n, g / n, b / n];
-    const [h, s, l] = rgbToHsl(ar, ag, ab);
-    return { n, h, s, l, c: (Math.max(ar, ag, ab) - Math.min(ar, ag, ab)) / 255 };
-  });
+
+  /** Buckets in the order their first pixel came. */
+  buckets(): Bucket[] {
+    return [...this.sums.values()].map(({ r, g, b, n }) => {
+      const [ar, ag, ab] = [r / n, g / n, b / n];
+      const [h, s, l] = rgbToHsl(ar, ag, ab);
+      return { n, h, s, l, c: (Math.max(ar, ag, ab) - Math.min(ar, ag, ab)) / 255 };
+    });
+  }
+}
+
+/** The sums behind CoverStats, filled one pixel at a time. */
+class CoverSums {
+  private n = 0;
+  private lightness = 0;
+  private lightness2 = 0;
+  private chroma = 0;
+  private grays = 0;
+  // the opponent channels behind colorfulness: red-green and yellow-blue
+  private rg = 0;
+  private rg2 = 0;
+  private yb = 0;
+  private yb2 = 0;
+  // over the pixels with a hue, weighted by chroma: the hue as a vector, and its warmth
+  private hueX = 0;
+  private hueY = 0;
+  private warmth = 0;
+  private weight = 0;
+
+  add(r: number, g: number, b: number): void {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 510;
+    const c = (max - min) / 255;
+    this.n++;
+    this.lightness += l;
+    this.lightness2 += l * l;
+    this.chroma += c;
+    const rg = r - g;
+    const yb = 0.5 * (r + g) - b;
+    this.rg += rg;
+    this.rg2 += rg * rg;
+    this.yb += yb;
+    this.yb2 += yb * yb;
+    if (c < GRAY_CHROMA) {
+      this.grays++;
+      return;
+    }
+    const angle = rgbToHsl(r, g, b)[0] * 2 * Math.PI;
+    this.hueX += c * Math.cos(angle);
+    this.hueY += c * Math.sin(angle);
+    this.warmth += c * Math.cos(angle - WARM_HUE * 2 * Math.PI);
+    this.weight += c;
+  }
+
+  /** Null without a single opaque pixel. */
+  stats(): CoverStats | null {
+    const n = this.n;
+    if (n === 0) return null;
+    const meanL = this.lightness / n;
+    const meanC = this.chroma / n;
+    const rgMean = this.rg / n;
+    const ybMean = this.yb / n;
+    const rgSd = Math.sqrt(Math.max(0, this.rg2 / n - rgMean ** 2));
+    const ybSd = Math.sqrt(Math.max(0, this.yb2 / n - ybMean ** 2));
+    const colorfulness = (Math.hypot(rgSd, ybSd) + 0.3 * Math.hypot(rgMean, ybMean)) / 110;
+    const gray = this.grays / n;
+    const hued = this.weight > 0;
+    return {
+      lightness: round3(meanL),
+      contrast: round3(Math.sqrt(Math.max(0, this.lightness2 / n - meanL ** 2))),
+      chroma: round3(meanC),
+      colorfulness: round3(clamp(colorfulness, 0, 1)),
+      warmth: round3(hued ? (this.warmth / this.weight) * smoothstep(meanC, 0.02, 0.12) : 0),
+      gray: round3(gray),
+      hue: hued && gray < GRAY_COVER ? round3((((Math.atan2(this.hueY, this.hueX) / (2 * Math.PI)) % 1) + 1) % 1) : null,
+    };
+  }
 }
 
 /** Highlight from a bucket's hue, forced vivid and mid-light so it reads on any wallpaper. */
@@ -84,7 +195,34 @@ const highlightFrom = (b: Bucket): string => hslToHex(b.h, Math.max(b.s, 0.62), 
  * get the default warm white and the most colorful pixel, or the default highlight.
  */
 export function paletteFromPixels(rgba: ArrayLike<number>): Palette {
-  const all = buckets(rgba);
+  const sums = new BucketSums();
+  eachOpaque(rgba, (r, g, b) => sums.add(r, g, b));
+  return paletteOf(sums.buckets());
+}
+
+/**
+ * What a cover looks like (CoverStats) from RGBA pixels, the palette's 48×48 sample: lightness and
+ * its spread, chroma, colorfulness, warmth, the share of gray and the mean hue, over the pixels that
+ * are at least half opaque. Null when none is.
+ */
+export function coverStats(rgba: ArrayLike<number>): CoverStats | null {
+  const sums = new CoverSums();
+  eachOpaque(rgba, (r, g, b) => sums.add(r, g, b));
+  return sums.stats();
+}
+
+/** The palette and the cover's statistics, in one pass over the sample. */
+function readSample(rgba: ArrayLike<number>): { palette: Palette; cover: CoverStats | null } {
+  const buckets = new BucketSums();
+  const stats = new CoverSums();
+  eachOpaque(rgba, (r, g, b) => {
+    buckets.add(r, g, b);
+    stats.add(r, g, b);
+  });
+  return { palette: paletteOf(buckets.buckets()), cover: stats.stats() };
+}
+
+function paletteOf(all: readonly Bucket[]): Palette {
   const total = all.reduce((sum, b) => sum + b.n, 0);
   const defaults = DEFAULT_SETTINGS.colors;
   const dominant = all.reduce<Bucket | undefined>((a, b) => (a && a.n >= b.n ? a : b), undefined);
@@ -126,12 +264,20 @@ export async function readArtwork(artwork: string): Promise<Uint8ClampedArray | 
 
 export type ArtworkReader = (artwork: string) => Promise<ArrayLike<number> | null>;
 
+interface CacheEntry {
+  artwork: string | null;
+  palette: Promise<Palette | null>;
+  /** set by the decode behind `palette`, before it resolves */
+  cover: CoverStats | null;
+}
+
 /**
- * Album colors per track, computed once per track and artwork, off the animation path.
+ * Album colors per track, computed once per track and artwork, off the animation path, along with
+ * the cover's statistics for the look picker: one decode and one pass over the sample for both.
  * Resolves to null with no artwork or undecodable artwork; the renderer then uses `settings.colors`.
  */
 export class PaletteCache {
-  private readonly entries = new Map<string, { artwork: string | null; palette: Promise<Palette | null> }>();
+  private readonly entries = new Map<string, CacheEntry>();
   private readonly read: ArtworkReader;
   private readonly limit: number;
 
@@ -144,17 +290,36 @@ export class PaletteCache {
     const hit = this.entries.get(trackKey);
     this.entries.delete(trackKey);
     // Artwork can arrive after the track does, so a new picture for the same track recomputes.
-    const palette =
-      hit && hit.artwork === artwork
-        ? hit.palette
-        : artwork === null
-          ? Promise.resolve(null)
-          : this.read(artwork).then((px) => (px ? paletteFromPixels(px) : null), () => null);
-    this.entries.set(trackKey, { artwork, palette });
+    const entry = hit && hit.artwork === artwork ? hit : this.decode(artwork);
+    this.entries.set(trackKey, entry);
     for (const oldest of this.entries.keys()) {
       if (this.entries.size <= this.limit) break;
       this.entries.delete(oldest);
     }
-    return palette;
+    return entry.palette;
+  }
+
+  /**
+   * The statistics of the track's cover, as of its latest `get()`: filled by the same decode as the
+   * palette, before that promise resolves. Null until then, without artwork, when the artwork can't
+   * be read, and for a track the cache doesn't hold. Doesn't count as a use for the cache's limit.
+   */
+  cover(trackKey: string): CoverStats | null {
+    return this.entries.get(trackKey)?.cover ?? null;
+  }
+
+  private decode(artwork: string | null): CacheEntry {
+    const entry: CacheEntry = { artwork, palette: Promise.resolve(null), cover: null };
+    if (artwork === null) return entry;
+    entry.palette = this.read(artwork).then(
+      (px) => {
+        if (!px) return null;
+        const { palette, cover } = readSample(px);
+        entry.cover = cover;
+        return palette;
+      },
+      () => null,
+    );
+    return entry;
   }
 }
