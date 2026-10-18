@@ -9,7 +9,7 @@
  */
 import type { Line } from "../../core/lrc";
 import { clamp01, spline } from "./curve";
-import { keyframesAt, liftScale, num, sampleTimes, thin } from "./keyframes";
+import { framesOf, keyPoints, liftScale, num, sampleTimes, thin } from "./keyframes";
 import { chase, type SpringSpec } from "./spring";
 import { PLAN_MS, type Track } from "./karaoke";
 
@@ -95,15 +95,25 @@ export interface DotsMotion {
   until: number;
 }
 
-function track(t0: number, times: number[], keep: number[], frame: (i: number) => Keyframe): Track {
-  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, frame) };
+/**
+ * A track of the kept samples of `channels` from song time `t0`. With `quantum` (per channel, see
+ * keyframes.ts keyPoints) its slow stretches step on the shared beat: the breathing and a long break's
+ * slow fill then redraw 20 times a second, not 60.
+ */
+function track(t0: number, times: number[], keep: number[], channels: number[][], quantum: number[] | null, frame: (v: readonly number[]) => Keyframe): Track {
+  const duration = times[times.length - 1] ?? 0;
+  return { t0, duration, frames: framesOf(keyPoints(times, keep, channels, quantum ? { t0, quantum } : null), duration, frame) };
 }
+
+/** The most a dot's channels change per beat to step: group scale, lift px, size, opacities. */
+const STEP_QUANTUM = { scale: 0.004, lift: 0.25, opacity: 0.02 };
 
 /**
  * The dots' motion through a break, for dots `dotPx` across. Under reduced motion they only fade:
- * the group in and out, each dot to full brightness in its turn.
+ * the group in and out, each dot to full brightness in its turn. `steps`: see MotionOptions.steps.
  */
-export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMotion {
+export function planDots(il: Interlude, dotPx: number, motion: boolean, steps = false): DotsMotion {
+  const q = (...quantum: number[]): number[] | null => (steps ? quantum : null);
   const len = Math.max(1, il.end - il.start);
   const slot = (FILL_SHARE * len) / 3;
   const total = len + POP_OUT_MS;
@@ -134,8 +144,8 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
   const keepGroup = thin(times, [scale], [0.002]);
   const keepOpacity = thin(times, [opacity], [0.01]);
   const group = {
-    transform: track(il.start, times, keepGroup, (i) => ({ transform: `scale(${num(scale[i] ?? 0, 4)})` })),
-    opacity: track(il.start, times, keepOpacity, (i) => ({ opacity: num(opacity[i] ?? 0, 3) })),
+    transform: track(il.start, times, keepGroup, [scale], q(STEP_QUANTUM.scale), ([s]) => ({ transform: `scale(${num(s ?? 0, 4)})` })),
+    opacity: track(il.start, times, keepOpacity, [opacity], q(STEP_QUANTUM.opacity), ([o]) => ({ opacity: num(o ?? 0, 3) })),
   };
 
   // the dots
@@ -146,8 +156,8 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
     if (!motion) {
       const bright = times.map((ms) => 0.35 + 0.65 * clamp01((ms - d * slot - slot * 0.5) / 250));
       const keep = thin(times, [bright], [0.01]);
-      dots.push(track(il.start, times, keep, (i) => ({ transform: "translate(0px, 0px) scale(1)", opacity: num(bright[i] ?? 1, 3) })));
-      glows.push(track(il.start, times, keep, (i) => ({ opacity: num(clamp01(((bright[i] ?? 1) - 0.35) / 0.65) * 0.7, 3) })));
+      dots.push(track(il.start, times, keep, [bright], null, ([b]) => ({ transform: "translate(0px, 0px) scale(1)", opacity: num(b ?? 1, 3) })));
+      glows.push(track(il.start, times, keep, [bright], null, ([b]) => ({ opacity: num(clamp01(((b ?? 1) - 0.35) / 0.65) * 0.7, 3) })));
       continue;
     }
     const lift = chase((ms) => DOT_LIFT(p(ms)) * dotPx, DOT_LIFT_SPRING, { x: DOT_LIFT(0) * dotPx, v: 0 }, total, PLAN_MS);
@@ -157,10 +167,13 @@ export function planDots(il: Interlude, dotPx: number, motion: boolean): DotsMot
     for (const ch of [lift, size, glow, bright]) ch.length = times.length;
     const keep = thin(times, [lift, size, bright], [0.05, 0.002, 0.01]);
     dots.push(
-      track(il.start, times, keep, (i) => ({ transform: liftScale(0, lift[i] ?? 0, size[i] ?? 1), opacity: num(clamp01(bright[i] ?? 1), 3) })),
+      track(il.start, times, keep, [lift, size, bright], q(STEP_QUANTUM.lift, STEP_QUANTUM.scale, STEP_QUANTUM.opacity), ([y, s, b]) => ({
+        transform: liftScale(0, y ?? 0, s ?? 1),
+        opacity: num(clamp01(b ?? 1), 3),
+      })),
     );
     const keepGlow = thin(times, [glow], [0.01]);
-    glows.push(track(il.start, times, keepGlow, (i) => ({ opacity: num(clamp01(glow[i] ?? 0), 3) })));
+    glows.push(track(il.start, times, keepGlow, [glow], q(STEP_QUANTUM.opacity), ([g]) => ({ opacity: num(clamp01(g ?? 0), 3) })));
   }
   return { group, dots, glows, until: il.start + total };
 }

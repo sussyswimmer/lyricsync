@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseLrc, type Line } from "../src/core/lrc";
 import { clamp01, sineOut, sineOutInverse, spline } from "../src/overlay/motion/curve";
 import { findInterludes, interludeAt, INTERLUDE_LEAD_MS, planDots } from "../src/overlay/motion/interlude";
@@ -17,10 +17,23 @@ import {
   restTransform,
   songEnergy,
   wipeEdge,
+  type Track,
   type WordShape,
   type WordTiming,
 } from "../src/overlay/motion/karaoke";
-import { keyframesAt, liftScale, num, sampleTimes, SAMPLE_MS, thin } from "../src/overlay/motion/keyframes";
+import {
+  compositorSteps,
+  framesOf,
+  HOLD,
+  keyframesAt,
+  keyPoints,
+  liftScale,
+  num,
+  sampleTimes,
+  SAMPLE_MS,
+  STEP_MS,
+  thin,
+} from "../src/overlay/motion/keyframes";
 import { graphemes, isRtl, measureLetters, roughMeasure, splittable, type Measure } from "../src/overlay/motion/letters";
 import { chase, Glide, settleMs, springStep, type SpringSpec } from "../src/overlay/motion/spring";
 import { SongTimeline } from "../src/overlay/motion/timeline";
@@ -35,6 +48,43 @@ const firstOpacity = (frames: Keyframe[]): number => Number(frames[0]?.opacity);
 const yOfFrame = (f: Keyframe | undefined): number => Number(/translate\([-\d.]+px, (-?[\d.]+)px\)/u.exec(String(f?.transform))?.[1]);
 const scaleOfFrame = (f: Keyframe | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(String(f?.transform))?.[1]);
 const xOfFrame = (f: Keyframe | undefined): number => Number(/translateX\((-?[\d.]+)px\)/u.exec(String(f?.transform))?.[1]);
+
+/**
+ * A track's value at song time `t` the way an engine evaluates it: linear between keyframes, or in
+ * steps(n, end) where a keyframe's easing says so; held at either end.
+ */
+function valueAt(track: Track, t: number, read: (f: Keyframe) => number): number {
+  const fr = track.frames;
+  const first = fr[0];
+  const last = fr[fr.length - 1];
+  if (!first || !last) return Number.NaN;
+  const local = track.duration > 0 ? (t - track.t0) / track.duration : 1;
+  if (local <= Number(first.offset)) return read(first);
+  for (let i = 0; i + 1 < fr.length; i++) {
+    const a = fr[i] as Keyframe;
+    const b = fr[i + 1] as Keyframe;
+    const oa = Number(a.offset);
+    const ob = Number(b.offset);
+    if (local >= ob) continue;
+    let p = ob > oa ? (local - oa) / (ob - oa) : 1;
+    const steps = /^steps\((\d+), end\)$/u.exec(String(a.easing ?? ""));
+    if (steps) p = Math.floor(p * Number(steps[1]) + 1e-9) / Number(steps[1]);
+    return read(a) + (read(b) - read(a)) * p;
+  }
+  return read(last);
+}
+
+/** Song times (on a 60 Hz frame clock over [from, to)) at which any of the tracks shows a new value. */
+function changeFrames(tracks: { track: Track; read: (f: Keyframe) => number }[], from: number, to: number): number[] {
+  const out: number[] = [];
+  let prev: number[] | null = null;
+  for (let t = from; t < to; t += 1000 / 60) {
+    const now = tracks.map(({ track, read }) => valueAt(track, t, read));
+    if (prev && now.some((v, i) => Math.abs(v - (prev?.[i] ?? v)) > 1e-9)) out.push(t);
+    prev = now;
+  }
+  return out;
+}
 
 describe("springs", () => {
   it("reach their target, underdamped ones overshooting it and critical or overdamped ones not", () => {
@@ -172,6 +222,125 @@ describe("keyframes", () => {
     expect(num(2)).toBe("2");
     expect(num(-0.0001)).toBe("0");
     expect(liftScale(0, -1.23456, 1.025)).toBe("translate(0px, -1.23px) scale(1.025)");
+  });
+});
+
+describe("slow motion on the beat", () => {
+  const ramp = (from: number, to: number, ms: number, every = 10): { times: number[]; values: number[] } => {
+    const times = sampleTimes(ms, every);
+    return { times, values: times.map((t) => from + ((to - from) * t) / ms) };
+  };
+  const trackOf = (t0: number, times: number[], points: ReturnType<typeof keyPoints>): Track => {
+    const duration = times[times.length - 1] ?? 0;
+    return { t0, duration, frames: framesOf(points, duration, ([v]) => ({ opacity: v ?? 0 })) };
+  };
+  const read = (f: Keyframe): number => Number(f.opacity);
+  /** A change shown on the frame at `t` came from a beat since the frame before. */
+  const onBeat = (t: number): boolean => t - Math.floor((t + 1e-6) / STEP_MS) * STEP_MS < 1000 / 60 + 1e-6;
+
+  it("are keyframesAt's points without stepping", () => {
+    const { times, values } = ramp(0, 1, 100, 50);
+    expect(keyPoints(times, [0, 2], [values], null)).toEqual([
+      { t: 0, v: [0] },
+      { t: 100, v: [1] },
+    ]);
+    const frames = framesOf(keyPoints(times, [0, 2], [values], null), 100, ([v]) => ({ opacity: v ?? 0 }));
+    expect(frames).toEqual(keyframesAt(times, [0, 2], (i) => ({ opacity: values[i] ?? 0 })));
+  });
+
+  it("step a slow stretch on the song's beat, through the values the straight line has there", () => {
+    // 0 to 10 over 2 s: a quarter per beat, under a quantum of 1
+    const { times, values } = ramp(0, 10, 2000);
+    const t0 = 1030;
+    const points = keyPoints(times, thin(times, [values], [0.01]), [values], { t0, quantum: [1] });
+    expect(points[0]?.easing).toBe(HOLD);
+    const track = trackOf(t0, times, points);
+    const changes = changeFrames([{ track, read }], t0, t0 + 2100);
+    // every change but the last (the stretch's own end) shows on the first frame of a beat
+    expect(changes.slice(0, -1).every(onBeat)).toBe(true);
+    expect(changes.length).toBeLessThanOrEqual(2000 / STEP_MS + 1);
+    // on each beat it shows the line's value there, and it never strays a step from the line
+    for (let beat = 1050; beat <= 3000; beat += STEP_MS) expect(valueAt(track, beat, read)).toBeCloseTo(((beat - t0) / 2000) * 10, 9);
+    for (let t = t0; t <= t0 + 2000; t += 7) expect(Math.abs(valueAt(track, t, read) - ((t - t0) / 2000) * 10)).toBeLessThanOrEqual(0.25 + 1e-9);
+    expect(valueAt(track, t0 + 2000, read)).toBe(10);
+  });
+
+  it("leave fast stretches linear, joined to a slow one where the fast ones need them", () => {
+    // a fast rise (25 per beat), a slow drift (0.1 per beat), a fast fall
+    const times = [0, 200, 1200, 1400];
+    const values = [0, 100, 102, 0];
+    const points = keyPoints(times, [0, 1, 2, 3], [values], { t0: 0, quantum: [1] });
+    expect(points.map((p) => p.t)).toEqual([0, 200, 250, 1200, 1400]);
+    expect(points.map((p) => p.easing)).toEqual([undefined, HOLD, "steps(19, end)", undefined, undefined]);
+    const track = trackOf(0, times, points);
+    expect(valueAt(track, 100, read)).toBeCloseTo(50, 9);
+    expect(valueAt(track, 1300, read)).toBeCloseTo(51, 9);
+    expect(valueAt(track, 700, read)).toBeCloseTo(101, 9);
+    expect(valueAt(track, 720, read)).toBeCloseTo(101, 9);
+    // a stretch that doesn't move needs no steps
+    expect(keyPoints([0, 1000], [0, 1], [[3, 3]], { t0: 0, quantum: [1] }).every((p) => p.easing === undefined)).toBe(true);
+  });
+
+  it("give every track the same beat, wherever it starts", () => {
+    const a = ramp(0, 1, 3000);
+    const b = ramp(5, 4, 3000);
+    const ta = trackOf(1000, a.times, keyPoints(a.times, thin(a.times, [a.values], [0.001]), [a.values], { t0: 1000, quantum: [0.02] }));
+    const tb = trackOf(1017, b.times, keyPoints(b.times, thin(b.times, [b.values], [0.001]), [b.values], { t0: 1017, quantum: [0.02] }));
+    const one = changeFrames([{ track: ta, read }], 1100, 3900);
+    expect(one.length).toBeGreaterThan(40);
+    expect(changeFrames([{ track: ta, read }, { track: tb, read }], 1100, 3900)).toEqual(one);
+  });
+
+  it("let a held word redraw on the beat once it is slow, never far from its glide", () => {
+    const shape = shapeOf("note", [{ text: "note" }]);
+    const word = { start: 1900, end: 13_000 };
+    const reads = (plan: ReturnType<typeof planWord>): { track: Track; read: (f: Keyframe) => number; tol: number }[] => [
+      ...[plan.pop, ...plan.letters].flatMap((t) =>
+        t
+          ? [
+              { track: t, read: yOfFrame, tol: 0.5 },
+              { track: t, read: scaleOfFrame, tol: 0.006 },
+            ]
+          : [],
+      ),
+      ...(plan.window ? [{ track: plan.window, read: xOfFrame, tol: 1.2 }] : []),
+      ...[plan.glow, ...plan.letterGlows].flatMap((t) => (t ? [{ track: t, read: (f: Keyframe) => Number(f.opacity), tol: 0.04 }] : [])),
+    ];
+    const glide = reads(planWord(word, "note", shape, { energy: 0.4, motion: true }));
+    const stepped = reads(planWord(word, "note", shape, { energy: 0.4, motion: true, steps: true }));
+    expect(stepped).toHaveLength(glide.length);
+    const smooth = changeFrames(glide, 5500, 11_500).length;
+    const beat = changeFrames(stepped, 5500, 11_500).length;
+    expect(beat).toBeLessThan(smooth * 0.7);
+    for (let t = 1900; t < 14_500; t += 37) {
+      glide.forEach((g, i) => {
+        const s = stepped[i];
+        if (s) expect(Math.abs(valueAt(g.track, t, g.read) - valueAt(s.track, t, s.read))).toBeLessThanOrEqual(g.tol + 1e-6);
+      });
+    }
+  });
+
+  it("put a break's breathing on the beat too", () => {
+    const plan = planDots({ next: 2, start: 10_000, end: 16_000 }, 20, true, true);
+    const scale = (f: Keyframe): number => Number(/scale\(([\d.]+)\)/u.exec(String(f.transform))?.[1]);
+    const changes = changeFrames([{ track: plan.group.transform, read: scale }], 11_000, 15_000);
+    expect(changes.length).toBeGreaterThan(10);
+    expect(changes.every(onBeat)).toBe(true);
+  });
+
+  it("only where the engine composites stepped keyframes", () => {
+    const on = (userAgent: string): boolean => {
+      vi.stubGlobal("navigator", { userAgent });
+      try {
+        return compositorSteps();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    };
+    expect(on("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0")).toBe(true);
+    expect(on("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36")).toBe(true);
+    expect(on("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)")).toBe(false);
+    expect(on("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0 Mobile/15E148 Safari/604.1")).toBe(false);
   });
 });
 

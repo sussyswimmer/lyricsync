@@ -5,7 +5,7 @@ import { bloomShadow, dotBloom } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
 import { findInterludes, interludeAt, planDots, type Interlude } from "../motion/interlude";
 import { PLAN_MS, songEnergy, type Track } from "../motion/karaoke";
-import { keyframesAt, num, sampleTimes, thin } from "../motion/keyframes";
+import { compositorSteps, keyframesAt, num, sampleTimes, thin } from "../motion/keyframes";
 import { KaraokeLine } from "../motion/line";
 import { Glide, type SpringSpec, type SpringState } from "../motion/spring";
 import { SongTimeline } from "../motion/timeline";
@@ -200,6 +200,8 @@ export class DriftMode implements ModeRenderer {
   readonly wordWakes = false;
   private readonly depth: number;
   private readonly timeline = new SongTimeline();
+  /** slow motion steps on the song-time beat where the engine composites stepped keyframes */
+  private readonly steps = compositorSteps();
   private look: Look | null = null;
   private box: HTMLDivElement | null = null;
   private rows: Row[] = [];
@@ -576,7 +578,7 @@ export class DriftMode implements ModeRenderer {
     return new KaraokeLine(
       row.line.words,
       row.words,
-      { size: row.size, font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`, motion: look.motion, energy: this.energy },
+      { size: row.size, font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`, motion: look.motion, energy: this.energy, steps: this.steps },
       this.timeline,
       `kw${row.index}`,
     );
@@ -662,7 +664,7 @@ export class DriftMode implements ModeRenderer {
       brk.el.append(group);
       brk.group = group;
     }
-    const plan = planDots(brk.il, dotPx, look.motion);
+    const plan = planDots(brk.il, dotPx, look.motion, this.steps);
     const key = `dots${brk.il.start}`;
     const group = brk.group;
     // at rest (outside the break) the group is gone

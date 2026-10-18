@@ -28,7 +28,20 @@ export {
   type WordShape,
   type WordTiming,
 } from "./karaoke";
-export { keyframesAt, liftScale, sampleTimes, thin, SAMPLE_MS } from "./keyframes";
+export {
+  compositorSteps,
+  framesOf,
+  keyframesAt,
+  keyPoints,
+  liftScale,
+  sampleTimes,
+  thin,
+  HOLD,
+  SAMPLE_MS,
+  STEP_MS,
+  type KeyPoint,
+  type Stepping,
+} from "./keyframes";
 export { canvasMeasure, graphemes, isRtl, measureLetters, splittable } from "./letters";
 export { KaraokeLine, SETTLE_IN_MS, type KaraokeLook } from "./line";
 export { chase, Glide, settleMs, springStep, type SpringSpec, type SpringState } from "./spring";

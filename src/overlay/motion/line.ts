@@ -8,10 +8,10 @@
  *     .kw-fx         the overlay
  *       .kl-glow     emphasized words: each letter's own bloom
  *       .kw-glow     the word's bloom (a fill-less copy whose text-shadow glows; opacity animated)
- *       .kw-track    slides across the word, carrying two windows that share one feathered edge:
- *         .kw-bwin   the unlit part: the letters in the upcoming color (faded in over the feather)
+ *       .kw-track    slides across the word, carrying two windows that meet at its feathered edge:
+ *         .kw-bwin   the unlit part: the letters in the upcoming color (clipped where the feather begins)
  *           .kw-in   ...its contents sliding back, so the letters stay put
- *         .kw-win    the lit part: the letters in the highlight (faded out over the feather)
+ *         .kw-win    the lit part: the letters in the highlight (faded out over the feather, over the base)
  *           .kw-in   ...likewise
  *
  * Each letter sits where the whole word draws it (kerning kept). Only one copy of a letter shows
@@ -55,6 +55,8 @@ export interface KaraokeLook {
   motion: boolean;
   /** 0..1 (songEnergy) */
   energy: number;
+  /** slow stretches step on the song-time beat (MotionOptions.steps) */
+  steps?: boolean;
 }
 
 /** A line coming into focus eases its upcoming words into their rest pose over this long. */
@@ -172,14 +174,14 @@ export class KaraokeLine {
 
   /** Each word's plan for a line starting at `origin`, memoized by the pose its pop starts from. */
   private plansFor(origin: number, settleIn: boolean): WordMotion[] {
-    const { motion, energy } = this.look;
+    const { motion, energy, steps } = this.look;
     return this.views.map((v, i) => {
       // a word sung as its line arrives never settled into rest: its pop starts from full size
       const from = settleIn && !(motion && v.word.start - origin >= SETTLE_IN_MS) ? "full" : "rest";
       const key = `${i}:${from}`;
       let plan = this.plans.get(key);
       if (!plan) {
-        plan = planWord(v.word, v.text, v.shape, { energy, motion, from });
+        plan = planWord(v.word, v.text, v.shape, { energy, motion, from, steps: steps === true });
         this.plans.set(key, plan);
       }
       return plan;
@@ -212,7 +214,10 @@ export class KaraokeLine {
     const glow = h("span", "kw-glow", text);
     // The windows, in track coordinates (where the track rests when the word is fully lit). LTR: the
     // lit window runs from PAD_EM before the word to its end plus the overhang, then fades out over the
-    // feather; the base window fades in over that same feather and runs on past the word. RTL mirrors it.
+    // feather. The base window starts, hard-edged, where that fade begins and runs on past the word:
+    // over the feather the lit copy fades out over the base copy at full strength, which is a true
+    // crossfade (two complementary masks would let the wallpaper through mid-way), and a clip costs the
+    // compositor nothing where a second mask would cost an offscreen pass per word. RTL mirrors it.
     const W = shape.width;
     const pad = PAD_EM * size;
     const feather = Math.max(1, FEATHER * W);
@@ -223,27 +228,24 @@ export class KaraokeLine {
     const bwin = h("span", "kw-bwin");
     const litLeft = shape.rtl ? -(over + feather) : -pad;
     const baseLeft = shape.rtl ? -(W + 2 * over + feather + pad) : W + over;
-    const soft = ((feather / span) * 100).toFixed(2);
-    const hard = (((span - feather) / span) * 100).toFixed(2);
-    // the mask's stops: opaque, then fading over the feather at the window's end that meets the other one
-    const fadeEnd = `linear-gradient(90deg, #000 0%, #000 ${hard}%, transparent 100%)`;
-    const fadeStart = `linear-gradient(90deg, transparent 0%, #000 ${soft}%, #000 100%)`;
-    const windows: [HTMLElement, number, string][] = [
-      [bwin, baseLeft, shape.rtl ? fadeEnd : fadeStart],
-      [win, litLeft, shape.rtl ? fadeStart : fadeEnd],
-    ];
+    // the lit window's mask: opaque, then fading over the feather at the end the wipe moves toward
+    const stop = shape.rtl ? ((feather / span) * 100).toFixed(2) : (((span - feather) / span) * 100).toFixed(2);
+    const mask = shape.rtl ? `linear-gradient(90deg, transparent 0%, #000 ${stop}%, #000 100%)` : `linear-gradient(90deg, #000 0%, #000 ${stop}%, transparent 100%)`;
     const inners: HTMLElement[] = [];
-    for (const [w, left, mask] of windows) {
+    for (const [w, left] of [
+      [bwin, baseLeft],
+      [win, litLeft],
+    ] as const) {
       w.style.left = px(left);
       w.style.width = px(span);
-      if (motion) {
-        w.style.setProperty("mask-image", mask);
-        w.style.setProperty("-webkit-mask-image", mask);
-      }
       const inner = h("span", "kw-in");
       inner.style.left = px(-left);
       w.append(inner);
       inners.push(inner);
+    }
+    if (motion) {
+      win.style.setProperty("mask-image", mask);
+      win.style.setProperty("-webkit-mask-image", mask);
     }
     win.classList.add("is-lit");
     if (!motion) {

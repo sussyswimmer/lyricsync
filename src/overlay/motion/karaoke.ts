@@ -19,7 +19,7 @@
 import type { Line } from "../../core/lrc";
 import { syllables } from "../../core/timing";
 import { clamp01, sineOut, spline } from "./curve";
-import { keyframesAt, liftScale, num, sampleTimes, thin } from "./keyframes";
+import { framesOf, keyPoints, liftScale, num, sampleTimes, thin } from "./keyframes";
 import { chase, type SpringSpec } from "./spring";
 
 /** One timed piece of a word: a syllable from enhanced LRC, or the whole word. */
@@ -68,6 +68,11 @@ export interface MotionOptions {
    * "full" for a word sung the moment its line comes into focus (it never had time to settle into rest).
    */
   from?: "rest" | "full";
+  /**
+   * Slow stretches step on the shared song-time beat (keyframes.ts keyPoints) instead of gliding,
+   * where the engine still runs stepped keyframes on the compositor (compositorSteps).
+   */
+  steps?: boolean;
 }
 
 /** A keyframe animation to run from song time `t0`. */
@@ -165,6 +170,12 @@ const TAIL_MS = 1300;
 const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005 };
 /** Keyframes are kept where straight lines between them would miss by more than this (all sub-pixel). */
 const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25 };
+/**
+ * A stretch that changes less than this per STEP_MS (px for lifts and the wipe, scale units, opacity)
+ * steps on the beat: about a third of a pixel of lift, under half a pixel of a word's edge, a pixel of
+ * a soft-edged wipe, 2 % of a glow, each 20 times a second.
+ */
+const STEP_QUANTUM = { lift: 0.5, scale: 0.006, opacity: 0.04, x: 1.2 };
 /** Plans are sampled this often; the compositor interpolates linearly in between. */
 export const PLAN_MS = 1000 / 30;
 /** Reduced motion: the lit copy and the glow fade in this fast. */
@@ -273,14 +284,19 @@ function align(channels: number[][], finals: number[]): number[] {
   return sampleTimes((n - 1) * PLAN_MS, PLAN_MS);
 }
 
-function transformTrack(t0: number, times: number[], lift: number[], scale: number[]): Track {
+/** A lift-and-scale track from song time `t0`; `steps` puts its slow stretches on the beat. */
+function transformTrack(t0: number, times: number[], lift: number[], scale: number[], steps = false): Track {
   const keep = thin(times, [lift, scale], [THIN.lift, THIN.scale]);
-  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, (i) => ({ transform: liftScale(0, lift[i] ?? 0, scale[i] ?? 1) })) };
+  const duration = times[times.length - 1] ?? 0;
+  const points = keyPoints(times, keep, [lift, scale], steps ? { t0, quantum: [STEP_QUANTUM.lift, STEP_QUANTUM.scale] } : null);
+  return { t0, duration, frames: framesOf(points, duration, ([y, s]) => ({ transform: liftScale(0, y ?? 0, s ?? 1) })) };
 }
 
-function opacityTrack(t0: number, times: number[], values: number[]): Track {
+function opacityTrack(t0: number, times: number[], values: number[], steps = false): Track {
   const keep = thin(times, [values], [THIN.opacity]);
-  return { t0, duration: times[times.length - 1] ?? 0, frames: keyframesAt(times, keep, (i) => ({ opacity: num(clamp01(values[i] ?? 0), 3) })) };
+  const duration = times[times.length - 1] ?? 0;
+  const points = keyPoints(times, keep, [values], steps ? { t0, quantum: [STEP_QUANTUM.opacity] } : null);
+  return { t0, duration, frames: framesOf(points, duration, ([o]) => ({ opacity: num(clamp01(o ?? 0), 3) })) };
 }
 
 /** Plans one word's motion. `text` is the word without its trailing space. */
@@ -326,16 +342,17 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
   const progress = (ms: number): number => clamp01(ms / span);
   const runMs = span + TAIL_MS;
   const fromFull = options.from === "full";
+  const steps = options.steps === true;
 
   // the pop
   const lift = springChannel((ms) => LIFT_CURVE(progress(ms)) * size, LIFT_SPRING, fromFull ? 0 : REST_LIFT * size, runMs, 0, SETTLED.lift);
   const scale = springChannel((ms) => SCALE_CURVE(progress(ms)), SCALE_SPRING, fromFull ? 1 : REST_SCALE, runMs, 1, SETTLED.scale);
-  const pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale);
+  const pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale, steps);
 
   // the bloom
   const peak = emphasis ? 1 : GLOW_PEAK;
   const glowValues = springChannel((ms) => Math.max(0, GLOW_CURVE(progress(ms))), GLOW_SPRING, 0, runMs, 0, SETTLED.opacity).map((g) => Math.max(0, g) * peak);
-  const glow = opacityTrack(word.start, align([glowValues], [0]), glowValues);
+  const glow = opacityTrack(word.start, align([glowValues], [0]), glowValues, steps);
 
   // the wipe: linear between syllable boundaries, sampled where a held syllable eases out
   const edge = wipeEdge(word, parts, shape);
@@ -344,8 +361,10 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
   const wipeTimes = emphasis ? sampleTimes(span, PLAN_MS) : bounds;
   const xs = wipeTimes.map((ms) => sign * (edge(ms) - (shape.width + OVERHANG * size)));
   const keepX = thin(wipeTimes, [xs], [THIN.x]);
-  const window: Track = { t0: word.start, duration: span, frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(xs[i] ?? 0, 2)}px)` })) };
-  const inner: Track = { t0: word.start, duration: span, frames: keyframesAt(wipeTimes, keepX, (i) => ({ transform: `translateX(${num(-(xs[i] ?? 0), 2)}px)` })) };
+  // the windows and their contents step together: one set of points for both
+  const wipe = keyPoints(wipeTimes, keepX, [xs], steps ? { t0: word.start, quantum: [STEP_QUANTUM.x] } : null);
+  const window: Track = { t0: word.start, duration: span, frames: framesOf(wipe, span, ([x]) => ({ transform: `translateX(${num(x ?? 0, 2)}px)` })) };
+  const inner: Track = { t0: word.start, duration: span, frames: framesOf(wipe, span, ([x]) => ({ transform: `translateX(${num(-(x ?? 0), 2)}px)` })) };
 
   // the letters
   const ripple = size * (RIPPLE_MIN + RIPPLE_GAIN * clamp01(options.energy));
@@ -362,6 +381,7 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
     if (hopTrack) return hopTrack;
     const hLift = springChannel((ms) => (ms < hold ? -height : 0), RIPPLE_SPRING, 0, hold + 700, 0, SETTLED.lift);
     const hScale = hLift.map((y) => 1 + (-y / size) * 0.9);
+    // shared by every letter of the word, each at its own t0, so it can't step on the beat (and is quick)
     hopTrack = transformTrack(0, align([hLift, hScale], [0, 1]), hLift, hScale);
     return hopTrack;
   };
@@ -389,10 +409,10 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
       const lit = (ms: number): number => clamp01((alpha(ms) - j / k) / (1 - j / k));
       const lLift = springChannel((ms) => LIFT_CURVE(own(ms)) * size * EMPHASIS_LIFT, LIFT_SPRING, REST_LIFT * size * EMPHASIS_LIFT, runMs, 0, SETTLED.lift);
       const lScale = springChannel((ms) => LETTER_SCALE_CURVE(own(ms)), SCALE_SPRING, LETTER_SCALE_CURVE(0), runMs, 1, SETTLED.scale);
-      letters.push(transformTrack(word.start, align([lLift, lScale], [0, 1]), lLift, lScale));
+      letters.push(transformTrack(word.start, align([lLift, lScale], [0, 1]), lLift, lScale, steps));
       moveBase[moveBase.length - 1] = true;
       const g = springChannel((ms) => Math.max(0, GLOW_CURVE(lit(ms))), LETTER_GLOW_SPRING, 0, runMs, 0, SETTLED.opacity);
-      letterGlows.push(opacityTrack(word.start, align([g], [0]), g));
+      letterGlows.push(opacityTrack(word.start, align([g], [0]), g, steps));
       continue;
     }
     // the ripple: each letter hops once it is fully lit (only the lit copy shows there), the same hop

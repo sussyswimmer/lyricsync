@@ -21,11 +21,13 @@
   inset: 0;
 }
 
-/* ---------- drift / stack ---------- */
+/* ---------- drift / stack ----------
+   Each row is projected through the box's perspective on its own (flat, not preserve-3d): rows never
+   overlap, so they need no depth sorting, and a shared 3D context made the compositor's every frame
+   about a third dearer with the karaoke layers inside it. */
 .drift {
   position: absolute;
   inset: 0;
-  transform-style: preserve-3d;
   transition: opacity 0.4s ease;
 }
 
@@ -116,16 +118,23 @@
   text-shadow: var(--ut-bloom-strong);
 }
 
-/* The wipe: a track slides across the word carrying two windows that meet at one feathered edge,
-   the unlit letters in one and the lit ones in the other (each mask moves with its window); the
-   windows' contents slide back the other way, so the letters stay where the word is. */
+/* The wipe: a track slides across the word carrying two windows that meet at its feathered edge,
+   the unlit letters in one (clipped) and the lit ones in the other (masked, fading out over the
+   first); the windows' contents slide back the other way, so the letters stay where the word is. */
 .kw-win,
 .kw-bwin {
   position: absolute;
   top: -0.5em;
   height: calc(100% + 1em);
+}
+
+.kw-win {
   mask-repeat: no-repeat;
   -webkit-mask-repeat: no-repeat;
+}
+
+.kw-bwin {
+  overflow: hidden;
 }
 
 .kw-in {
