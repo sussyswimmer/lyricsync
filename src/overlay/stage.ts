@@ -294,11 +294,14 @@ export class LyricStage {
     this.host.classList.toggle("ut-hidden", !visible);
   }
 
-  /** Paints position `t`. Returns true while it needs another frame regardless of word timing. */
-  render(t: number): boolean {
+  /**
+   * Paints position `t`. Returns true while it needs another frame regardless of word timing. `rate`
+   * is how fast song time runs right now (PlaybackClock.rate): 1 playing, 0 paused, near 1 slewing.
+   */
+  render(t: number, rate = this.paused ? 0 : 1): boolean {
     const scene = this.scene;
     if (!scene?.mode || !scene.cues) return false;
-    const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused };
+    const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused, rate: this.paused ? 0 : rate };
     const last = this.lastCue;
     if (last && cue.line !== last.line && scene.mode.crossfades(cue)) this.ghost(scene);
     this.lastCue = cue;
@@ -319,7 +322,8 @@ export class LyricStage {
       this.followedUp = t;
       return 0;
     }
-    return untilNextChange(cues, t);
+    const own = this.scene?.mode?.nextChange?.(t) ?? Infinity;
+    return Math.min(untilNextChange(cues, t), Math.max(0, own));
   }
 
   destroy(): void {

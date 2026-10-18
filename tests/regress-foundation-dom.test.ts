@@ -36,6 +36,9 @@ class FakeAnimation {
   readonly options: KeyframeAnimationOptions;
   readonly finished: Promise<void>;
   cancelled = false;
+  paused = false;
+  startTime: number | null = null;
+  currentTime: number | null = null;
   private reject: (e: Error) => void = () => undefined;
   constructor(keyframes: Keyframe[], options: KeyframeAnimationOptions) {
     this.keyframes = keyframes;
@@ -43,6 +46,11 @@ class FakeAnimation {
     this.finished = new Promise<void>((_, reject) => {
       this.reject = reject;
     });
+    // Engines create this promise when it is first asked for; one nobody asked for never rejects unheard.
+    this.finished.catch(() => undefined);
+  }
+  pause(): void {
+    this.paused = true;
   }
   cancel(): void {
     this.cancelled = true;
@@ -105,9 +113,13 @@ class FakeElement {
     return stageSize.height;
   }
   /** Rows wrap at 88% of the stage width with glyphs about 0.5 em wide, 1.12 em per row. */
+  /** Text that takes room in the layout: the karaoke overlay (`.kw-fx`) is absolutely placed and takes none. */
+  get flowText(): string {
+    return this.ownText + this.children.map((c) => (c.classList.contains("kw-fx") ? "" : c.flowText)).join("");
+  }
   get offsetHeight(): number {
     const size = this.fontSize();
-    const width = this.textContent.length * size * 0.5;
+    const width = this.flowText.length * size * 0.5;
     const rows = Math.max(1, Math.ceil(width / (stageSize.width * 0.88)));
     return Math.round(rows * size * 1.12);
   }
@@ -217,27 +229,39 @@ function drift(depth = 1, look = lookFor(), lines: readonly Line[] = LINES): { m
 
 const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, running, waiting });
 const scaleOf = (row: FakeElement | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
-const yOf = (row: FakeElement | undefined): number => Number(/calc\(-50% \+ (-?[\d.]+)px\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
+/** Where a row's center sits from the focus position: its translate (its top edge is on look.y) plus half its box. */
+const yOf = (row: FakeElement | undefined): number =>
+  Number(/translate3d\(0px, (-?[\d.]+)px/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]) + (row?.offsetHeight ?? 0) / 2;
+/** A row's running scroll (Web Animations on the row itself). */
+const scrolling = (row: FakeElement | undefined): FakeAnimation[] => row?.getAnimations() ?? [];
+/** The word boxes of a row, and one word's part of the karaoke overlay. */
+const wordsOf = (row: FakeElement | undefined): FakeElement[] => row?.find("kw") ?? [];
+const partOf = (row: FakeElement | undefined, word: number, part: string): FakeElement | undefined => wordsOf(row)[word]?.find(part)[0];
 
 // Regression (drift-paused-freeze): Drift glided from performance.now(), and no frame follows a paused
 // paint, so a glide caught by a pause froze halfway and a seek while paused left the old line centered.
+// The scroll now runs on the compositor (Web Animations anchored to song time); a pause still lands it.
 describe("Drift while paused", () => {
   it("lands a glide in flight on its line in the paint that pauses it", () => {
     const { mode, rows } = drift();
     mode.paint(cue(0, 2000));
     clock += 16;
-    expect(mode.paint(cue(1, 4300))).toBe(true);
+    // the scroll runs on the compositor: no frames asked for, an animation on every row it moves
+    expect(mode.paint(cue(1, 4300))).toBe(false);
+    expect(scrolling(rows[1]).length).toBe(1);
+    expect(scrolling(rows[1])[0]?.keyframes.length).toBeGreaterThan(2);
     clock += 150;
-    expect(mode.paint(cue(1, 4450))).toBe(true);
-    expect(scaleOf(rows[1])).toBeLessThan(1);
+    expect(mode.paint(cue(1, 4450))).toBe(false);
     // paused
     expect(mode.paint(cue(1, 4450, false))).toBe(false);
+    expect(scrolling(rows[1])).toEqual([]);
     expect(scaleOf(rows[1])).toBe(1);
     expect(yOf(rows[1])).toBe(0);
     expect(scaleOf(rows[0])).toBeCloseTo(0.58, 4);
     // ...and resuming doesn't jump back into the glide
     clock += 100;
     expect(mode.paint(cue(1, 4460))).toBe(false);
+    expect(scrolling(rows[1])).toEqual([]);
     expect(scaleOf(rows[1])).toBe(1);
   });
 
@@ -245,24 +269,29 @@ describe("Drift while paused", () => {
     const { mode, rows } = drift();
     mode.paint(cue(1, 5000));
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfades(cue(2, 10_000, false, true))).toBe(true);
-    expect(mode.paint(cue(2, 10_000, false, true))).toBe(false);
+    expect(mode.crossfades(cue(2, 12_600, false))).toBe(true);
+    expect(mode.paint(cue(2, 12_600, false))).toBe(false);
+    expect(scrolling(rows[2])).toEqual([]);
     expect(scaleOf(rows[2])).toBe(1);
     expect(yOf(rows[2])).toBe(0);
     expect(scaleOf(rows[1])).toBeCloseTo(0.58, 4);
-    // the focus colors went to the centered line
-    expect(rows[2]?.children[0]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
-    expect(rows[1]?.children[0]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.dim);
+    // the focus went to the centered line: lyric color there, the old line dim (drawn by its soft shadow)
+    expect(rows[2]?.classList.contains("is-focus")).toBe(true);
+    expect(rows[2]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    expect(rows[1]?.classList.contains("is-focus")).toBe(false);
+    expect(rows[1]?.style.getPropertyValue("color")).toBe("transparent");
+    expect(rows[1]?.style.getPropertyValue("text-shadow")).toMatch(/^0 0 [\d.]+px rgba\(141, 147, 160, 1\.000\)/u);
   });
 
   it("glides again (no stage crossfade) once playing", () => {
-    const { mode } = drift();
+    const { mode, rows } = drift();
     mode.paint(cue(1, 5000, false));
     expect(mode.crossfades(cue(2, 12_500, false))).toBe(true);
     mode.paint(cue(1, 5016));
     expect(mode.crossfades(cue(2, 12_500))).toBe(false);
     clock += 16;
-    expect(mode.paint(cue(2, 12_500))).toBe(true);
+    expect(mode.paint(cue(2, 12_500))).toBe(false);
+    expect(scrolling(rows[2]).length).toBe(1);
   });
 });
 
@@ -325,10 +354,13 @@ describe("Drift word states", () => {
     const word = LINES[1]?.words[1];
     expect(word).toMatchObject({ text: "the ", start: 4800 });
     mode.paint(cue(1, 4800));
-    const span = rows[1]?.children[1];
-    expect(span?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.highlight);
-    expect(span?.style.getPropertyValue("text-shadow")).not.toBe("");
-    expect(rows[1]?.children[2]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    // handed to the compositor: the lit window rests open (its wipe animation runs over that), the bloom runs
+    expect(partOf(rows[1], 1, "kw-win")?.style.getPropertyValue("transform")).toBe("translateX(0px)");
+    expect(partOf(rows[1], 1, "kw-win")?.getAnimations().length).toBeGreaterThan(0);
+    expect(partOf(rows[1], 1, "kw-glow")?.getAnimations().length).toBe(1);
+    // the next word hasn't started: its window rests closed, nothing runs on it
+    expect(partOf(rows[1], 2, "kw-win")?.style.getPropertyValue("transform")).toMatch(/^translateX\(-/u);
+    expect(partOf(rows[1], 2, "kw-win")?.getAnimations()).toEqual([]);
   });
 });
 
@@ -379,18 +411,22 @@ describe("Drift geometry", () => {
 
 describe("Drift restyle", () => {
   it("takes new colors without rebuilding or stopping a glide", () => {
-    const { mode, rows } = drift();
+    const { mode, rows, host } = drift();
     mode.paint(cue(0, 2000));
     clock += 16;
     mode.paint(cue(1, 4300));
     clock += 100;
     mode.paint(cue(1, 4400));
+    const glide = scrolling(rows[1]);
+    expect(glide.length).toBe(1);
     const red = { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" };
     mode.restyle(lookFor({ colors: red, glow: 80 }));
     clock += 16;
-    expect(mode.paint(cue(1, 4416))).toBe(true);
-    expect(rows[1]?.children[0]?.style.getPropertyValue("color")).toBe("#ff0000");
-    expect(rows[0]?.children[0]?.style.getPropertyValue("color")).toBe("#333333");
+    expect(mode.paint(cue(1, 4416))).toBe(false);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(host.find("drift")[0]?.style.getPropertyValue("--ut-hl")).toBe("#ff0000");
+    expect(rows[1]?.style.getPropertyValue("color")).toBe("#ffffff");
+    expect(rows[0]?.style.getPropertyValue("text-shadow")).toMatch(/rgba\(51, 51, 51, 1\.000\)/u);
   });
 });
 

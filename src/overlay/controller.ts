@@ -257,8 +257,9 @@ export class OverlayController {
       return;
     }
     this.paceUntil = null;
-    const t = this.clock.position(Date.now());
-    const busy = this.stage.render(t);
+    const wall = Date.now();
+    const t = this.clock.position(wall);
+    const busy = this.stage.render(t, this.clock.rate(wall));
     if (!this.animating) return;
     if (busy) {
       this.paceUntil = frame + BUSY_FRAME_MS;

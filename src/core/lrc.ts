@@ -8,6 +8,19 @@ export interface Word {
   text: string;
   start: number;
   end: number;
+  /**
+   * The word's syllables when enhanced LRC times them separately (tags inside the word, such as
+   * `Count<00:04.50>ing`): consecutive, covering [start, end], their texts joining to `text`.
+   * Absent for a word timed as a whole.
+   */
+  parts?: WordPart[];
+}
+
+/** One syllable of a word, in ms. */
+export interface WordPart {
+  text: string;
+  start: number;
+  end: number;
 }
 
 /** One lyric line in ms. A line with no words is an instrumental gap. */
@@ -106,11 +119,14 @@ function readOffset(lines: readonly string[]): number {
 
 /**
  * Word timing from enhanced LRC tags. Each word starts at the last tag at or before it; words that
- * share a tag split its span by weight. Tags inside a word (syllable karaoke) don't split the word.
+ * share a tag split its span by weight. Tags inside a word (syllable karaoke) don't split the word:
+ * they time its syllables (`parts`), when the word itself starts on a tag.
  * A tag at the very end closes the last word; without one, the last words get fallback timing.
  */
 function taggedWords(text: string, marks: readonly Mark[], times: readonly number[], start: number, end: number): Word[] {
   const words: Word[] = [];
+  /** per word: where it starts in `text`, and whether a tag starts it */
+  const units: { at: number; text: string; tagged: boolean }[] = [];
   let group: string[] = [];
   let groupStart = start;
   let k = 0;
@@ -124,12 +140,44 @@ function taggedWords(text: string, marks: readonly Mark[], times: readonly numbe
       group = [];
       groupStart = t;
     }
+    units.push({ at, text: unit, tagged: tag >= 0 && marks[tag]?.index === at });
     group.push(unit);
     at += unit.length;
   }
   const closing = marks[marks.length - 1]?.index === text.length ? times[times.length - 1] : undefined;
   words.push(...(closing === undefined ? timeWords(group, groupStart, end) : spreadWords(group, groupStart, closing)));
+  words.forEach((word, i) => {
+    const unit = units[i];
+    if (!unit?.tagged) return;
+    const parts = syllableParts(word, unit.at, unit.text, marks, times);
+    if (parts) word.parts = parts;
+  });
   return words;
+}
+
+/**
+ * A word's syllables from the tags inside it (strictly between its first and last letter), or null
+ * when it has none. Times are kept inside the word and in order.
+ */
+function syllableParts(word: Word, at: number, unit: string, marks: readonly Mark[], times: readonly number[]): WordPart[] | null {
+  const letters = unit.trimEnd().length;
+  const inner: { index: number; time: number }[] = [];
+  marks.forEach((m, i) => {
+    if (m.index > at && m.index < at + letters) inner.push({ index: m.index - at, time: times[i] ?? word.start });
+  });
+  if (inner.length === 0) return null;
+  const parts: WordPart[] = [];
+  let from = 0;
+  let t = word.start;
+  for (const mark of inner) {
+    if (mark.index <= from) continue;
+    const next = Math.min(word.end, Math.max(t, mark.time));
+    parts.push({ text: unit.slice(from, mark.index), start: t, end: next });
+    from = mark.index;
+    t = next;
+  }
+  parts.push({ text: unit.slice(from), start: t, end: Math.max(t, word.end) });
+  return parts.length > 1 ? parts : null;
 }
 
 /**

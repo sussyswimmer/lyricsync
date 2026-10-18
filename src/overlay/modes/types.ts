@@ -15,6 +15,11 @@ export interface Cue {
    * that is driven by frames rather than by the compositor.
    */
   running: boolean;
+  /**
+   * Song ms per wall ms right now: 1 while playing, 0 paused, a little off 1 while the clock slews
+   * toward a new sample. Modes that hand motion to the compositor anchor it to song time with this.
+   */
+  rate?: number;
 }
 
 /**
@@ -35,6 +40,11 @@ export interface ModeRenderer {
   build(host: HTMLElement, lines: readonly Line[], look: Look): void;
   paint(cue: Cue): boolean;
   restyle?(look: Look): void;
+  /**
+   * Song ms until the mode needs a paint that no word or line boundary brings (Infinity for none):
+   * its own events, such as an instrumental break starting. The stage wakes for the nearer of the two.
+   */
+  nextChange?(t: number): number;
   destroy(): void;
   /**
    * True when the stage should crossfade the old line out as the focus line changes to `next`'s, for

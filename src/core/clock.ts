@@ -69,6 +69,19 @@ export class PlaybackClock {
     return this.base(now) + globalOffsetMs + (trackOffsetsMs[s.trackKey] ?? 0);
   }
 
+  /**
+   * How fast `position` runs at `now`, in song ms per wall ms: 0 while paused or stopped, 1 while
+   * playing, and a little off 1 while a slew is blending a correction in (constant through the slew,
+   * so time-anchored animations can follow it exactly).
+   */
+  rate(now: number = Date.now()): number {
+    const s = this.sample;
+    if (s === null || !s.isPlaying || now < s.sampledAt) return 0;
+    const elapsed = now - this.correctionAt;
+    if (this.correction === 0 || elapsed < 0 || elapsed >= this.correctionMs) return 1;
+    return 1 - this.correction / this.correctionMs;
+  }
+
   /** The latest sample extrapolated to `now`. */
   private raw(now: number): number {
     const s = this.sample;
