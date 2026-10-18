@@ -14,6 +14,9 @@ import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, record
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
 import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
+import ledgerLines from "../../tests/fixtures/demo-ledger-lines.lrc?raw";
+import strobeHearts from "../../tests/fixtures/demo-strobe-hearts.lrc?raw";
+import glacierNocturne from "../../tests/fixtures/demo-glacier-nocturne.lrc?raw";
 import { demoCover } from "./covers";
 import type { ArgsOf, Bridge, Command, Commands, Event, Events, ResultOf, Unlisten } from "./types";
 
@@ -87,6 +90,14 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   // The motion demo (?track=6): an intro and a mid-song break long enough for the interlude dots,
   // syllable-timed enhanced LRC, and held line endings that light letter by letter.
   track("Glass Harbor", 38_000, 2, "found", { synced: glassHarbor }),
+  // The look demos (?track=7–9): three songs Undertone picks three different looks for, from how
+  // they are sung and what their covers look like (src/core/songlook.ts; tests/demo-looks.test.ts).
+  // A fast, dense verse under a black-and-white cover: Stack, in Bricolage.
+  track("Ledger Lines", 76_000, 3, "found", { synced: ledgerLines }),
+  // Short shouted hooks, a club edit and a neon-on-black cover: Lens, in Unbounded capitals.
+  track("Strobe Hearts (Club Mix)", 66_000, 4, "found", { synced: strobeHearts }),
+  // Sparse, slow lines with long instrumental gaps under a cold, dark cover: Drift, in Instrument Serif.
+  track("Glacier Nocturne", 118_000, 5, "found", { synced: glacierNocturne }),
 ];
 
 /** Built exactly as SPEC defines it. */

@@ -156,7 +156,7 @@ Debug builds read four more flags: `--media-test` prints each now-playing and ly
 
 `pnpm dev` serves the frontend at <http://localhost:1420>. In a plain browser there is no Tauri, so both pages run against the **mock bridge**, a fake player that sends the same events as the Rust core. Open the overlay at <http://localhost:1420/> and the settings window at <http://localhost:1420/settings.html> side by side: they share the player and settings, so a change in one shows up in the other.
 
-The mock plays seven demo tracks with original placeholder lyrics:
+The mock plays ten demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
@@ -167,6 +167,9 @@ The mock plays seven demo tracks with original placeholder lyrics:
 | 4 | Tidal Interlude | instrumental, no cover art |
 | 5 | Script Sampler | scripts and line shapes for visual QA: Japanese, Chinese, Korean, Vietnamese, right-to-left, very long and one-word lines, 42 s |
 | 6 | Glass Harbor | the motion demo: syllable-timed enhanced LRC, held line endings that light letter by letter, and an intro and a mid-song break long enough for the interlude dots, 38 s |
+| 7 | Ledger Lines | a look demo: a fast, dense verse under a black-and-white cover, which Undertone sets as Stack in Bricolage, 76 s |
+| 8 | Strobe Hearts (Club Mix) | a look demo: short shouted hooks, a club edit and a neon-on-black cover, set as Lens in Unbounded capitals, 66 s |
+| 9 | Glacier Nocturne | a look demo: sparse, slow lines with long instrumental breaks under a cold, dark cover, set as Drift in Instrument Serif, 118 s |
 
 Keys in mock mode (ignored while a form control has focus):
 
@@ -184,7 +187,7 @@ URL parameters (combine them with `&`):
 | Parameter | Effect |
 |---|---|
 | `?mock` | Use the mock even inside the Tauri webview. A plain browser always uses it. |
-| `?track=N` | Start on demo track N (0–6). |
+| `?track=N` | Start on demo track N (0–9). |
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |

@@ -1509,19 +1509,22 @@ describe("demo covers with a canvas", () => {
 
   it("draws every cover once at 240 px and caches the data URL", async () => {
     const { covers, canvases, calls } = await withCanvas(true);
-    expect(covers.COVER_COUNT).toBe(3);
+    // the prototype's three, then one for each look demo (tracks 7–9)
+    expect(covers.COVER_COUNT).toBe(6);
     const urls = Array.from({ length: covers.COVER_COUNT }, (_, i) => covers.demoCover(i));
-    expect(urls).toEqual(["data:image/png;base64,cover1", "data:image/png;base64,cover2", "data:image/png;base64,cover3"]);
-    expect(canvases.map((c) => [c.width, c.height])).toEqual([
-      [240, 240],
-      [240, 240],
-      [240, 240],
-    ]);
+    expect(urls).toEqual(Array.from({ length: 6 }, (_, i) => `data:image/png;base64,cover${i + 1}`));
+    expect(canvases.map((c) => [c.width, c.height])).toEqual(Array.from({ length: 6 }, () => [240, 240]));
     expect(calls).toContain("fillRect");
     const drawn = calls.length;
     expect(covers.demoCover(1)).toBe(urls[1]);
-    expect(canvases).toHaveLength(3);
+    expect(canvases).toHaveLength(6);
     expect(calls).toHaveLength(drawn);
+  });
+
+  it("has a cover for every demo track that names one, each used once from track 7 on", async () => {
+    const { covers } = await withCanvas(true);
+    for (const t of MOCK_TRACKS) if (t.cover !== null) expect(t.cover, t.title).toBeLessThan(covers.COVER_COUNT);
+    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5]);
   });
 
   it("returns null for an unknown cover or when there is no 2D context", async () => {

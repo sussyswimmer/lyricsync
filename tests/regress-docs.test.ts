@@ -142,7 +142,7 @@ describe("README development notes", () => {
     const readme = read("README.md");
     const rows = [...readme.matchAll(/^\| (\d+) \| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => [Number(m[1]), (m[2] ?? "").trim()]);
     expect(rows).toEqual(MOCK_TRACKS.map((t, i) => [i, t.title]));
-    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
     expect(readme).toContain(`The mock plays ${words[MOCK_TRACKS.length] ?? MOCK_TRACKS.length} demo tracks`);
     expect(readme).toContain(`Start on demo track N (0–${MOCK_TRACKS.length - 1})`);
   });
