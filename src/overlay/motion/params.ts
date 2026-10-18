@@ -122,7 +122,9 @@ export function motionParams(input: MotionInput): MotionParams {
   const full = input.motion && input.power !== "lite";
   const A = full ? clamp((clamp(finite(input.energy, 0.45), 0, 1) * k) / BL_ENERGY, 0, A_MAX) : 0;
   const f = 0.8 + 0.5 * clamp(finite(input.snap, 0.4), 0, 1);
-  const restScale = 1 - 0.05 * Math.min(A, 1.6);
+  // Upcoming words wait no smaller than BL's 0.95: each shrinks about its own center, so a deeper
+  // rest opens visibly uneven gaps between the words still to come. Livelier songs hop higher instead.
+  const restScale = 1 - 0.05 * Math.min(A, 1);
   const restLift = 0.01 * A;
   const letterRest = 1 - 0.03 * Math.min(A, 1);
   return {

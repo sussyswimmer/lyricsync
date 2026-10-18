@@ -503,7 +503,8 @@ describe("the motion's parameters", () => {
     expect(p.amp).toBe(A_MAX);
     expect(p.rippleHeight).toBe(0.14);
     expect(p.liftSpring.damping).toBeCloseTo(0.32, 12);
-    expect(p.restScale).toBeCloseTo(0.92, 12);
+    // Upcoming words never wait smaller than BL's 0.95, however lively the song.
+    expect(p.restScale).toBeCloseTo(0.95, 12);
     expect(params({ energy: 1, effects: 1e6 }).amp).toBe(A_MAX);
   });
 
