@@ -11,12 +11,15 @@ import { activeElement, resetDom, runFrames, stubDom, type FakeElement } from ".
  * and context menu it turns off in the app.
  */
 
-const env = vi.hoisted(() => ({ bridge: null as unknown }));
+const env = vi.hoisted(() => ({ bridge: null as unknown, onInfo: null as ((info: unknown) => void) | null }));
 vi.mock("../src/bridge", () => ({ connect: () => Promise.resolve(env.bridge) }));
-// The preview draws and animates; the window only needs it to exist.
+// The preview draws and animates; the window only needs it to exist, and to hear what it shows.
 vi.mock("../src/settings/preview", () => ({
   SettingsPreview: class {
     el = document.createElement("section");
+    constructor(options: { onInfo?: (info: unknown) => void }) {
+      env.onInfo = options.onInfo ?? null;
+    }
     start(): Promise<void> {
       return Promise.resolve();
     }
@@ -391,6 +394,44 @@ describe("settings window: nothing is lost as the window goes away", () => {
     lyrics.dispatch("change");
     fire(documentListeners, "visibilitychange");
     expect(core.calls("update_settings")).toEqual([]);
+  });
+});
+
+describe("settings window: the look picked for the preview's song", () => {
+  it("the card under the preview shows what the preview plays, as the preview reports it", async () => {
+    const root = await boot(scriptedBridge());
+    const card = root.one("picked");
+    expect(card.one("picked-message").textContent).toBe("Finding lyrics…");
+    const info = { track: null, demo: true, palette: null, paletteFrom: null, artPending: false };
+    const look = { style: "drift", font: { family: "Instrument Serif", weight: 400 }, traits: ["cold cover", "slow", "long instrumental gaps"] };
+    env.onInfo?.({ ...info, look: { kind: "look", key: "demo", demo: true, look } });
+    expect(card.one("picked-kicker").textContent).toBe("Picked for the demo song");
+    expect(card.one("picked-style").textContent).toBe("Drift");
+    expect(card.one("picked-face").textContent).toBe("Instrument Serif");
+    expect(card.one("picked-why").textContent).toBe("Cold cover, slow, long instrumental gaps.");
+    env.onInfo?.({ ...info, demo: false, look: { kind: "no-lyrics", key: "song", demo: false } });
+    expect(card.one("picked-message").textContent).toBe("No lyrics for this song");
+  });
+
+  it("has no style or font picker; Reset to defaults sends Effects back to 50, and the stored look fields too", async () => {
+    const core = scriptedBridge({
+      get_settings: () =>
+        Promise.resolve({
+          ...structuredClone(DEFAULT_SETTINGS),
+          effects: 85,
+          glow: 0,
+          mode: "lens",
+          font: { family: "Syne", weight: 800 },
+          curve: -20,
+        }),
+    });
+    const root = await boot(core);
+    expect(root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
+    root.withText("Reset to defaults…").click();
+    root.withText("Reset").click();
+    await settle();
+    const [sent] = core.calls("update_settings");
+    expect(sent?.["patch"]).toMatchObject({ effects: 50, glow: 40, mode: "arc", font: { family: "Fraunces", weight: 700 }, curve: 38 });
   });
 });
 
