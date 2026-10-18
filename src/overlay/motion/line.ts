@@ -98,7 +98,7 @@ export const SLICE_MS = 6;
  * Mount slices (one per frame) stop taking new words once they have run this long, ms: every word they
  * start adds its layers to that frame's commit and raster, so a frame takes a few words, not a line.
  */
-export const MOUNT_SLICE_MS = 5;
+export const MOUNT_SLICE_MS = 3;
 /** The overlay reaches this far beyond the word's box (glyph overhangs, the lift, the bloom), in em. */
 const PAD_EM = 0.5;
 
