@@ -66,10 +66,16 @@
   transition: none;
 }
 
+/* The overlay fades out as its line leaves focus, but takes over at once as one comes in (it may have
+   been built ahead, hidden). */
 .kw-fx {
   position: absolute;
   inset: 0;
   transition: opacity 0.32s ease;
+}
+
+.drift-row.has-fx .kw-fx {
+  transition: none;
 }
 
 .drift-row:not(.has-fx) .kw-fx {

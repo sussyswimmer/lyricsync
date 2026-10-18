@@ -150,8 +150,8 @@ const LETTER_GLOW_SPRING: SpringSpec = { hz: 1.2, damping: 0.5 };
 const RIPPLE_SPRING: SpringSpec = { hz: 3.1, damping: 0.4 };
 
 /** Ripple height in font sizes: RIPPLE_MIN for the calmest song, plus up to RIPPLE_GAIN for the liveliest. */
-const RIPPLE_MIN = 0.03;
-const RIPPLE_GAIN = 0.045;
+const RIPPLE_MIN = 0.04;
+const RIPPLE_GAIN = 0.05;
 /** A letter holds its ripple at least this long, so fast words still show a wave. */
 const RIPPLE_HOLD_MS = 130;
 const RIPPLE_HOLD_MAX_MS = 260;
