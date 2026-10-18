@@ -228,7 +228,7 @@ export class SettingsPreview {
     const controller = new OverlayController(bridge, this.stage, {
       followSettings: false,
       palettes: this.options.palettes,
-      // With the controller's look picker (ControllerOptions.onLook): onLook: (look) => this.reportLook(look),
+      onLook: (look) => this.reportLook(look),
     });
     controller.setSettings(this.settings);
     this.controller = controller;
