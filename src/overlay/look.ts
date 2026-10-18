@@ -137,6 +137,15 @@ export function effectsOf(settings: Settings): number {
   return typeof value === "number" && Number.isFinite(value) ? clamp(value, 0, 100) : 50;
 }
 
+/**
+ * Only the PickedLook fields of a look: what the stage draws with. A song's look (core/songlook's
+ * SongLook) also carries why it was picked (traits, reason, scores), which no drawing depends on.
+ */
+export function pickedOf(look: PickedLook): PickedLook {
+  const { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase } = look;
+  return { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase };
+}
+
 /** A pick made safe to draw: a known style, every number finite and in range (an unknown face falls back in fontFor). */
 export function sanePick(look: PickedLook): PickedLook {
   const emphasis = look.emphasis

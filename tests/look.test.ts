@@ -11,6 +11,7 @@ import {
   mergeOverrides,
   overrideFromSettings,
   parseLookOverride,
+  pickedOf,
   resolveLook,
   rgba,
   sanePick,
@@ -23,7 +24,8 @@ import {
   type Look,
   type PickedLook,
 } from "../src/overlay/look";
-import { bloomOf } from "../src/overlay/motion/params";
+import type { EmphasisRule as CoreEmphasisRule, SongLook } from "../src/core/songlook";
+import { bloomOf, type EmphasisRule } from "../src/overlay/motion/params";
 
 const FRAME: Frame = { width: 1920, height: 1080, dpr: 2, motion: true, unsynced: false };
 const PALETTE: Palette = { lyric: "#f5efe6", highlight: "#e0559a", dim: "#7d7f99" };
@@ -293,6 +295,24 @@ describe("the picked look", () => {
     expect(wild).toMatchObject({ style: "arc", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
     expect(sanePick({ ...pick(), emphasis: null }).emphasis).toBeNull();
     expect(picked(pick({ font: { family: "Nope", weight: 0 } })).family).toBe("Fraunces");
+  });
+
+  it("draws a song's look by its PickedLook fields alone, leaving out why it was picked", () => {
+    const song: SongLook = {
+      ...pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }),
+      traits: ["big repeating hooks"],
+      reason: "big repeating hooks → Lens with Syne",
+      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3 }, font: { Syne: 0.5 } },
+      ties: { style: false, font: false },
+    };
+    const drawn: PickedLook = pickedOf(song);
+    expect(drawn).toEqual(pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }));
+    expect(Object.keys(drawn)).not.toContain("reason");
+    // one emphasis rule for the picker and the motion: each is the other
+    const rule: EmphasisRule = { minMs: 900, maxChars: 10, lastWordOnly: true };
+    const same: CoreEmphasisRule = rule;
+    const back: EmphasisRule = same;
+    expect(back).toBe(rule);
   });
 
   it("reads Effects from a store that has it, and 50 from one older than contract v4", () => {
