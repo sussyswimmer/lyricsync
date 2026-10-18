@@ -287,9 +287,61 @@ Follow-ups, not done:
 Needs from Codex: nothing.
 Contract: unchanged (v3). Only the `yPos` comment changed, in both files.
 
-## 2026-10-18 · Claude Code · proto/compositor (prototype branch, not merged)
+## 2026-10-18 · Claude Code · proto/compositor (the prototype v4 is built on)
 Done: Beautiful-Lyrics-like motion for Drift and Stack, played by the compositor. `src/overlay/motion/` is an engine any style can use: springs solved in closed form and planned ahead as keyframes; a `SongTimeline` that keeps Web Animations on song time through play, pause, seek and clock slews; `KaraokeLine` (a soft-edged wipe per syllable, a pop, a bloom in the highlight color, a letter ripple scaled by how fast the song is sung, held syllables lit letter by letter); instrumental-break dots. Drift and Stack show several lines with distance dim and blur, scroll on a spring, and put three filling dots where the next line will be during an intro or a gap of 3 s or more. A line's animations start and end together, so the page sleeps through words (`ModeRenderer.wordWakes = false` and `nextChange`, 1 s idle sleep); slow motion steps on a shared 20 Hz song-time beat in Chromium (WebKit keeps it linear: stepped keyframes would leave Core Animation). Parser: syllable tags inside a word become `Word.parts`. Mock: track 6, "Glass Harbor" (original placeholder lyrics). Glow 0 turns the bloom off, like the halo in the other styles. USER_GUIDE describes the new motion.
 Measured against `claude/friendly-mayer-shv80u` in one session (headless Chromium without a GPU, medians of 3 runs of 20 s). Singing: main thread 1.58% → 1.94% (Stack and Drift), page rAF callbacks 14.4/s → 1.35/s, total CPU 11.8% → 40.1% (Stack) and 11.2% → 42.1% (Drift). Held note: main 0.42% → 0.50%, total 2.3% → 16.1–16.7%. The totals are the software compositor drawing every frame on the CPU (gpu process 6–7% → 30–32%); on GPU-composited machines that work moves to the GPU, which wasn't measurable here.
 Not verified: WebKit (WKWebView should give the same animations to Core Animation) and any machine with a GPU.
 Needs from Codex: nothing.
 Contract: unchanged (v3).
+
+## 2026-10-18 · Claude Code · v4: Beautiful-Lyrics-style motion, and a look picked for each song (contract v4)
+Done: Maxwell's feedback on the first real look was that the lyrics felt bland ("each letter should be moving more", "the glow is disappointing"), that Undertone should pick the style and the font for each song instead of asking, and that its sync and animation should feel like Beautiful Lyrics (BL). BL has no license, so none of its code, CSS or comments were used: its motion was studied from its promo video and its renderer's behavior, and re-implemented from scratch. Two engine prototypes were built and judged (planned compositor animations against a per-frame spring painter); v4 takes the first, with four ideas from the second. Everything below is on `claude/friendly-mayer-shv80u`; it supersedes the proto/compositor entry above where they differ (Glow 0 now keeps a faint bloom).
+- **Motion engine** (`src/overlay/motion/`):
+  - When a line comes into focus, its motion is solved in closed form (springs chasing target curves) and played by the compositor as Web Animations of `transform` and `opacity`. `SongTimeline` keeps them on song time: a pause holds them, a seek re-anchors them, a clock correction of up to 400 ms slews their playback rate, and a larger one jumps. The page sleeps between line changes (`wordWakes = false`) and checks the clock without drawing a frame.
+  - Each word fills with the highlight color behind a soft edge, syllable by syllable (`Word.parts`, from enhanced LRC tags), rises and swells on springs, and its letters hop as the color reaches them. A three-layer bloom in the highlight color follows the sung word. A syllable held for about a second or more (the look's emphasis rule) lights and lifts letter by letter while its halo builds.
+  - A dark copy of each word sits under everything, unclipped, so the legibility shadow never shows hard edges on a light wallpaper.
+  - Instrumental intros and breaks of 3 s or more show three dots that fill one after another, breathe, then swell and pop out just before the next line.
+  - Lines move 300 ms before they start (the lead), on a 1.5 Hz spring released from the position actually shown, so seeks of up to three lines glide both ways. Longer jumps, changes while paused and reduced motion crossfade.
+  - Amplitude: A = energy × (Effects ÷ 50) ÷ 0.3, capped at 2.5, in units of BL's own motion. A typical song (energy about 0.45) at Effects 50 moves about 1.5 times as much as BL, because the feedback asked for more motion than before. Upcoming words never wait smaller than BL's 0.95, so word gaps stay even.
+  - Lite tier (`motion/power.ts`): when the machine composites in software (no WebGL context, or a software renderer such as SwiftShader, llvmpipe or Microsoft Basic Render Driver: VMs, Remote Desktop), words fade instead of moving and the fades and glides step. The overlay page shows the tier as `data-power` on `<html>`.
+- **The four styles on the engine:**
+  - **Stack** is the BL-like list: neighbors at 0.92 size, fainter and softer with distance.
+  - **Drift** is that list tilted back in 3D.
+  - **Lens** plans its fisheye as one track per word (`modes/lens-plan.ts`), multiplied with the karaoke, so the magnified word is the one being lit and rising. It no longer restyles every word every frame.
+  - **Arc** sets its current line as HTML letters placed on the curve (`modes/arc-place.ts`, within 0.6 px and 0.03° of Chromium's own SVG text on a path), with the full karaoke. The neighbor lines stay SVG `textPath` bands, and the glow band is gone.
+- **The look per song** (`src/core/songlook.ts`, `src/core/faces.ts`):
+  - From the lyrics and their timing (pace, held notes, gaps, line length, repetition, shouting, script), the title (words like "Acoustic" or "Club Mix") and the cover's colors and light (`coverStats` in `core/palette.ts`), it picks the style, the face, Arc's curve, the motion's energy and snap, the glow, the emphasis rule, a size scale, letter spacing and capitals, with a reason in plain words. A face is never picked without the song's letters (`FontChoice` gains `cyrillic` and `greek`). Plain lyrics always get the calm Stack.
+  - The controller owns a `LookKeeper`. The look is committed once the cover is known, a line is about to be sung, or 1.5 s have passed. A late cover or synced lyrics replacing plain ones may refine it once, at a line change or a break, with a crossfade. The last 32 looks are remembered, so a replayed song looks the same at once.
+  - `?look=style[,family[,curve]]` on the overlay page and `--look=` on the app force a look for testing; neither is stored.
+- **Settings, tray and contract:**
+  - The Style group, the Font group and the Curve slider are gone. Under the preview, a "Picked for this song" card names the look (the face in that face) and why. Layout becomes **Look**: Size, Height, **Effects** (new: Calm to Lively, default 50), Glow (0 now keeps a faint bloom) and Opacity. The tray's Style ▸ becomes Effects ▸ Calm (20) · Balanced (50) · Lively (85).
+  - Contract v4 adds `effects` (TS and Rust; settings saved without it read as 50). `mode`, `font` and `curve` are still validated and stored, but the overlay no longer reads them.
+  - Three new demo songs with original lyrics show three looks: Ledger Lines (Stack · Bricolage), Strobe Hearts (Club Mix) (Lens · Unbounded, in capitals) and Glacier Nocturne (Drift · Instrument Serif). The settings preview's demo plays Glass Harbor and these three.
+- **Docs:** README, SPEC.md ("What it is" and a Contract v4 section), USER_GUIDE (a new Look section, Effects, Glow) and LYRICS.md are updated. `docs/ACCEPTANCE.md` checks the CPU budget per style through `--look`, and has new sections for the motion on WebKit and WebView2, the lite tier, and the look picked per song. `pnpm coverage` now covers the motion engine and the picker, with floors of 85% (75% of branches).
+Measured, in one session against `4317805` (headless Chromium with software compositing, medians of 3 runs of 20 s, harness word-tag fixture, song 5–25 s):
+
+| Style | Main thread % | rAF callbacks/s | Total CPU %, full tier | Total CPU %, lite tier |
+|---|---|---|---|---|
+| Stack | 2.02 → 2.36 (1.17×) | 14.1 → 1.9 | 14.1 → 61.3 | 14.1 → 17.5 (1.24×) |
+| Drift | 2.10 → 2.39 (1.14×) | 14.3 → 2.0 | 14.0 → 58.8 | 14.0 → 14.2 (1.01×) |
+| Lens | 6.45 → 2.62 (0.41×) | 55.2 → 1.3 | 24.2 → 57.8 | 24.2 → 23.2 (0.96×) |
+| Arc | 3.00 → 2.97 (0.99×) | 7.7 → 1.6 | 24.2 → 73.4 | 24.2 → 18.3 (0.76×) |
+
+100% is one core. The longest main-thread task, at a line change, is 27–42 ms (it was 1–4 ms).
+
+How to read it: the main thread is what carries over to a real machine. The totals are dominated by the GPU process compositing every animated layer on the CPU, which a real GPU does instead; the lite tier is what such a machine gets. Lens now draws about once a second instead of 55 times while someone sings.
+Tests: 1118 vitest (31 files), 261 Rust (1 ignored). `pnpm build`, `pnpm coverage`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- The Glow slider stays (0 is faint, never off). The design study had suggested folding it into Effects.
+- No fifth "Flow" style: Stack is the BL-like list, because the picker wanted Stack and Flow for the same songs.
+- Motion is livelier than BL by default (A = 1.5 at a typical song); `BL_ENERGY` in `motion/params.ts` sets it.
+- The lite tier's rule (no WebGL context, or a software renderer).
+- The tray's Effects presets are 20, 50 and 85.
+Known gaps:
+- Line changes cost long main-thread tasks on this box: about 18–36 ms on Neon Monsoon and 36–66 ms on Script Sampler's 20-word line, mostly committing the new line's layers (about 14 per word) and parsing its `element.animate` calls. Mounting words just ahead of their time, with fewer layers per word, would spread it out.
+- Arc splits each word's bloom copy into letters (one blur per letter); a whole-word bloom would raster faster. After a cut, a word whose overlay isn't built yet shows straight in its frame for a few frames.
+- `rebase()` in `motion/karaoke.ts` holds frames before a track's window instead of interpolating them; no current caller depends on it.
+- A window that saw plain lyrics, then synced ones, then a late cover can keep a different final look than a window opened later, because the keeper refines once.
+Not verified: none of v4 has run on a real Mac or PC, and WebKit hasn't run it at all. `docs/ACCEPTANCE.md` §7, §10 and §11 have the steps. The ones that matter most: the CPU budget per style on a mid-range laptop, the masks and blurs staying smooth under Core Animation and WebView2, and the lite tier on a VM.
+Needs from Codex: nothing.
+Contract: v4 (`effects` added; `mode`, `font` and `curve` no longer read by the overlay).
