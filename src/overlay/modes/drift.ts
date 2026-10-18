@@ -18,6 +18,7 @@ import {
   DRIFT_RECEDE_EM,
   DRIFT_TILT_DEG,
   LEAVE_MS,
+  LITE_FADE_STEPS,
   LITE_SCROLL_MS,
   MAX_GLIDE_LINES,
   motionParams,
@@ -62,18 +63,41 @@ const PREPARE_DELAY_MS = 600;
 /** ...in idle slices this far apart. */
 const PREPARE_GAP_MS = 40;
 /**
- * After a line change, the line leaving focus and the rows that only step their distance blur are
- * restyled this many per frame (each repaints and re-rasters its row).
+ * After a line change, the line leaving focus stops still and the rows that only step their distance
+ * blur are restyled, this many per frame (each repaints and re-rasters its row).
  */
 const JOBS_PER_FRAME = 3;
 /** The scroll's keyframes are thinned to this much of a px of position and of opacity, and of scale. */
 const SCROLL_THIN = { y: 0.25, opacity: 0.004, scale: 0.002 };
 /**
- * A scroll this close to its end (ms) has come to rest, well under a pixel from it. The line that left
- * focus drops its overlay this long before the end, in a frame that lets go of the scroll's animations
- * too: ending by themselves, they would each cost Chromium frames of their own.
+ * Wall-time animations this close to their end (ms) have all but arrived: the scroll is well under a
+ * pixel from rest, a fade all but transparent. They are dropped then, in a frame that has other work
+ * (the line that left focus handing back, then being taken down), rather than left to end by
+ * themselves: Chromium spends frames of their own on animations ending.
  */
-export const SCROLL_RELEASE_MS = 60;
+export const RELEASE_MS = 60;
+/**
+ * The line leaving focus hands back to its plain text this long after the change at the earliest (ms),
+ * clear of the change's busiest frames, and fades out over this long at the least.
+ */
+const HAND_BACK_MIN_MS = 200;
+const FADE_MIN_MS = 300;
+/** A frame this close to a hand-back's time (ms) takes it rather than waking again for it. */
+const HAND_BACK_SLACK_MS = 24;
+
+/** A line that left focus (song times). */
+interface Leaving {
+  line: KaraokeLine;
+  row: Row;
+  at: number;
+  /** sung through as it left: it stops still (once) before it hands back */
+  sung: boolean;
+  /** when it hands back to its plain text, its overlay fading out... */
+  handBack: number;
+  /** ...and when it is taken down, in the frame that lets go of the list's scroll at rest */
+  until: number;
+  handed: boolean;
+}
 
 interface Row {
   el: HTMLDivElement;
@@ -276,8 +300,8 @@ export class DriftMode implements ModeRenderer {
   /** the next line's overlay and plans, made ahead in idle slices */
   private prepared: { line: KaraokeLine; row: Row } | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
-  /** lines that left focus at song time `at`, their overlays dropped at `until` */
-  private leaving: { line: KaraokeLine; row: Row; at: number; until: number }[] = [];
+  /** lines that left focus at song time `at`: lit until `handBack`, then fading until `until` */
+  private leaving: Leaving[] = [];
   private lastT = Number.NaN;
   private lastPerf = 0;
   private lastRunning = false;
@@ -468,7 +492,7 @@ export class DriftMode implements ModeRenderer {
       if (il.start > t) next = Math.min(next, il.start - t);
       if (il.end > t) next = Math.min(next, il.end - t);
     }
-    for (const l of this.leaving) next = Math.min(next, Math.max(0, l.until - t));
+    for (const l of this.leaving) next = Math.min(next, Math.max(0, (l.handed ? l.until : l.handBack) - t));
     return next;
   }
 
@@ -696,11 +720,11 @@ export class DriftMode implements ModeRenderer {
   }
 
   /**
-   * Drops the scroll's animations once it has come to rest (SCROLL_RELEASE_MS from their end, or a
-   * frame later): every slot already carries its final style inline.
+   * Drops the scroll's animations once it has come to rest (RELEASE_MS from their end, or a frame
+   * later): every slot already carries its final style inline.
    */
   private releaseScrolls(): void {
-    if (this.scrolls.length > 0 && perfNow() >= this.scrollEnd - 2 * SCROLL_RELEASE_MS) this.cancelScrolls();
+    if (this.scrolls.length > 0 && perfNow() >= this.scrollEnd - 2 * RELEASE_MS) this.cancelScrolls();
   }
 
   /**
@@ -761,11 +785,12 @@ export class DriftMode implements ModeRenderer {
 
   /**
    * Row states around the new focus, the karaoke handed to the focus line, the break's dots started.
-   * `spread` (a glide while playing): this frame restyles only the new focus; the line leaving it, then
-   * the rows that only step their distance blur (nearest first), follow on the next frames,
-   * JOBS_PER_FRAME at a time, while the list is moving anyway. Each of them repaints and re-rasters
-   * its row, and all at once, on top of the scroll and the karaoke's handover, made the frame that
-   * starts a line change the longest of the song.
+   * `spread` (a glide while playing): this frame restyles only the new focus; the line leaving it
+   * stops still, then the rows that only step their distance blur (nearest first) follow on the next
+   * frames, JOBS_PER_FRAME at a time, while the list is moving anyway, and the line leaving hands back
+   * to its plain text as the new one starts (tidy, handBack). Each of them repaints and re-rasters its
+   * row, and all at once, on top of the scroll and the karaoke's handover, made the frame that starts a
+   * line change the longest of the song.
    */
   private restate(cue: Cue, spread = false): void {
     const look = this.look;
@@ -773,31 +798,26 @@ export class DriftMode implements ModeRenderer {
     const focusSlot = this.slots[this.target];
     const focusRow = focusSlot?.kind === "line" ? focusSlot.row : null;
     const layout = this.layout(this.target, look);
-    // what a glide leaves for the frames after this one, in order: the line leaving focus, then the
-    // rows that only step their blur, nearest first
+    // what a glide leaves for the frames after this one, in order: the line leaving focus stopping
+    // still, then the rows that only step their blur, nearest first
     this.flushLater();
     const later: { job: () => void; dist: number }[] = [];
-    // the line leaving focus hands back to its plain text (the scroll dims the row), then drops its
-    // overlay LEAVE_MS on at the earliest, once the scroll has come to rest (tidy); sung through (the
-    // usual way out) it stops as it ends, still; leaving early (a seek back) it keeps moving with the song
+    // The line leaving focus keeps its overlay, lit, as the list scrolls (the scroll dims the row).
+    // Sung through (the usual way out) it stops still first, in the first frame the change leaves
+    // free; as the new line starts (a frame there is anyway) it hands back to its plain text, its
+    // overlay fading out until the list comes to rest, and is taken down in the frame that lets go of
+    // the scroll (tidy, handBack). Without a glide it hands back now, at once.
     let leavingRow: Row | null = null;
     if (this.karaoke && this.karaoke.row !== focusRow) {
       const { line, row } = this.karaoke;
-      const sung = cue.t >= line.sungBy;
       leavingRow = row;
-      const rest = Math.max(0, this.scrollEnd - SCROLL_RELEASE_MS - perfNow());
-      this.leaving.push({ line, row, at: cue.t, until: cue.t + Math.max(LEAVE_MS, rest) });
+      const rest = spread ? Math.max(LEAVE_MS, this.scrollEnd - RELEASE_MS - perfNow()) : 0;
+      const start = focusSlot?.kind === "line" ? focusSlot.row.line.start : focusSlot?.kind === "break" ? focusSlot.brk.il.start : cue.t;
+      const handBack = spread ? Math.min(Math.max(start, cue.t + HAND_BACK_MIN_MS), cue.t + rest - FADE_MIN_MS) : cue.t;
+      const leaving: Leaving = { line, row, at: cue.t, sung: cue.t >= line.sungBy, handBack, until: cue.t + rest, handed: false };
+      this.leaving.push(leaving);
       this.karaoke = null;
-      const state = this.stateOf(row, layout, focusRow);
-      const leave = (): void => {
-        // back in focus meanwhile (a seek back): it kept its overlay
-        if (this.karaoke?.row === row) return;
-        if (sung) line.finish();
-        row.el.classList.remove("has-fx");
-        this.styleRow(row, state);
-      };
-      if (spread) later.push({ job: leave, dist: -1 });
-      else leave();
+      if (spread && leaving.sung) later.push({ job: () => this.stopLeaving(leaving), dist: -1 });
     }
     this.slots.forEach((slot) => {
       if (slot.kind !== "line" || slot.row === leavingRow) return;
@@ -928,6 +948,39 @@ export class DriftMode implements ModeRenderer {
     if (!focus) for (const w of row.words) put(w, "transform", "none");
   }
 
+  /**
+   * The line that left focus hands back to its plain text, in its state now, its overlay fading out
+   * until it is taken down (SPEC §2.3; LEAVE_MS at least as a rule): in steps in the lite tier, at once
+   * without motion or with the song stopped or gone back. Sung through (the usual way out) it stopped
+   * still already; leaving early (a seek back) it kept moving with the song until now.
+   */
+  private handBack(l: Leaving, live: boolean, t: number): void {
+    const look = this.look;
+    this.stopLeaving(l);
+    l.handed = true;
+    if (!live || look?.motion === false) l.until = t;
+    // the fade would end RELEASE_MS after the overlay is taken down: all but transparent by then
+    const fade = l.until > t ? l.until - t + RELEASE_MS : 0;
+    l.line.fadeOut(fade, look?.power === "lite" && this.steps ? LITE_FADE_STEPS : 0);
+    l.row.el.classList.remove("has-fx");
+    if (look) this.styleRow(l.row, this.stateOf(l.row, this.layout(this.target, look), this.karaoke?.row ?? null));
+  }
+
+  /** Removes a leaving line's overlay; its row draws its plain text in its state again. */
+  private dropOverlay(l: Leaving): void {
+    l.line.destroy();
+    const state = l.row.state;
+    l.row.state = "";
+    this.styleRow(l.row, state);
+  }
+
+  /** A line sung through stops still as it leaves (once): its words leave their layers, the row draws them. */
+  private stopLeaving(l: Leaving): void {
+    if (!l.sung || !this.leaving.includes(l)) return;
+    l.sung = false;
+    l.line.finish();
+  }
+
   /** A row's state with the list on `layout` around `focusRow`: focus, or its distance blur above or below. */
   private stateOf(row: Row, layout: Map<number, SlotStyle>, focusRow: Row | null): string {
     if (row === focusRow) return "focus";
@@ -973,17 +1026,21 @@ export class DriftMode implements ModeRenderer {
   /** Drops overlays that have faded out, dots whose break is over, and layers of slots a glide left behind. */
   private tidy(cue: Cue): void {
     if (this.leaving.length > 0) {
-      const before = this.leaving.length;
+      let dropped = false;
       this.leaving = this.leaving.filter((l) => {
-        if (cue.running && cue.t < l.until && cue.t >= l.at) return true;
-        l.line.destroy();
-        const state = l.row.state;
-        l.row.state = "";
-        this.styleRow(l.row, state);
+        // the song stopped, or went back before the change: at once
+        const live = cue.running && cue.t >= l.at;
+        if (!l.handed) {
+          if (live && cue.t < l.handBack - HAND_BACK_SLACK_MS) return true;
+          this.handBack(l, live, cue.t);
+        }
+        if (live && cue.t < l.until) return true;
+        this.dropOverlay(l);
+        dropped = true;
         return false;
       });
-      // the same frame lets go of a scroll at rest (SCROLL_RELEASE_MS)
-      if (this.leaving.length < before) this.releaseScrolls();
+      // the list has come to rest: the same frame lets go of its scroll
+      if (dropped) this.releaseScrolls();
     }
     const focus = this.slots[this.target];
     const focusBreak = focus?.kind === "break" ? focus.brk : null;

@@ -70,10 +70,10 @@
   visibility: hidden;
 }
 
-/* The overlay takes over at once as its line comes in (it may have been built ahead, hidden) and
-   hands back to the plain text at once as the line leaves, while the list's own scroll dims the row.
-   A fade here would give every word's overlay a layer of its own to raster just as the list starts
-   moving, the costliest frame of a line change on a software compositor. */
+/* The overlay takes over at once as its line comes in (it may have been built ahead, hidden). As the
+   line leaves, it fades out over its plain text (KaraokeLine.fadeOut, from DriftMode's hand-back): an
+   animation, not a transition, so that it starts at a frame of DriftMode's choosing, never on the
+   costliest frames of a line change. */
 .kw-fx {
   position: absolute;
   inset: 0;
@@ -83,6 +83,12 @@
 
 .kw-host:not(.has-fx) .kw-fx {
   opacity: 0;
+}
+
+/* Fading out, an overlay leaves the legibility shadow to the plain text beneath: one shadow, not two
+   crossing, and nothing blurred for the fade's layer to raster. */
+.kw-host:not(.has-fx) .kw-fx .kw-dark {
+  visibility: hidden;
 }
 
 /* No copy inside the overlay carries a shadow of its own: windows clip and mask their contents, and
@@ -300,9 +306,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ut-stage,
-  .drift,
-  .kw-txt,
-  .kw-fx {
+  .drift {
     transition: none;
   }
   /* Still nothing for the first 600 ms (states.ts sets the delay), then one gentle fade to a steady

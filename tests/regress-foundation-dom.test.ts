@@ -6,7 +6,7 @@ import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
 import { DEFAULT_PICK, resolveLook, textShadow, type Frame, type Look, type PickedLook } from "../src/overlay/look";
-import { DriftMode, SCROLL_RELEASE_MS } from "../src/overlay/modes/drift";
+import { DriftMode, RELEASE_MS } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
@@ -437,8 +437,13 @@ describe("Drift restyle", () => {
     expect(mode.paint(cue(1, 4416))).toBe(false);
     expect(scrolling(rows[1])).toEqual(glide);
     expect(host.find("drift")[0]?.style.getPropertyValue("--ut-hl")).toBe("#ff0000");
-    // the new colors reach every row's words, those the line change had left for later frames too
+    // the new colors reach every row's words, those the line change had left for later frames too,
+    // and the line leaving focus as it hands back (200 ms after a change made mid-line)
     for (const txt of rows[1]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("#ffffff");
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+    clock += 84;
+    mode.paint(cue(1, 4500));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
     for (const txt of rows[0]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("text-shadow")).toMatch(/rgba\(51, 51, 51, 1\.000\)/u);
   });
 });
@@ -612,8 +617,13 @@ describe("Drift instrumental breaks", () => {
     // the dots run on the compositor: the group's pop and fade, each dot and its glow
     expect(host.find("ut-dots")[0]?.getAnimations()).toHaveLength(2);
     expect(host.find("ut-dot").every((d) => d.getAnimations().length === 1)).toBe(true);
-    // no line sings karaoke during the break (the one before it hands back on the next frame)
+    // no line sings karaoke during the break (the one before it hands back 200 ms on: the break
+    // began before the list moved to it)
     vi.advanceTimersByTime(16);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(mode.nextChange(10_016)).toBe(184);
+    clock += 184;
+    mode.paint(cue(2, 10_200, true, true));
     expect(rows.some((r) => r.classList.contains("has-fx"))).toBe(false);
     clock += 16;
     mode.paint(cue(2, 12_600));
@@ -623,34 +633,42 @@ describe("Drift instrumental breaks", () => {
     expect(host.find("ut-dot")).toHaveLength(0);
   });
 
-  it("sends the line before a break back to plain text, and takes its overlay down after", () => {
+  it("sends the line before a break back to plain text, its overlay fading out until the list rests", () => {
     const { mode, rows } = drift(0);
     mode.paint(cue(1, 8000));
     expect(rows[1]?.classList.contains("has-fx")).toBe(true);
     expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
     clock += 16;
     mode.paint(cue(1, 8960, true, false));
+    // lit while the list starts moving, stopped still on the next frame
     expect(rows[1]?.classList.contains("has-fx")).toBe(true);
     vi.advanceTimersByTime(16);
-    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
-    // its overlay, hidden, is taken down once the list has come to rest, in the frame that lets go of
-    // the scroll's animations
-    const rest = (scrolling(rows[1])[0]?.duration ?? 0) - SCROLL_RELEASE_MS;
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    const rest = (scrolling(rows[1])[0]?.duration ?? 0) - RELEASE_MS;
     expect(rest).toBeGreaterThan(420);
-    expect(mode.nextChange(8960)).toBeCloseTo(rest, 6);
-    clock += 400;
-    mode.paint(cue(1, 9360, true, true));
-    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
-    expect(scrolling(rows[1])).toHaveLength(1);
-    clock += rest - 400;
+    // 200 ms on (the break began before the list moved) it hands back, its overlay fading out until
+    // the list comes to rest...
+    expect(mode.nextChange(8976)).toBe(184);
+    clock += 184;
+    mode.paint(cue(1, 9160, true, true));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    const fade = wordsOf(rows[1])[0]?.find("kw-fx")[0]?.getAnimations()[0];
+    expect(fade?.keyframes.map((k) => k.opacity)).toEqual([1, 0]);
+    expect(fade?.options.easing).toBe("ease-out");
+    expect(fade?.duration).toBeCloseTo(rest - 200 + RELEASE_MS, 6);
+    expect(mode.nextChange(9160)).toBeCloseTo(rest - 200, 6);
+    // ...and is taken down then, in the frame that lets go of the scroll, the fade all but over
+    clock += rest - 200;
     mode.paint(cue(1, 8960 + rest, true, true));
     expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(0);
+    expect(fade?.cancelled).toBe(true);
     expect(scrolling(rows[1])).toEqual([]);
   });
 });
 
 describe("Drift's karaoke leaving focus", () => {
-  // a glide hands the line leaving focus back to plain text on the frame after it starts
+  // a glide stops the line leaving focus on the frame after it starts, and hands it back to its plain
+  // text as the new line starts
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
@@ -669,13 +687,39 @@ describe("Drift's karaoke leaving focus", () => {
     clock += 16;
     // Paper Lanterns: "river" ends the first line at 3.7 s, the next one starts at 4.2 s
     mode.paint(cue(1, 4200));
-    // the frame that starts the scroll leaves it as it is; the next one puts it away
+    // the frame that starts the scroll leaves it as it is; the next one stops it, still lit
     expect(rows[0]?.classList.contains("has-fx")).toBe(true);
     vi.advanceTimersByTime(16);
-    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
-    expect(wordsOf(rows[0])[0]?.find("kw-fx")).toHaveLength(1);
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
     expect(wordMotion(rows[0])).toBe(0);
     expect(wordMotion(rows[1])).toBeGreaterThan(0);
+    // it hands back 200 ms on (the change came as line 1 started), only its overlays fading out
+    clock += 200;
+    mode.paint(cue(1, 4400));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(wordsOf(rows[0]).every((w) => w.find("kw-fx")[0]?.getAnimations().length === 1)).toBe(true);
+    expect(wordMotion(rows[0])).toBe(wordsOf(rows[0]).length);
+  });
+
+  it("keeps a fading overlay as it shows when the stage copies the scene", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4200));
+    vi.advanceTimersByTime(16);
+    clock += 200;
+    mode.paint(cue(1, 4400));
+    const fx = wordsOf(rows[0])[0]?.find("kw-fx")[0];
+    const fade = fx?.getAnimations()[0];
+    // the engine starts it on its next frame; 100 ms on it is partly faded
+    if (fade) fade.startTime = clock;
+    clock += 100;
+    const shown = Number(fade?.values().opacity);
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(1);
+    mode.freeze();
+    expect(fade?.cancelled).toBe(true);
+    expect(Number(fx?.style.getPropertyValue("opacity"))).toBeCloseTo(shown, 3);
   });
 
   it("keeps a line left before it was sung (a seek back) moving with the song", () => {
@@ -688,8 +732,13 @@ describe("Drift's karaoke leaving focus", () => {
     clock += 16;
     mode.paint(cue(0, 2500));
     vi.advanceTimersByTime(16);
-    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
     expect(wordMotion(rows[1])).toBe(before);
+    // handing back, its words still move (their overlays fading out on top)
+    clock += 200;
+    mode.paint(cue(0, 2700));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    expect(wordMotion(rows[1])).toBe(before + wordsOf(rows[1]).filter((w) => w.find("kw-fx").length > 0).length);
   });
 });
 
@@ -1105,7 +1154,7 @@ describe("a line change, spread over the frames after it", () => {
     return `${txt?.style.getPropertyValue("color")}/${blur}`;
   };
 
-  it("restyles the new focus at once, then the line leaving it, then the other rows a few a frame, nearest first", () => {
+  it("restyles the new focus at once, then the other rows a few a frame, nearest first, the line leaving as the new one starts", () => {
     const { mode, rows } = drift(0, lookFor(), EIGHT);
     // line 3 (7 s) in focus, and everything around it styled
     mode.paint(cue(3, 7100, false));
@@ -1119,13 +1168,10 @@ describe("a line change, spread over the frames after it", () => {
     // nothing else yet: the line leaving keeps its overlay and look, the rest their blur
     expect(rows[3]?.classList.contains("has-fx")).toBe(true);
     expect(rows.map(styleOf).filter((_, i) => i !== 4)).toEqual(before.filter((_, i) => i !== 4));
-    // the next frame: the line leaving hands back to its plain text, dimmed; then the other rows, the
-    // nearest first (one line away, then two, ...), a few a frame
+    // the next frames: the other rows, the nearest first (one line away, then two, ...), a few a frame
     const order = [5, 2, 6, 1, 7, 0];
     const restyled = (): number[] => order.filter((i) => styleOf(rows[i]) !== before[i]);
     vi.advanceTimersByTime(16);
-    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
-    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
     let frames = 1;
     let last = restyled().length;
     expect(last).toBeLessThan(order.length);
@@ -1138,6 +1184,13 @@ describe("a line change, spread over the frames after it", () => {
     }
     expect(restyled()).toEqual(order);
     expect(frames).toBeGreaterThan(1);
+    // the line leaving stays lit until line 4 starts (9 s), then hands back to its plain text, dimmed
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(styleOf(rows[3])).toBe(before[3]);
+    clock += 300;
+    mode.paint(cue(4, 9000));
+    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
+    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
     // every row ends as a paused cut would have drawn it at once
     const spread = rows.map(styleOf);
     const cut = drift(0, lookFor(), EIGHT);
@@ -1151,7 +1204,8 @@ describe("a line change, spread over the frames after it", () => {
     clock += 16;
     mode.paint(cue(3, 8700));
     mode.freeze();
-    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
+    // the line leaving is still lit on screen, and the copy shows it so
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
     const frozen = rows.map(styleOf);
     vi.advanceTimersByTime(16 * 12);
     expect(rows.map(styleOf)).toEqual(frozen);
@@ -1160,7 +1214,11 @@ describe("a line change, spread over the frames after it", () => {
     mode.paint(cue(4, 10_700));
     mode.restyle(lookFor({ colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#8d93a0" } }));
     expect(styleOf(rows[5])).toBe("#ffffff/0");
-    expect(styleOf(rows[4])).toMatch(/^transparent\//u);
+    // the line leaving now (lit until line 5 starts) and the one before (handed back and taken down
+    // as this change found it long past its time)
+    expect(styleOf(rows[4])).toBe("#ffffff/0");
+    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
+    expect(rows[3]?.find("kw-fx")).toEqual([]);
   });
 
   it("leaves a line that is back in focus before its frame came with its overlay", () => {
@@ -1168,13 +1226,17 @@ describe("a line change, spread over the frames after it", () => {
     mode.paint(cue(3, 7100, false));
     clock += 16;
     mode.paint(cue(3, 8700));
-    // a seek straight back to line 3, before the frame that would hand it back
+    // a seek straight back to line 3, before it hands back
     clock += 16;
     mode.paint(cue(3, 7500));
     vi.advanceTimersByTime(16 * 12);
     expect(rows[3]?.classList.contains("has-fx")).toBe(true);
     expect(styleOf(rows[3])).toBe(`${lyric}/0`);
+    // line 4, left in its turn, hands back 200 ms on
+    clock += 200;
+    mode.paint(cue(3, 7700));
     expect(rows[4]?.classList.contains("has-fx")).toBe(false);
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
   });
 
   it("rests letters on an identity transform, never none, and word boxes out of focus on none", () => {
@@ -1213,19 +1275,24 @@ describe("Stack and Drift on the motion engine", () => {
       expect(rows[1]?.classList.contains("has-fx")).toBe(true);
       expect(scrolling(rows[1])).toHaveLength(1);
       // that frame starts only the scroll; the line's words mount on the frames after, long before
-      // its first word, and the line leaving focus hands back to its plain text on the next one
+      // its first word, and the line leaving focus stops, still lit
       expect(partOf(rows[1], 0, "kw-track")?.getAnimations() ?? []).toEqual([]);
       expect(rows[0]?.classList.contains("has-fx")).toBe(true);
       vi.advanceTimersByTime(16 * 4);
-      expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+      expect(rows[0]?.classList.contains("has-fx")).toBe(true);
       const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
       expect(xIn(wipe?.values().transform)).toBeLessThan(0);
-      // the mode wakes for its own events: the old line's overlay to drop as the list comes to rest
-      // (letting go of the scroll's animations in the same frame), then the break's dots at 8.95 s
-      const rest = (scrolling(rows[1])[0]?.duration ?? 0) - SCROLL_RELEASE_MS;
+      // the mode wakes for its own events: the old line hands back as line 1 starts (4.2 s), and its
+      // overlay goes as the list comes to rest (letting go of the scroll's animations in the same
+      // frame); then the break's dots at 8.95 s
+      expect(mode.nextChange(4000)).toBe(200);
+      clock += 300;
+      mode.paint(cue(1, 4200));
+      expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+      const rest = (scrolling(rows[1])[0]?.duration ?? 0) - RELEASE_MS;
       expect(rest).toBeGreaterThan(420);
-      expect(mode.nextChange(4000)).toBeCloseTo(3900 + rest - 4000, 6);
-      clock += rest - 16;
+      expect(mode.nextChange(4200)).toBeCloseTo(3900 + rest - 4200, 6);
+      clock += rest - 316;
       mode.paint(cue(1, 3900 + rest));
       expect(rows[0]?.find("kw-fx")).toEqual([]);
       expect(scrolling(rows[1])).toEqual([]);
@@ -1349,6 +1416,11 @@ describe("Stack and Drift on the motion engine", () => {
     const eases = (el: FakeElement | undefined): Set<string> => new Set((el?.getAnimations()[0]?.keyframes ?? []).flatMap((k) => (k.easing ? [k.easing] : [])));
     expect(eases(w?.find("kw-win")[0])).toEqual(new Set(["steps(3, start)"]));
     expect(eases(w?.find("kw-glow")[0])).toEqual(new Set(["steps(3, start)"]));
+    // and the line leaving fades out in steps as it hands back (200 ms after a change made mid-line)
+    clock += 200;
+    mode.paint(cue(1, 4500));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(wordsOf(rows[0])[0]?.find("kw-fx")[0]?.getAnimations()[0]?.options.easing).toBe("steps(3, start)");
   });
 
   it("only fade under reduced motion, and cut every line change for the stage to crossfade", () => {
@@ -1359,8 +1431,11 @@ describe("Stack and Drift on the motion engine", () => {
     mode.paint(cue(1, 4300));
     expect(scrolling(rows[1])).toEqual([]);
     expect(wordsOf(rows[1]).every((w) => w.getAnimations().length === 0)).toBe(true);
-    // no lead without motion: the list follows the stage's line; next, the old overlay goes, then the dots
-    expect(mode.nextChange(4300)).toBe(420);
+    // no lead without motion: the list follows the stage's line, the old line handing back at once,
+    // its overlay gone without a fade; next, the dots
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(rows[0]?.find("kw-fx")).toEqual([]);
+    expect(mode.nextChange(4300)).toBe(8950 - 4300);
     clock += 500;
     mode.paint(cue(1, 4800));
     expect(mode.nextChange(4800)).toBe(8950 - 4800);

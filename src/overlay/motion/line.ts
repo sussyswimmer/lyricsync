@@ -51,7 +51,7 @@ import {
 import { compositorSteps } from "./keyframes";
 import { canvasMeasure, isRtl, measureLetters, roughMeasure, type Measure } from "./letters";
 import { LEAD_MS, LEAVE_MS, SETTLE_IN_MS, type MotionParams } from "./params";
-import type { SongTimeline } from "./timeline";
+import { commit, type SongTimeline } from "./timeline";
 
 export { LEAVE_MS, SETTLE_IN_MS };
 
@@ -177,6 +177,8 @@ export class KaraokeLine {
   private readonly plans = new Map<string, WordMotion>();
   private cancelSlice: (() => void) | null = null;
   private destroyed = false;
+  /** the overlays' fade-out (fadeOut), on the document timeline */
+  private fades: { el: HTMLElement; anim: Animation }[] = [];
 
   /** `els[i]` is the `.kw` box of `words[i]`. Nothing is built or measured until prepare or mount asks. */
   constructor(words: readonly Word[], els: readonly HTMLElement[], look: KaraokeLook, timeline: SongTimeline, group: string) {
@@ -305,10 +307,27 @@ export class KaraokeLine {
     }
   }
 
+  /**
+   * Fades every word's overlay out over `ms` of wall time, as the line hands back to its plain text:
+   * smoothly, or in `steps` even jumps (the first at once). The overlay's own resting opacity (the row
+   * without `has-fx`: 0) shows once it ends. destroy() cancels it: a line taken down just before the
+   * fade ends leaves Chromium no animation ending to service, which costs frames of their own.
+   */
+  fadeOut(ms: number, steps = 0): void {
+    if (this.destroyed || !(ms > 0)) return;
+    const easing = steps > 0 ? `steps(${Math.round(steps)}, start)` : "ease-out";
+    for (const v of this.views) {
+      const fx = v.ov?.fx;
+      if (!fx || typeof fx.animate !== "function") continue;
+      this.fades.push({ el: fx, anim: fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing }) });
+    }
+  }
+
   /** Stops where it is: what is on screen stays, as inline style (before the stage copies the page). */
   freeze(): void {
     this.stopSlices();
     this.timeline.freeze(this.group);
+    for (const f of this.fades.splice(0)) commit(f.anim, f.el);
   }
 
   /** Removes the overlays (the plain text shows again) and stops their motion. */
@@ -316,6 +335,13 @@ export class KaraokeLine {
     this.stopSlices();
     this.destroyed = true;
     this.timeline.cancel(this.group);
+    for (const f of this.fades.splice(0)) {
+      try {
+        f.anim.cancel();
+      } catch {
+        // already gone
+      }
+    }
     for (const v of this.views) {
       v.ov?.fx.remove();
       v.ov = null;
