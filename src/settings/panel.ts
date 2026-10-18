@@ -1,7 +1,6 @@
 import {
   DEFAULT_SETTINGS,
   type MediaStatus,
-  type Mode,
   type Settings,
   type ShortcutAction,
   type Shortcuts,
@@ -11,8 +10,8 @@ import {
 import { detectPlatform, displayAccelerator, SHORTCUT_ACTIONS, type KeyLayout, type Platform } from "../core/accelerator";
 import type { Palette } from "../core/palette";
 import { h } from "../overlay/dom";
-import { FONTS, fontFor } from "../overlay/fonts";
-import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle, type Option } from "./controls";
+import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle } from "./controls";
+import { LookCard, type LookCardState } from "./look-card";
 import { currentLayout, ShortcutRecorder } from "./recorder";
 import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
@@ -34,6 +33,8 @@ export interface PanelState {
   shortcuts: ShortcutsStatus | null;
   /** the last Launch at login change failed (the OS refused the login item) */
   loginError: boolean;
+  /** what the "Picked for this song" card shows: the look Undertone picked for the preview's song */
+  look: LookCardState;
 }
 
 /** What the panel asks for. */
@@ -55,55 +56,20 @@ export interface PanelOptions {
   keyLayout?: () => Promise<KeyLayout | null>;
   /** the third-party notices Licenses shows. Default: THIRD_PARTY_NOTICES.txt, loaded on first open. */
   licenses?: () => Promise<string>;
+  /** whether the system asks for less motion, and when that changes. Default: `prefers-reduced-motion`. */
+  reducedMotion?: MotionQuery | null;
+}
+
+/** The part of a MediaQueryList the panel reads. */
+export interface MotionQuery {
+  readonly matches: boolean;
+  addEventListener?(type: "change", listener: () => void): void;
 }
 
 /** THIRD_PARTY_NOTICES.txt (scripts/notices.mjs), in its own chunk: most sessions never open it. */
 const loadNotices = (): Promise<string> => import("../../THIRD_PARTY_NOTICES.txt?raw").then((m) => m.default);
 
 type ColorKey = keyof Settings["colors"];
-
-const MODES: readonly (Option<Mode> & { blurb: string })[] = [
-  {
-    value: "arc",
-    label: "Arc",
-    blurb: "The line bends along a curve, with its neighbors above and below.",
-    art: icon([
-      ["M7 4.6 Q12 1.2 17 4.6", 1.3, 0.45],
-      ["M2.5 10.2 Q12 3.4 21.5 10.2", 2.4, 1],
-      ["M7 14.6 Q12 11.2 17 14.6", 1.3, 0.45],
-    ]),
-  },
-  {
-    value: "lens",
-    label: "Lens",
-    blurb: "One line at a time; the word being sung swells as if under a lens.",
-    art: icon([
-      ["M3 8 H5.5", 2.2, 0.5],
-      ["M9.5 8 H14.5", 6, 1],
-      ["M18.5 8 H21", 2.2, 0.5],
-    ]),
-  },
-  {
-    value: "drift",
-    label: "Drift",
-    blurb: "The song scrolls up line by line, neighbors fading back into depth.",
-    art: icon([
-      ["M8 2.6 H16", 1.3, 0.4],
-      ["M3 8 H21", 2.6, 1],
-      ["M8 13.4 H16", 1.3, 0.4],
-    ]),
-  },
-  {
-    value: "stack",
-    label: "Stack",
-    blurb: "The song scrolls up line by line, flat, like a lyrics sheet.",
-    art: icon([
-      ["M3 2.6 H21", 1.3, 0.4],
-      ["M3 8 H21", 2.6, 1],
-      ["M3 13.4 H21", 1.3, 0.4],
-    ]),
-  },
-];
 
 const COLORS: readonly { key: ColorKey; label: string; spoken: string }[] = [
   { key: "lyric", label: "Lyric", spoken: "Lyric color" },
@@ -149,6 +115,19 @@ function speakMs(ms: number): string {
 const signed = (v: number): string => (v > 0 ? `+${v}` : v < 0 ? `−${Math.abs(v)}` : "0");
 
 /**
+ * The word for an Effects level, as the slider speaks it and the tray's Effects ▸ checks it: Calm up
+ * to 33, Balanced from 34 to 66, Lively from 67.
+ */
+export function effectsWord(level: number): "Calm" | "Balanced" | "Lively" {
+  if (level < 33.5) return "Calm";
+  return level < 66.5 ? "Balanced" : "Lively";
+}
+
+export const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
+export const REDUCED_MOTION_NOTE = "Your system asks for less motion: words fade instead of moving.";
+export const GLOW_HINT = "How much the sung word glows. 0 keeps a faint glow.";
+
+/**
  * The settings form. Builds every control once, then `render` moves them to a state; user input goes
  * straight out through `actions` and comes back as the next state.
  */
@@ -165,22 +144,30 @@ export class SettingsPanel {
   private recorders: ShortcutRecorder[] = [];
   /** Counts keyboard layout reads, so only the latest one lands. */
   private layoutReads = 0;
+  private readonly card = new LookCard();
+  private readonly motionQuery: MotionQuery | null;
 
   constructor(actions: PanelActions, options: PanelOptions = {}) {
     this.actions = actions;
     this.platform = options.platform ?? detectPlatform(typeof navigator === "undefined" ? undefined : navigator);
     this.keyLayout = options.keyLayout;
     this.loadLicenses = options.licenses ?? loadNotices;
+    this.motionQuery =
+      options.reducedMotion !== undefined ? options.reducedMotion : typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+    // The Effects hint says when the system asks for less motion, as soon as that changes.
+    this.motionQuery?.addEventListener?.("change", () => {
+      if (this.state) this.render(this.state);
+    });
     this.el = h("div", "panel");
     this.status = h("p", "sr-only");
     this.status.setAttribute("role", "status");
+    this.renderers.push((s) => this.card.render(s.look));
     this.el.append(
       this.mediaNotice(),
+      this.card.el,
       this.generalGroup(),
-      this.styleGroup(),
       this.colorGroup(),
-      this.fontGroup(),
-      this.layoutGroup(),
+      this.lookGroup(),
       this.behaviorGroup(),
       this.syncGroup(),
       this.shortcutsGroup(),
@@ -329,29 +316,6 @@ export class SettingsPanel {
       : `Hidden on the desktop. Turn them back on here or from ${menu}.`;
   }
 
-  // ---------- style ----------
-
-  private styleGroup(): HTMLElement {
-    const blurbId = nextId("mode-blurb");
-    const modes = radios<Mode>({
-      name: "mode",
-      label: "Lyric style",
-      options: MODES,
-      className: "tiles tiles-4 modes",
-      onChange: (mode) => this.actions.edit({ mode }),
-    });
-    modes.el.setAttribute("aria-describedby", blurbId);
-    const blurb = hint("", "mode-blurb");
-    blurb.id = blurbId;
-    const { el, card } = group("Style", modes.el, blurb);
-    card.classList.add("card-plain");
-    this.renderers.push((s) => {
-      modes.set(s.settings.mode);
-      setText(blurb, MODES.find((m) => m.value === s.settings.mode)?.blurb ?? "");
-    });
-    return el;
-  }
-
   // ---------- color ----------
 
   private colorGroup(): HTMLElement {
@@ -410,57 +374,15 @@ export class SettingsPanel {
     return el;
   }
 
-  // ---------- font ----------
+  // ---------- look ----------
 
-  private fontGroup(): HTMLElement {
-    const options: Option<string>[] = FONTS.map((f) => ({ value: f.family, label: f.label }));
-    const fonts = radios<string>({
-      name: "font",
-      label: "Font",
-      options,
-      className: "tiles tiles-2 fonts",
-      onChange: (family) => {
-        const face = fontFor(family);
-        this.actions.edit({ font: { family: face.family, weight: face.weight } });
-      },
-      decorate: (label, option) => {
-        const face = fontFor(option.value);
-        const sample = label.querySelector<HTMLElement>(".opt-label");
-        if (!sample) return;
-        sample.style.fontFamily = face.stack;
-        sample.style.fontWeight = String(face.weight);
-        label.dataset.family = face.family;
-      },
-    });
-    // Three bundled faces have no Vietnamese subset: their accented letters come from a fallback face,
-    // which shows inside every word. Said here, where the face is picked, rather than only in the guide.
-    const note = hint("", "font-note");
-    note.id = nextId("font-note");
-    fonts.el.setAttribute("aria-describedby", note.id);
-    const { el, card } = group("Font", fonts.el, note);
-    card.classList.add("card-plain");
-    this.renderers.push((s) => {
-      const face = fontFor(s.settings.font.family);
-      fonts.set(face.family);
-      setText(note, face.vietnamese ? "" : `${face.label} has no Vietnamese accented letters, so those come from a system font.`);
-    });
-    return el;
-  }
-
-  // ---------- layout ----------
-
-  private layoutGroup(): HTMLElement {
+  /**
+   * How the picked look sits on this desktop: Size, Height, Effects, Glow and Opacity. Undertone picks
+   * the style and the face for each song (the card under the preview says which); these scale it.
+   */
+  private lookGroup(): HTMLElement {
     const edit = (patch: Partial<Settings>): void => this.actions.edit(patch);
     const size = slider({ label: "Size", min: 22, max: 140, format: String, speak: (v) => `${v} pixels`, onInput: (v) => edit({ size: v }) });
-    const curve = slider({
-      label: "Curve",
-      min: -100,
-      max: 100,
-      origin: 0,
-      format: signed,
-      speak: (v) => (v === 0 ? "straight" : `${Math.abs(v)} ${v > 0 ? "arching up" : "sagging down"}`),
-      onInput: (v) => edit({ curve: v }),
-    });
     const height = slider({
       label: "Height",
       min: 0,
@@ -469,15 +391,35 @@ export class SettingsPanel {
       speak: (v) => `${v}% down from the top of the screen`,
       onInput: (v) => edit({ yPos: v }),
     });
-    const glow = slider({ label: "Glow", min: 0, max: 100, format: String, onInput: (v) => edit({ glow: v }) });
+    const effectsHintId = nextId("effects-hint");
+    const effects = slider({
+      label: "Effects",
+      min: 0,
+      max: 100,
+      format: String,
+      speak: (v) => `${effectsWord(v)}, ${v}`,
+      onInput: (v) => edit({ effects: v }),
+      describedBy: effectsHintId,
+      className: "slider-ends",
+    });
+    const ends = h("div", "scale");
+    ends.setAttribute("aria-hidden", "true");
+    ends.append(h("span", "", "Calm"), h("span", "", "Lively"));
+    effects.el.append(ends);
+    const effectsHint = hint(EFFECTS_HINT);
+    effectsHint.id = effectsHintId;
+    const glowHintId = nextId("glow-hint");
+    const glow = slider({ label: "Glow", min: 0, max: 100, format: String, onInput: (v) => edit({ glow: v }), describedBy: glowHintId });
+    const glowHint = hint(GLOW_HINT);
+    glowHint.id = glowHintId;
     const opacity = slider({ label: "Opacity", min: 20, max: 100, format: (v) => `${v}%`, onInput: (v) => edit({ opacity: v }) });
-    const { el } = group("Layout", size.el, curve.el, height.el, glow.el, opacity.el);
+    const { el } = group("Look", size.el, height.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
     this.renderers.push(({ settings: s }) => {
       size.set(s.size);
-      const arc = s.mode === "arc";
-      curve.set(s.curve, arc ? {} : { disabled: true, note: "Arc only" });
-      curve.el.title = arc ? "" : "Curve applies to the Arc style";
       height.set(s.yPos);
+      // Settings without `effects` (a core older than contract v4) show the level as picked.
+      effects.set(s.effects ?? DEFAULT_SETTINGS.effects);
+      setText(effectsHint, this.motionQuery?.matches ? `${EFFECTS_HINT} ${REDUCED_MOTION_NOTE}` : EFFECTS_HINT);
       glow.set(s.glow);
       opacity.set(s.opacity);
     });
@@ -725,7 +667,7 @@ export class SettingsPanel {
     const title = h("p", "confirm-title", "Reset all settings?");
     title.id = titleId;
     const body = hint(
-      "Style, colors, font, layout, behavior, sync for all songs and shortcuts go back to how Undertone started. Lyrics on the desktop and Launch at login stay as they are.",
+      "Effects, colors, layout, behavior, sync for all songs and shortcuts go back to how Undertone started. Lyrics on the desktop and Launch at login stay as they are.",
     );
     const forgetRow = h("label", "check");
     const forget = h("input");

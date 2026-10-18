@@ -1,8 +1,10 @@
 //! X5 tray / menu bar. What the menu shows (labels, check marks, enabled items, tooltip) is a pure
 //! function of settings and now playing, tested on every OS; `runtime` builds the native menu,
-//! keeps it in step with `settings-changed` and `now-playing`, and runs clicks. Hide/Show lyrics
-//! and Launch at login change the settings, like the Settings window's switches.
-use crate::contract::{Mode, NowPlaying, Settings};
+//! keeps it in step with `settings-changed` and `now-playing`, and runs clicks. Hide/Show lyrics,
+//! Effects ▸ and Launch at login change the settings, like the Settings window's controls.
+//!
+//! There is no Style ▸ since contract v4: Undertone picks each song's style and face itself.
+use crate::contract::{NowPlaying, Settings};
 
 /// Tray sync step. Positive offsets show lyrics earlier, as in the settings window.
 pub const TRAY_NUDGE_MS: f64 = 100.0;
@@ -19,19 +21,32 @@ const REFETCH: &str = "tray.refetch";
 const SETTINGS: &str = "tray.settings";
 const LAUNCH_AT_LOGIN: &str = "tray.launch-at-login";
 const QUIT: &str = "tray.quit";
-/// Style ▸ items, in menu order: mode, menu id, label.
-pub const STYLES: [(Mode, &str, &str); 4] = [
-    (Mode::Arc, "tray.style.arc", "Arc"),
-    (Mode::Lens, "tray.style.lens", "Lens"),
-    (Mode::Drift, "tray.style.drift", "Drift"),
-    (Mode::Stack, "tray.style.stack", "Stack"),
+/// Effects ▸ items, in menu order: the `effects` level a click sets, menu id, label.
+pub const EFFECT_LEVELS: [(f64, &str, &str); 3] = [
+    (20.0, "tray.effects.calm", "Calm"),
+    (50.0, "tray.effects.balanced", "Balanced"),
+    (85.0, "tray.effects.lively", "Lively"),
 ];
+
+/// The Effects ▸ item that names an `effects` level: Calm up to 33, Balanced from 34 to 66, Lively
+/// from 67, the words Settings speaks for its Effects slider. Each item's own level is in its range,
+/// so the menu and the window always name a level alike, and a click checks the item clicked.
+pub fn effects_item(effects: f64) -> usize {
+    if effects < 33.5 {
+        0
+    } else if effects < 66.5 {
+        1
+    } else {
+        2
+    }
+}
 
 /// What a menu click asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     ToggleLyrics,
-    Style(Mode),
+    /// Sets `effects` to this level.
+    Effects(f64),
     /// Adds this many ms to the current song's offset.
     Nudge(f64),
     ResetOffset,
@@ -51,10 +66,10 @@ pub fn action(id: &str) -> Option<Action> {
         SETTINGS => Action::Settings,
         LAUNCH_AT_LOGIN => Action::LaunchAtLogin,
         QUIT => Action::Quit,
-        _ => STYLES
+        _ => EFFECT_LEVELS
             .iter()
-            .find(|(_, style, _)| *style == id)
-            .map(|(mode, ..)| Action::Style(mode.clone()))?,
+            .find(|(_, item, _)| *item == id)
+            .map(|(level, ..)| Action::Effects(*level))?,
     })
 }
 
@@ -78,10 +93,10 @@ impl From<&NowPlaying> for Track {
 }
 
 /// Everything the menu depends on. `offset_ms` is the current song's offset (0 without a song);
-/// `enabled` and `launch_at_login` are the settings of those names.
+/// `effects`, `enabled` and `launch_at_login` are the settings of those names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inputs {
-    pub mode: Mode,
+    pub effects: f64,
     pub track: Option<Track>,
     pub offset_ms: f64,
     pub enabled: bool,
@@ -91,8 +106,8 @@ pub struct Inputs {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MenuState {
     pub lyrics_label: &'static str,
-    /// The one checked Style ▸ item.
-    pub mode: Mode,
+    /// The one checked Effects ▸ item, an index into `EFFECT_LEVELS` (`effects_item`).
+    pub effects: usize,
     pub earlier_enabled: bool,
     pub later_enabled: bool,
     pub reset_label: String,
@@ -111,7 +126,7 @@ pub fn menu_state(inputs: &Inputs) -> MenuState {
         } else {
             "Show lyrics"
         },
-        mode: inputs.mode.clone(),
+        effects: effects_item(inputs.effects),
         earlier_enabled: offset.is_some_and(|ms| ms < MAX_OFFSET_MS),
         later_enabled: offset.is_some_and(|ms| ms > -MAX_OFFSET_MS),
         reset_label: reset_label(offset.unwrap_or(0.0)),
@@ -189,7 +204,7 @@ pub fn decode_icon(png: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
 mod runtime {
     use super::{Action, Inputs, MenuState, Track};
     use crate::{
-        contract::{Mode, NOW_PLAYING_EVENT, SETTINGS_CHANGED_EVENT},
+        contract::{NOW_PLAYING_EVENT, SETTINGS_CHANGED_EVENT},
         state::AppState,
     };
     use std::sync::{Arc, Mutex};
@@ -211,7 +226,8 @@ mod runtime {
     /// The items whose text, marks or enabled state change, plus what was last shown.
     struct Tray {
         lyrics: MenuItem<Wry>,
-        styles: Vec<(Mode, CheckMenuItem<Wry>)>,
+        /// The Effects ▸ items, in `EFFECT_LEVELS` order.
+        effects: Vec<CheckMenuItem<Wry>>,
         earlier: MenuItem<Wry>,
         later: MenuItem<Wry>,
         reset: MenuItem<Wry>,
@@ -234,11 +250,11 @@ mod runtime {
     fn build(app: &AppHandle) -> tauri::Result<()> {
         let state = super::menu_state(&inputs(app));
         let lyrics = MenuItem::with_id(app, super::LYRICS, state.lyrics_label, true, None::<&str>)?;
-        let styles = super::STYLES
+        let effects = super::EFFECT_LEVELS
             .iter()
-            .map(|(mode, id, label)| {
-                CheckMenuItem::with_id(app, *id, *label, true, *mode == state.mode, None::<&str>)
-                    .map(|item| (mode.clone(), item))
+            .enumerate()
+            .map(|(index, (_, id, label))| {
+                CheckMenuItem::with_id(app, *id, *label, true, index == state.effects, None::<&str>)
             })
             .collect::<tauri::Result<Vec<_>>>()?;
         let earlier = MenuItem::with_id(
@@ -280,18 +296,18 @@ mod runtime {
         )?;
         let quit = MenuItem::with_id(app, super::QUIT, "Quit Undertone", true, None::<&str>)?;
 
-        let style_items: Vec<&dyn IsMenuItem<Wry>> = styles
+        let effect_items: Vec<&dyn IsMenuItem<Wry>> = effects
             .iter()
-            .map(|(_, item)| item as &dyn IsMenuItem<Wry>)
+            .map(|item| item as &dyn IsMenuItem<Wry>)
             .collect();
-        let style = Submenu::with_items(app, "Style", true, &style_items)?;
+        let effects_menu = Submenu::with_items(app, "Effects", true, &effect_items)?;
         let sync = Submenu::with_items(app, "Sync", true, &[&earlier, &later, &reset])?;
         let menu = Menu::with_items(
             app,
             &[
                 &lyrics,
                 &PredefinedMenuItem::separator(app)?,
-                &style,
+                &effects_menu,
                 &sync,
                 &refetch,
                 &PredefinedMenuItem::separator(app)?,
@@ -322,7 +338,7 @@ mod runtime {
 
         app.manage(Tray {
             lyrics,
-            styles,
+            effects,
             earlier,
             later,
             reset,
@@ -345,7 +361,7 @@ mod runtime {
             .map(Track::from);
         let settings = state.settings.lock().unwrap_or_else(|e| e.into_inner());
         Inputs {
-            mode: settings.mode.clone(),
+            effects: settings.effects,
             offset_ms: track
                 .as_ref()
                 .map_or(0.0, |track| super::track_offset(&settings, &track.key)),
@@ -402,8 +418,9 @@ mod runtime {
                 self.refetch.set_enabled(next.refetch_enabled),
                 self.launch_at_login.set_checked(next.launch_at_login),
             ];
-            for (mode, item) in &self.styles {
-                results.push(item.set_checked(*mode == next.mode));
+            // Radio-like: exactly the item that names the level is checked.
+            for (index, item) in self.effects.iter().enumerate() {
+                results.push(item.set_checked(index == next.effects));
             }
             if let Some(icon) = app.tray_by_id(TRAY_ID) {
                 results.push(icon.set_tooltip(Some(&next.tooltip)));
@@ -426,8 +443,8 @@ mod runtime {
         };
         let result = match action {
             Action::ToggleLyrics => crate::settings::runtime::toggle_enabled(app).map(drop),
-            Action::Style(mode) => {
-                crate::settings::runtime::update(app, &serde_json::json!({ "mode": mode }))
+            Action::Effects(level) => {
+                crate::settings::runtime::update(app, &serde_json::json!({ "effects": level }))
                     .map(drop)
             }
             Action::Nudge(delta_ms) => nudge(app, delta_ms),
@@ -499,7 +516,7 @@ mod tests {
     }
     fn inputs(track: Option<Track>, offset_ms: f64) -> Inputs {
         Inputs {
-            mode: Mode::Arc,
+            effects: 50.0,
             track,
             offset_ms,
             enabled: true,
@@ -534,18 +551,53 @@ mod tests {
         assert!(bottom.earlier_enabled && !bottom.later_enabled);
     }
     #[test]
-    fn hide_label_mode_and_launch_at_login_follow_the_settings() {
+    fn hide_label_effects_and_launch_at_login_follow_the_settings() {
         let mut given = inputs(None, 0.0);
         let state = menu_state(&given);
         assert_eq!(state.lyrics_label, "Hide lyrics");
+        assert_eq!(EFFECT_LEVELS[state.effects].2, "Balanced");
         assert!(!state.launch_at_login);
         given.enabled = false;
-        given.mode = Mode::Drift;
+        given.effects = 85.0;
         given.launch_at_login = true;
         let state = menu_state(&given);
         assert_eq!(state.lyrics_label, "Show lyrics");
-        assert_eq!(state.mode, Mode::Drift);
+        assert_eq!(EFFECT_LEVELS[state.effects].2, "Lively");
         assert!(state.launch_at_login);
+    }
+    #[test]
+    fn effects_items_set_their_level_and_check_the_one_settings_names_alike() {
+        // Calm (20), Balanced (50), Lively (85): each a valid Effects level, in menu order.
+        let levels: Vec<f64> = EFFECT_LEVELS.iter().map(|(level, ..)| *level).collect();
+        assert_eq!(levels, [20.0, 50.0, 85.0]);
+        assert!(levels
+            .iter()
+            .all(|level| crate::settings::EFFECTS.contains(level)));
+        // A click sets exactly its item's level, which then checks that item.
+        for (index, (level, id, _)) in EFFECT_LEVELS.iter().enumerate() {
+            assert_eq!(action(id), Some(Action::Effects(*level)));
+            assert_eq!(effects_item(*level), index);
+        }
+        // Any other level: the item Settings' slider speaks the same word for.
+        for (effects, label) in [
+            (0.0, "Calm"),
+            (33.0, "Calm"),
+            (33.4, "Calm"),
+            (34.0, "Balanced"),
+            (50.0, "Balanced"),
+            (66.0, "Balanced"),
+            (66.6, "Lively"),
+            (67.0, "Lively"),
+            (100.0, "Lively"),
+        ] {
+            assert_eq!(EFFECT_LEVELS[effects_item(effects)].2, label, "{effects}");
+        }
+        // The default checks Balanced.
+        let state = menu_state(&Inputs {
+            effects: Settings::default().effects,
+            ..inputs(None, 0.0)
+        });
+        assert_eq!(state.effects, 1);
     }
     #[test]
     fn reset_label_says_which_way() {
@@ -599,7 +651,11 @@ mod tests {
         assert_eq!(action(EARLIER), Some(Action::Nudge(100.0)));
         assert_eq!(action(LATER), Some(Action::Nudge(-100.0)));
         assert_eq!(action(RESET), Some(Action::ResetOffset));
-        assert_eq!(action("tray.style.lens"), Some(Action::Style(Mode::Lens)));
+        assert_eq!(action("tray.effects.calm"), Some(Action::Effects(20.0)));
+        // There is no Style ▸ any more: Undertone picks the style for each song.
+        for gone in ["arc", "lens", "drift", "stack"] {
+            assert_eq!(action(&format!("tray.style.{gone}")), None);
+        }
         assert_eq!(action("quit"), None, "predefined app-menu ids are not ours");
         let mut ids = vec![
             LYRICS,
@@ -611,7 +667,7 @@ mod tests {
             LAUNCH_AT_LOGIN,
             QUIT,
         ];
-        ids.extend(STYLES.iter().map(|(_, id, _)| *id));
+        ids.extend(EFFECT_LEVELS.iter().map(|(_, id, _)| *id));
         assert!(ids.iter().all(|id| action(id).is_some()));
         let count = ids.len();
         ids.sort_unstable();

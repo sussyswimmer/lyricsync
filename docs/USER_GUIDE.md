@@ -4,17 +4,15 @@ Undertone draws the lyrics of the song you're playing on your desktop, above the
 
 To turn them off, change how they look or set up the shortcuts, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. The settings window also opens by itself the first time you start Undertone. Every change applies right away and is saved.
 
-The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height and curve match what you'll see.
+The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height matches what you'll see. Under the preview, **Picked for this song** says which style and font Undertone picked for the song in the preview, and why (see [Look](#look)).
 
 On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automation permission). If that's turned off for an app that's open, a notice under the preview says so, for example "Undertone can't see what Spotify is playing.", and tells you where to turn it on: **System Settings › Privacy & Security › Automation › Undertone**, then switch on **Spotify** (or **Music**). Within about 5 seconds the notice goes away and the lyrics come back, with no restart. The README's [macOS: Automation](../README.md#macos-automation) section has more, including what to do if Undertone is missing from that list.
 
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Style](#style)
+- [Look](#look): the style and font picked for each song; Size, Height, Effects, Glow, Opacity
 - [Color](#color)
-- [Font](#font)
-- [Layout](#layout): Size, Curve, Height, Glow, Opacity
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
 - [Shortcuts](#shortcuts)
@@ -45,20 +43,85 @@ Undertone adds itself to the apps your system starts at login. If the system ref
 - On a Mac it's listed under **Allow in the Background** in **System Settings › General › Login Items & Extensions** (just **Login Items** on macOS 14). This switch follows it: turned off there, the switch shows off the next time you open Settings or point at the menu bar icon. Turning the switch on while Undertone is off there doesn't work: the note appears and System Settings opens at Login Items. Allow Undertone there, and the switch turns on the next time you open Settings or point at the menu bar icon.
 - If you move Undertone to another folder, open it once from its new place: it points the login item there, so it keeps starting at login. It leaves the login item alone while it runs from somewhere it won't be at your next login: a disk image, a Mac app still in the folder you downloaded it to (macOS runs it from a temporary copy until you move it), or on Windows an `undertone.exe` opened straight from a zip file.
 
-## Style
+## Look
 
-Four ways to lay out the lyrics. In every style the words of the current line change color as they're sung (see [Color](#color)).
+Undertone picks how each song looks: its style (one of the four below) and its font. There's nothing to choose. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a slow song with long held notes bends along a curve in a serif, short shouted hooks get a magnifying lens in loud capitals, and a sparse, slow song drifts back in 3D. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
 
-- **Arc** (the default). The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. The [Curve](#curve) setting controls the bend.
+The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
+
+The settings in the window's **Look** group, below, change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
+
+### Picked for this song
+
+Under the preview, a card names the look of the song in the preview, such as **Lens · Syne** (the font's name in that font), and says in a few words why, for example "Big repeating hooks, bright warm cover." With nothing playing, it shows the demo song's look. It says **Finding lyrics…** while Undertone looks the song up, and **No lyrics for this song**, **Couldn't load lyrics** or **Instrumental** when there's nothing to pick a look by. Screen readers read the card out when the song changes.
+
+### The four styles
+
+In every style the words of the current line change color as they're sung (see [Color](#color)).
+
+- **Arc.** The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. Undertone picks the bend for each song: deeper for slow songs with held notes, flatter for long lines, arching for anthems and bright covers, dipping gently for intimate songs.
 - **Lens.** One line at a time, straight across. The word being sung is magnified, and words further from it get smaller and fainter, as if a magnifying glass were sliding along the line with the voice. The next line waits underneath in small type.
 - **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum. A jump of more than three lines, such as a seek, crossfades instead of scrolling.
-- **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are smaller and fainter, with no tilt. Long jumps crossfade, as in Drift.
+- **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are a little smaller and fainter, with no tilt. Long jumps crossfade, as in Drift. Plain lyrics without timing are always shown this way.
 
-In Drift and Stack the current line comes alive as it's sung: each word fills with the highlight color behind a soft edge, syllable by syllable, and rises a little as it's sung; its letters hop as the color reaches them (higher in faster songs), and the word glows (see [Glow](#glow)). A word held for a second or more lights letter by letter, each letter rising and glowing until the note ends. Lines further from the current one are fainter and softer.
+The current line comes alive as it's sung: each word fills with the highlight color behind a soft edge, syllable by syllable, and rises and swells a little; its letters hop as the color reaches them, and the word glows (see [Glow](#glow)). A word held for a second or more lights letter by letter, each letter rising and glowing until the note ends. How much all this moves depends on the song (a fast song moves more and settles quickly, a ballad floats) and on [Effects](#effects). Lines further from the current one are fainter and softer.
 
-Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it until it fits its curve, so the whole line stays on screen at any [Size](#size).
+Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen. Arc shrinks it until it fits its curve, so the whole line stays on screen at any [Size](#size). Undertone doesn't pick Arc or Lens for a song with very long lines.
 
-You can also switch styles from the menu: **Style ▸ Arc / Lens / Drift / Stack**.
+### Fonts
+
+Undertone picks one of eight fonts built into it, so they work offline:
+
+| Font | Look |
+|---|---|
+| **Fraunces** | A soft, bold serif |
+| **Instrument Serif** | A slim, condensed serif |
+| **Syne** | A wide, heavy sans |
+| **Unbounded** | A wide, rounded sans |
+| **Bricolage** | Bricolage Grotesque, a compact grotesque sans |
+| **Caveat** | Handwriting |
+| **JetBrains Mono** | Monospace |
+| **System** | Your computer's own interface font |
+
+It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts aren't picked for long lines. In Syne or Unbounded, shouted lyrics may be set in capitals.
+
+Each font comes in one weight. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match the font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
+
+### Size
+
+How big the current line is, from 22 to 140 (default 58). Neighboring lines are drawn smaller in proportion. Undertone sets some fonts a little larger or smaller, so each reads about as large at the same Size, and a song with long lines a touch smaller.
+
+Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height. Size counts the whole screen, even though the lyrics keep clear of the menu bar, Dock and taskbar.
+
+### Height
+
+Where the current line sits on the screen, from 0% (top) to 100% (bottom). The lyrics keep clear of the menu bar, the Dock and the taskbar, so on a Mac 0% is just below the menu bar, and 100% is just above a Dock or taskbar at the bottom of the screen. The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
+
+At 0% and 100% the current line still stays whole on screen, a little way in from the edge. In Lens, the current line moves up just enough to keep the next line on screen. In Arc, Drift and Stack, the lines around it can run off the edge there. In Arc, a deep curve moves the current line a little further in.
+
+### Effects
+
+How much the words move as they're sung, from 0 to 100 (default 50). The slider's ends are marked **Calm** and **Lively**, and screen readers say Calm (up to 33), Balanced (34 to 66) or Lively (67 and up) with the number.
+
+- **50** moves the words as much as the song's look asks: a fast song more, a ballad less.
+- Lower values make words rise, swell and ripple less. At **0** they don't move at all; they still fill with the highlight color and glow.
+- Higher values make them move more, up to twice as much at **100**.
+
+The menu's **Effects ▸** sets it too: **Calm** (20), **Balanced** (50) or **Lively** (85). If you've asked your system to reduce motion, words fade in instead of moving whatever Effects says, and Settings says so under the slider (see [Reduced motion](#reduced-motion)).
+
+### Glow
+
+How much the word being sung glows, from 0 to 100 (default 40).
+
+- **40** is the glow the song's look asks for: a vivid cover and held notes glow more, a muted black-and-white cover less.
+- Lower values make the glow fainter. At **0** it is faint, but never off.
+- Higher values make it stronger, up to half as strong again at **100**.
+
+Every word also has a soft dark shadow so light text stays readable on a bright wallpaper. At 0 that shadow is subtle; higher values make it wider and softer.
+
+### Opacity
+
+How see-through the lyrics are, from 20% to 100% (default 100%). It applies to everything Undertone draws, including the "No lyrics for this song" note.
 
 ## Color
 
@@ -67,7 +130,7 @@ Each line uses three colors:
 | Color | Used for |
 |---|---|
 | **Lyric** | Words on the current line that haven't been sung yet |
-| **Highlight** | Words already sung, and the word being sung right now (which also glows unless Glow is 0, see [Glow](#glow)) |
+| **Highlight** | Words already sung, and the word being sung right now (which also glows, see [Glow](#glow)) |
 | **Other lines** | The lines before and after the current one |
 
 ### Match album colors
@@ -85,59 +148,6 @@ Turning **Match album colors** on doesn't change your own colors: turn it off ag
 Click a swatch to pick a color. Changing any color turns **Match album colors** off and saves all three colors as your own, starting from the colors on screen. So if album colors are showing and you only change the highlight, the lyric and other-lines colors become the album's, replacing the ones you had saved.
 
 The defaults are a warm white lyric (`#F1ECE3`), an amber highlight (`#F2A65A`) and a cool gray for other lines (`#8D93A0`).
-
-## Font
-
-Each font in the list is shown in its own face. All of them are built into Undertone, so they work offline.
-
-| Font | Look |
-|---|---|
-| **Fraunces** (default) | A soft, bold serif |
-| **Instrument Serif** | A slim, condensed serif |
-| **Syne** | A wide, heavy sans |
-| **Unbounded** | A wide, rounded sans |
-| **Bricolage** | Bricolage Grotesque, a compact grotesque sans |
-| **Caveat** | Handwriting |
-| **JetBrains Mono** | Monospace |
-| **System** | Your computer's own interface font |
-
-Each font comes in one weight, which Undertone picks for you. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match your font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
-
-For Vietnamese, pick Fraunces, Unbounded, Bricolage, JetBrains Mono or System. Instrument Serif, Syne and Caveat have no Vietnamese accented letters, so those letters come from a system font and look different from the rest of the word. Settings says so under the font tiles when you pick one of those three.
-
-## Layout
-
-### Size
-
-How big the current line is, from 22 to 140 (default 58). Neighboring lines are drawn smaller in proportion.
-
-Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height. Size counts the whole screen, even though the lyrics keep clear of the menu bar, Dock and taskbar.
-
-### Curve
-
-How much the Arc style bends, from −100 to +100 (default +38). It only applies to Arc; in other styles the slider is grayed out and marked "Arc only".
-
-- **0** is a straight line.
-- **Positive** values arch the line: the middle rises and the ends drop.
-- **Negative** values sag it: the middle dips and the ends rise.
-
-The bend is split evenly around the [Height](#height): the middle moves one way as far as the ends move the other. Near the top or bottom of the screen, the current line moves in just far enough to keep its whole curve on screen, and a curve too deep for the screen gets flatter instead of being cut off. A tall (portrait) screen gets the same shape as a wide one.
-
-### Height
-
-Where the current line sits on the screen, from 0% (top) to 100% (bottom). The lyrics keep clear of the menu bar, the Dock and the taskbar, so on a Mac 0% is just below the menu bar, and 100% is just above a Dock or taskbar at the bottom of the screen. The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
-
-At 0% and 100% the current line still stays whole on screen, a little way in from the edge. In Lens, the current line moves up just enough to keep the next line on screen. In Arc, Drift and Stack, the lines around it can run off the edge there. In Arc, a strong [Curve](#curve) moves the current line a little further in.
-
-### Glow
-
-How soft and bright the lyrics' glow is, from 0 to 100 (default 40).
-
-Every word always has a soft dark shadow so light text stays readable on a bright wallpaper. At 0 that shadow is subtle. Higher values make it wider and softer, and add a halo in the highlight color around the word being sung.
-
-### Opacity
-
-How see-through the lyrics are, from 20% to 100% (default 100%). It applies to everything Undertone draws, including the "No lyrics for this song" note.
 
 ## Behavior
 
@@ -234,7 +244,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts the style, colors, font, layout, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts Effects, the colors, the size, height, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 
@@ -247,7 +257,7 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 | Item | What it does |
 |---|---|
 | **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as [Lyrics on the desktop](#lyrics-on-the-desktop) in Settings |
-| **Style ▸** Arc / Lens / Drift / Stack | Switches the style |
+| **Effects ▸** Calm / Balanced / Lively | How much the words move: 20, 50 or 85, the same as [Effects](#effects) in Settings |
 | **Sync ▸** Earlier 100 ms / Later 100 ms / Reset for this song | Nudges this song's sync (see [This song](#this-song)) |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
@@ -273,21 +283,25 @@ Shortcuts that work from any app, by default (change or turn them off in [Settin
 
 ## Song changes, pauses and breaks
 
-- **New song:** the old lyrics fade out over a quarter of a second, then the new song's lyrics fade in.
-- **Before the first line:** the first line waits on screen in the lyric color until it starts.
-- **Long instrumental breaks:** the line just sung stays up for at most about 2.5 seconds after its last word (less when the lyrics mark where the break starts), then the next line shows, waiting, until it starts. In Drift and Stack, a break of 3 seconds or more, and an intro that long, shows three dots where the next line will appear: they fill one after another as the break goes on and pop away just before the line starts.
+- **New song:** the old lyrics fade out over a quarter of a second, then the new song's lyrics fade in, in the look Undertone picks for it.
+- **Before the first line:** the first line waits on screen in the lyric color until it starts. An intro of 3 seconds or more also shows the break dots (below).
+- **From line to line:** the next line moves into place just before it's sung, about a third of a second early, and waits there in the lyric color for its first word.
+- **Long instrumental breaks:** a break of 3 seconds or more between two lines, and an intro that long, shows three dots: in Drift and Stack where the next line will appear, in Lens on the line, in Arc at the top of the curve. They fill one after another as the break goes on, breathe, swell, and pop away just before the next line starts.
 - **Paused:** the lyrics stop where the song stopped, and Undertone stops animating. With **When: While playing** they also fade out until you press play.
 
 ## Reduced motion
 
 If you've asked your system to reduce motion (macOS: System Settings → Accessibility → Display → **Reduce motion**; Windows: Settings → Accessibility → Visual effects → **Animation effects** off), Undertone keeps the lyrics still and changes lines with a short crossfade instead:
 
-- **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade. Words fade quickly to the highlight color instead of filling, nothing rises or hops, the glow stays steady, and the break dots only fade.
+- Words fade quickly to the highlight color as they're sung, instead of filling behind a moving edge, and nothing rises, swells or hops; the glow stays steady. [Effects](#effects) doesn't change this, and Settings says so under its slider.
+- **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
 - **Lens** doesn't magnify. The line stays flat, and words still light up as they're sung.
 - **Arc** lines don't glide between their places; they crossfade.
+- The break dots don't move; they brighten one after another.
 - The loading dots fade in once and then stay still instead of pulsing.
 - The instrumental **♪** stays still instead of breathing.
-- In Arc and Lens, word colors change instantly instead of fading.
 - With **When: While playing**, pausing hides the lyrics at once instead of fading them out.
 
 Song changes still fade out and in.
+
+On a computer that draws without graphics acceleration (some virtual machines and remote desktops), Undertone draws the words the same calm way, to keep its CPU use low, but lines still move into place.

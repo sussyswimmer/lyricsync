@@ -172,6 +172,13 @@ describe("mock bridge: initial state", () => {
     expect((await bridge.invoke("get_now_playing"))?.positionMs).toBe(0);
   });
 
+  it("takes Effects from ?settings=, clamped like update_settings", async () => {
+    const { bridge } = await mock(`?settings=${encodeURIComponent('{"effects":80}')}`);
+    expect((await bridge.invoke("get_settings")).effects).toBe(80);
+    const { bridge: loud } = await mock(`?settings=${encodeURIComponent('{"effects":400,"glow":"x"}')}`);
+    expect(await loud.invoke("get_settings")).toMatchObject({ effects: 100, glow: DEFAULT_SETTINGS.glow });
+  });
+
   it("ignores a malformed ?settings=", async () => {
     const { bridge } = await mock("?settings=%7Bnot-json");
     expect(await bridge.invoke("get_settings")).toEqual(DEFAULT_SETTINGS);
@@ -537,6 +544,7 @@ describe("mergeSettings", () => {
     enabled: false,
     launchAtLogin: true,
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
+    effects: 80,
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -557,11 +565,20 @@ describe("mergeSettings", () => {
   });
 
   it("clamps every number to the SPEC range, ends included", () => {
-    const high = mergeSettings(custom, { size: 500, curve: 300, yPos: 150, glow: 101, opacity: 120, globalOffsetMs: 9999, font: { weight: 1000 } });
-    expect(high).toMatchObject({ size: 140, curve: 100, yPos: 100, glow: 100, opacity: 100, globalOffsetMs: 2000, font: { family: "Syne", weight: 900 } });
-    const low = mergeSettings(custom, { size: 10, curve: -300, yPos: -1, glow: -5, opacity: 5, globalOffsetMs: -9999, font: { weight: 50 } });
-    expect(low).toMatchObject({ size: 22, curve: -100, yPos: 0, glow: 0, opacity: 20, globalOffsetMs: -2000, font: { weight: 100 } });
-    expect(mergeSettings(custom, { size: 22, opacity: 100, glow: 12.5 })).toMatchObject({ size: 22, opacity: 100, glow: 12.5 });
+    const high = mergeSettings(custom, { size: 500, curve: 300, yPos: 150, glow: 101, opacity: 120, globalOffsetMs: 9999, font: { weight: 1000 }, effects: 150 });
+    expect(high).toMatchObject({ size: 140, curve: 100, yPos: 100, glow: 100, opacity: 100, globalOffsetMs: 2000, font: { family: "Syne", weight: 900 }, effects: 100 });
+    const low = mergeSettings(custom, { size: 10, curve: -300, yPos: -1, glow: -5, opacity: 5, globalOffsetMs: -9999, font: { weight: 50 }, effects: -0.5 });
+    expect(low).toMatchObject({ size: 22, curve: -100, yPos: 0, glow: 0, opacity: 20, globalOffsetMs: -2000, font: { weight: 100 }, effects: 0 });
+    expect(mergeSettings(custom, { size: 22, opacity: 100, glow: 12.5, effects: 62.5 })).toMatchObject({ size: 22, opacity: 100, glow: 12.5, effects: 62.5 });
+    expect(mergeSettings(custom, { effects: 0 }).effects).toBe(0);
+    expect(mergeSettings(custom, { effects: 100 }).effects).toBe(100);
+  });
+
+  it("takes effects as a number only, as the Rust store does (contract v4)", () => {
+    for (const junk of ["50", "lively", true, null, [50], { level: 50 }, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(mergeSettings(custom, { effects: junk }).effects).toBe(80);
+    }
+    expect(mergeSettings(custom, { effects: 20 })).toEqual({ ...custom, effects: 20 });
   });
 
   it("changes only the keys a partial colors or font object has", () => {
@@ -661,6 +678,13 @@ describe("migrateSettings", () => {
     expect(s).toMatchObject({ enabled: true, launchAtLogin: false, shortcuts: DEFAULT_SETTINGS.shortcuts });
     s.shortcuts.toggleLyrics = "";
     expect(DEFAULT_SETTINGS.shortcuts.toggleLyrics).toBe("CmdOrCtrl+Alt+Shift+L");
+  });
+
+  it("gives contract v3 settings the v4 default: Effects at 50, as picked", () => {
+    const v3: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), size: 70 };
+    delete v3["effects"];
+    expect(migrateSettings(v3)).toEqual({ ...DEFAULT_SETTINGS, size: 70 });
+    expect(migrateSettings(v3).effects).toBe(50);
   });
 
   it("keeps what it knows from a newer version", () => {
@@ -1509,19 +1533,22 @@ describe("demo covers with a canvas", () => {
 
   it("draws every cover once at 240 px and caches the data URL", async () => {
     const { covers, canvases, calls } = await withCanvas(true);
-    expect(covers.COVER_COUNT).toBe(3);
+    // the prototype's three, then one for each look demo (tracks 7–9)
+    expect(covers.COVER_COUNT).toBe(6);
     const urls = Array.from({ length: covers.COVER_COUNT }, (_, i) => covers.demoCover(i));
-    expect(urls).toEqual(["data:image/png;base64,cover1", "data:image/png;base64,cover2", "data:image/png;base64,cover3"]);
-    expect(canvases.map((c) => [c.width, c.height])).toEqual([
-      [240, 240],
-      [240, 240],
-      [240, 240],
-    ]);
+    expect(urls).toEqual(Array.from({ length: 6 }, (_, i) => `data:image/png;base64,cover${i + 1}`));
+    expect(canvases.map((c) => [c.width, c.height])).toEqual(Array.from({ length: 6 }, () => [240, 240]));
     expect(calls).toContain("fillRect");
     const drawn = calls.length;
     expect(covers.demoCover(1)).toBe(urls[1]);
-    expect(canvases).toHaveLength(3);
+    expect(canvases).toHaveLength(6);
     expect(calls).toHaveLength(drawn);
+  });
+
+  it("has a cover for every demo track that names one, each used once from track 7 on", async () => {
+    const { covers } = await withCanvas(true);
+    for (const t of MOCK_TRACKS) if (t.cover !== null) expect(t.cover, t.title).toBeLessThan(covers.COVER_COUNT);
+    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5]);
   });
 
   it("returns null for an unknown cover or when there is no 2D context", async () => {

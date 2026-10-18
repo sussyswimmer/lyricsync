@@ -1,10 +1,10 @@
 # Undertone
 
-Undertone shows the synced lyrics of the song you're playing on your desktop, between the wallpaper and your icons. Windows and folders sit on top of the lyrics, and clicks go straight through to the desktop. Words light up as they're sung, and the colors come from the album cover unless you pick your own. It lives in the menu bar on macOS and the system tray on Windows, with no Dock icon, and on Windows no taskbar button except while Settings is open.
+Undertone shows the synced lyrics of the song you're playing on your desktop, between the wallpaper and your icons. Windows and folders sit on top of the lyrics, and clicks go straight through to the desktop. Undertone picks a look for each song, the style and the font, from how it's sung and what its cover looks like. Words light up and move as they're sung, and the colors come from the album cover unless you pick your own. It lives in the menu bar on macOS and the system tray on Windows, with no Dock icon, and on Windows no taskbar button except while Settings is open.
 
 - **Players:** Spotify on macOS 14+ and Windows 10/11, and the Music app (Apple Music) on macOS. On Windows, other players that show up in the Windows media controls work too.
 - **Lyrics:** fetched from [LRCLIB](https://lrclib.net), a free community lyrics database. No account and no API key.
-- **Styles:** Arc, Lens, Drift and Stack, with your choice of font, size, curve, height, glow and opacity. [docs/USER_GUIDE.md](docs/USER_GUIDE.md) explains every setting.
+- **A look for each song:** Arc, Lens, Drift or Stack, in one of eight fonts, picked by Undertone for every song. You set the size, height, effects (how much the words move), glow, opacity and colors. [docs/USER_GUIDE.md](docs/USER_GUIDE.md) explains every setting.
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
 
@@ -47,7 +47,7 @@ If you set a proxy by hand in your system's network settings, Undertone uses it.
 | Item | What it does |
 |---|---|
 | **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as **Lyrics on the desktop** in Settings. Undertone remembers it. |
-| **Style ▸** Arc / Lens / Drift / Stack | Switches the lyric style. The checkmark follows the setting. |
+| **Effects ▸** Calm / Balanced / Lively | How much the words move as they're sung, the same as **Effects** in Settings › Look: Calm sets 20, Balanced 50 (the default), Lively 85. The checkmark follows the setting, also when you set it in Settings. |
 | **Sync ▸** Earlier 100 ms / Later 100 ms | Moves this song's lyrics earlier or later. Undertone remembers it for this song. |
 | **Sync ▸** Reset for this song | Clears this song's sync nudge. |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping the cache. |
@@ -73,7 +73,7 @@ If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Al
 
 ### Settings
 
-The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **General** turns the lyrics on or off and sets **Launch at login**; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
+The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **Picked for this song** names the style and font Undertone picked for that song, and why: you don't choose them. **General** turns the lyrics on or off and sets **Launch at login**; **Look** sets the size, height, **Effects** (from Calm to Lively: how much words rise, swell and ripple), glow and opacity; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
 
 ## Troubleshooting
 
@@ -135,7 +135,7 @@ Use Node 24+, pnpm 11 and Rust stable (`rust-toolchain.toml` selects the stable 
 ```sh
 pnpm install --frozen-lockfile
 pnpm test                 # vitest
-pnpm coverage             # vitest with coverage of src/core, src/bridge and the overlay's view.ts, look.ts and stage.ts; fails below 90% on lrc.ts, timing.ts or clock.ts (CI runs this)
+pnpm coverage             # vitest with coverage of src/core, src/bridge, src/overlay/motion and the overlay's view.ts, look.ts and stage.ts; fails below 90% on lrc.ts, timing.ts or clock.ts, or below 85% (75% of branches) on songlook.ts and the motion engine (CI runs this)
 pnpm build                # tsc, then vite build into dist/
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
@@ -152,11 +152,13 @@ The Rust core in `src-tauri/src` has `media/` (now playing: the Windows media se
 
 Debug builds read four more flags: `--media-test` prints each now-playing and lyrics event, `--overlay-probe` prints every 2 s whether each page is visible and drawing, `--desktop-layer-test` shows a test line in place of the lyrics, even with nothing playing, and `--desktop-layer-all` shows the overlay on every display. Pass them with two `--`, as in `pnpm tauri dev -- -- --media-test`. [docs/NOW_PLAYING.md](docs/NOW_PLAYING.md) and [docs/DESKTOP_LAYER.md](docs/DESKTOP_LAYER.md) explain them, and [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) lists the checks a real Mac and PC still need.
 
+Every build, release included, also reads `--look=<style>[,<family>[,<curve>]]`. It makes every overlay draw with that style (`arc`, `lens`, `drift` or `stack`) instead of the look Undertone picks for each song, optionally in that face (a family name such as `Instrument Serif`) and, for Arc, with that curve (−100 to 100). An empty part keeps the pick, as in `--look=arc,,-50`. It's for checking one style on purpose, as the CPU checks in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) do, and it's never saved; a malformed value is ignored (the log says why). Quit Undertone first, then start it with the flag: `pnpm tauri dev -- -- --look=lens`, `open -a Undertone --args --look=lens` on macOS, or `undertone.exe --look=lens` on Windows. In a browser, the overlay page's `?look=` does the same.
+
 ### Frontend in a browser
 
 `pnpm dev` serves the frontend at <http://localhost:1420>. In a plain browser there is no Tauri, so both pages run against the **mock bridge**, a fake player that sends the same events as the Rust core. Open the overlay at <http://localhost:1420/> and the settings window at <http://localhost:1420/settings.html> side by side: they share the player and settings, so a change in one shows up in the other.
 
-The mock plays seven demo tracks with original placeholder lyrics:
+The mock plays ten demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
@@ -167,6 +169,9 @@ The mock plays seven demo tracks with original placeholder lyrics:
 | 4 | Tidal Interlude | instrumental, no cover art |
 | 5 | Script Sampler | scripts and line shapes for visual QA: Japanese, Chinese, Korean, Vietnamese, right-to-left, very long and one-word lines, 42 s |
 | 6 | Glass Harbor | the motion demo: syllable-timed enhanced LRC, held line endings that light letter by letter, and an intro and a mid-song break long enough for the interlude dots, 38 s |
+| 7 | Ledger Lines | a look demo: a fast, dense verse under a black-and-white cover, which Undertone sets as Stack in Bricolage, 76 s |
+| 8 | Strobe Hearts (Club Mix) | a look demo: short shouted hooks, a club edit and a neon-on-black cover, set as Lens in Unbounded capitals, 66 s |
+| 9 | Glacier Nocturne | a look demo: sparse, slow lines with long instrumental breaks under a cold, dark cover, set as Drift in Instrument Serif, 118 s |
 
 Keys in mock mode (ignored while a form control has focus):
 
@@ -184,16 +189,18 @@ URL parameters (combine them with `&`):
 | Parameter | Effect |
 |---|---|
 | `?mock` | Use the mock even inside the Tauri webview. A plain browser always uses it. |
-| `?track=N` | Start on demo track N (0–6). |
+| `?track=N` | Start on demo track N (0–9). |
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
-| `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22mode%22%3A%22lens%22%7D` for `{"mode":"lens"}`. |
+| `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22effects%22%3A80%7D` for `{"effects":80}`. In the mock, `mode`, `font` and `curve` in it force a look like `?look=` (the app no longer reads them). |
+| `?look=STYLE[,FAMILY[,CURVE]]` | On the overlay page, with either bridge: draw every song in that style (`arc`, `lens`, `drift` or `stack`), optionally in that font family and, for Arc, with that curve (−100 to 100), instead of the look Undertone picks. An empty part keeps the pick: `?look=lens`, `?look=lens,Syne`, `?look=arc,,-50`. Never saved. |
+| `?power=full\|lite` | On the overlay page: force the full motion, or the lighter drawing Undertone uses on computers without graphics acceleration (detected otherwise). |
 | `?shortcutConflict=toggleLyrics,nudgeLater` | Act as if another app held the combinations those actions start with: they report `"unavailable"` in `shortcuts-status`, and Settings warns under them. Recording a different combination clears the warning. Actions: `toggleLyrics`, `nudgeEarlier`, `nudgeLater`. |
 | `?media=automation-denied\|no-player` | Act like a core that can't see the player: nothing playing, and `media-status` says why (`automation-denied` names Spotify). The settings window then shows its Automation notice, or **No music app open** under This song, and its preview plays the demo song as the app does. |
 | `?loginItem=refuse` | Act like a core whose system refuses the login item: a **Launch at login** change fails, the rest of the change applies, and Settings shows its note under the switch. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 
-For example, <http://localhost:1420/?mock&track=1&t=4900&settings=%7B%22mode%22%3A%22arc%22%7D> opens Paper Lanterns mid-line in Arc.
+For example, <http://localhost:1420/?mock&track=1&t=4900&look=arc> opens Paper Lanterns mid-line in Arc, whatever Undertone would pick for it, and <http://localhost:1420/?mock&track=8> plays Strobe Hearts in the look Undertone picks (Lens, in Unbounded).
 
 `?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is applied like `update_settings`: inside `colors`, `font` or `shortcuts` only the keys you give change, and the rest keep their saved values. `trackOffsetsMs` replaces the whole map, and invalid values are ignored.
 
@@ -206,7 +213,7 @@ The mock remembers the player and settings in `localStorage`. `track`, `t` and `
 ```
 contract/contract.ts   shared types (mirrored in src-tauri/src/contract.rs)
 src/bridge/            Tauri bridge, mock bridge, and the switch between them
-src/core/              LRC parser, word timing, playback clock, album palette (pure TS)
+src/core/              LRC parser, word timing, playback clock, album palette, the look picker (pure TS)
 src/overlay/           the lyric stage, controller, empty states and fonts
 src/overlay/modes/     arc, lens, drift (stack is drift without depth)
 src/settings/          settings window and its live preview
@@ -216,7 +223,7 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
+[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v4. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.
 

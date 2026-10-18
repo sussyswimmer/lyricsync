@@ -9,6 +9,7 @@ import { h } from "../overlay/dom";
 import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
+import { cardState } from "./look-card";
 import { SettingsPreview, type PreviewInfo } from "./preview";
 import { defaultsPatch, SettingsSync, withDefaults } from "./store";
 
@@ -65,7 +66,14 @@ async function boot(host: HTMLElement): Promise<void> {
   /** The value a refused Launch at login change asked for: once the settings reach it (from the menu, or the
    * core taking the login item's real state), the note under the switch no longer applies. */
   let loginErrorFor: boolean | null = null;
-  let info: PreviewInfo = { track: null, demo: false, palette: null, paletteFrom: null, artPending: false };
+  let info: PreviewInfo = {
+    track: null,
+    demo: false,
+    palette: null,
+    paletteFrom: null,
+    artPending: false,
+    look: cardState({ key: null, demo: false, view: null, look: null }),
+  };
 
   const palettes = new PaletteCache();
   // Created below; the closures only run after both exist.
@@ -89,6 +97,8 @@ async function boot(host: HTMLElement): Promise<void> {
       media,
       shortcuts,
       loginError,
+      // the preview's song and the look the preview draws it with
+      look: info.look,
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -234,7 +244,9 @@ function samePanelState(a: PanelState, b: PanelState): boolean {
     a.shortcuts?.toggleLyrics === b.shortcuts?.toggleLyrics &&
     a.shortcuts?.nudgeEarlier === b.shortcuts?.nudgeEarlier &&
     a.shortcuts?.nudgeLater === b.shortcuts?.nudgeLater &&
-    a.loginError === b.loginError
+    a.loginError === b.loginError &&
+    // the preview hands over a new card state only when it changed
+    a.look === b.look
   );
 }
 

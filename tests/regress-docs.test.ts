@@ -142,7 +142,7 @@ describe("README development notes", () => {
     const readme = read("README.md");
     const rows = [...readme.matchAll(/^\| (\d+) \| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => [Number(m[1]), (m[2] ?? "").trim()]);
     expect(rows).toEqual(MOCK_TRACKS.map((t, i) => [i, t.title]));
-    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
     expect(readme).toContain(`The mock plays ${words[MOCK_TRACKS.length] ?? MOCK_TRACKS.length} demo tracks`);
     expect(readme).toContain(`Start on demo track N (0–${MOCK_TRACKS.length - 1})`);
   });
@@ -181,6 +181,14 @@ describe("debug flags in the docs", () => {
     const missing = flags.filter((flag) => !new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(text));
     expect(missing).toEqual([]);
   });
+
+  // Contract v4: the forced look for QA (`--look`, any build) is spelled out where people look for it.
+  it("--look is explained in the README with its grammar and how to pass it", () => {
+    expect([...appFlags()]).toContain("--look");
+    const readme = read("README.md");
+    expect(readme).toContain("--look=<style>[,<family>[,<curve>]]");
+    expect(readme).toContain("pnpm tauri dev -- -- --look=lens");
+  });
 });
 
 // Regression (docs-drift): LYRICS.md said "The shared contract is v2" a version after v3 landed. A claim
@@ -214,12 +222,36 @@ describe("user guide", () => {
   it("quotes the contract's defaults", () => {
     const guide = read("docs/USER_GUIDE.md");
     expect(guide).toContain(`from 22 to 140 (default ${d.size})`);
-    expect(guide).toContain(`(default +${d.curve})`);
     expect(guide).toContain(`The default, ${d.yPos}%`);
-    expect(guide).toContain(`from 0 to 100 (default ${d.glow})`);
+    expect(guide).toContain(`How much the words move as they're sung, from 0 to 100 (default ${d.effects})`);
+    expect(guide).toContain(`How much the word being sung glows, from 0 to 100 (default ${d.glow})`);
     expect(guide).toContain(`from 20% to 100% (default ${d.opacity}%)`);
     for (const hex of Object.values(d.colors)) expect(guide).toContain(`\`${hex.toUpperCase()}\``);
     expect(guide).toContain("from −2000 to +2000 ms");
+  });
+});
+
+// Contract v4: Undertone picks the style and the font for each song. The docs say so, describe the
+// window and the menu as they are (Picked for this song, Look, Effects ▸), and offer no way to choose.
+describe("the look picked per song in the docs", () => {
+  it("the guide explains the pick, the card and the Look group, and has no Style, Font or Curve to set", () => {
+    const guide = read("docs/USER_GUIDE.md");
+    for (const heading of ["## Look", "### Picked for this song", "### The four styles", "### Effects", "### Glow"]) {
+      expect(guide).toContain(`\n${heading}\n`);
+    }
+    for (const gone of ["## Style", "## Font", "## Layout", "### Curve"]) expect(guide).not.toContain(`\n${gone}\n`);
+    for (const label of ["Picked for this song", "Finding lyrics…", "No lyrics for this song", "**Calm**", "**Lively**"]) expect(guide).toContain(label);
+  });
+
+  it("no doc of the app as it is now offers a Style ▸ menu or a font to pick", () => {
+    for (const doc of CURRENT) {
+      const text = read(doc);
+      expect(text, doc).not.toMatch(/Style ▸/);
+      expect(text, doc).not.toMatch(/your choice of font|pick a font|Font group/i);
+    }
+    const readme = read("README.md");
+    expect(readme).toContain("**Effects ▸** Calm / Balanced / Lively");
+    expect(read("docs/USER_GUIDE.md")).toContain("**Effects ▸** Calm / Balanced / Lively");
   });
 });
 

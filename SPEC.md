@@ -6,9 +6,10 @@ Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex rea
 
 A desktop app for **macOS and Windows** that shows the synced lyrics of whatever is playing on the **desktop layer**. That layer is above the wallpaper and below desktop icons and every window. The user can still drag folders and windows over it, and clicks pass straight through.
 
-- Highlights word by word as the song plays.
+- Highlights word by word as the song plays, and the words move as they're sung.
+- A look picked for each song: the style (Arc / Lens / Drift / Stack), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
 - Default colors come from the album cover. The user can override every color.
-- Fully customizable: style (Arc / Lens / Drift / Stack), font, size, curve, height, glow, opacity.
+- Customizable: size, height, effects (how much the words move), glow, opacity and colors.
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
@@ -76,7 +77,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v3 today: `contract/contract.ts` is authoritative, and v2 and v3 below only add to v1.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v4 today: `contract/contract.ts` is authoritative, and v2, v3 and v4 below only add to v1.
 
 ```ts
 // contract/contract.ts
@@ -210,6 +211,26 @@ shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
 | `suspend_shortcuts(suspended: boolean)` | `()` | Settings suspends the global shortcuts while it records a new one, so the old binding doesn't swallow the keys. Rust resumes on `false`, after 30 s, or when Settings hides, is minimized or loses focus. |
 
 `enabled` replaces the tray's runtime-only "Hide lyrics" state: the tray item, the toggle shortcut and the Settings switch all change it, and it persists. `launchAtLogin` changes the login item in the same update (a failure keeps the old value and returns an error). Rust adopts the login item's real state at startup, whenever Settings opens and when the pointer enters the tray icon, and emits `settings-changed` when it differs. On macOS that state includes System Settings' **Allow in the Background** (`login_item.rs`): turning the item on while it is off there fails, and System Settings opens at Login Items. Invalid or duplicate shortcut bindings keep their current value, like every other field. **Reset to defaults** in Settings resets the shortcuts but keeps `enabled` and `launchAtLogin`.
+
+**Contract v4 (additive, 2026-10-18).** `CONTRACT_VERSION = 4`. `Settings.version` stays 1; stored settings without `effects` read as 50. No event or command changed.
+
+```ts
+// Settings gains:
+/** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. */
+effects: number;         // default 50
+
+// Still validated and stored, but not read since v4:
+mode: Mode;                                 // Undertone picks the style per song
+font: { family: string; weight: number };   // the face is picked per song
+curve: number;                              // Arc's curve is picked per song
+
+// Still read, with a new meaning:
+/** 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest) and
+ *  softens the dark shadow. */
+glow: number;
+```
+
+Undertone picks each song's look itself: the style, the face, Arc's curve and the motion's character, from the lyrics and their timing, the title and the cover (`src/core/songlook.ts`). The user scales it with Size, **Effects** and Glow, and doesn't choose it. Settings' Effects slider and the tray's **Effects ▸** Calm (20) / Balanced (50) / Lively (85) both write `effects` through `update_settings`. For QA, `--look=<style>[,<family>[,<curve>]]` on the app's command line and `?look=` on the overlay page force a look; neither is ever stored.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

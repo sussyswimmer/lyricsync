@@ -70,7 +70,7 @@ const TRACK = { key: KEY, title: "Placeholder Song", artist: "Nobody" };
 function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
   let settings: Settings = applyWrite(structuredClone(DEFAULT_SETTINGS), { kind: "track", trackKey: KEY, ms: offsetMs });
   const writes: { key: string; ms: number }[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false };
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } };
   const edit = (patch: Partial<Settings>): void => {
     settings = { ...settings, ...patch };
     panel.render((state = { ...state, settings }));
@@ -205,6 +205,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
       media: null,
       shortcuts: null,
       loginError: false,
+      look: { kind: "finding", key: null, demo: false },
     });
     expect(p.value.textWrites).toBe(before);
     expect(p.value.textContent).toBe("+50 ms");
@@ -286,27 +287,9 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
   });
 });
 
-describe("font-vietnamese: the font picker says which faces draw Vietnamese accents in another font", () => {
-  const note = (p: ReturnType<typeof mountPanel>): FakeElement => p.root.one("font-note");
-  const pick = (p: ReturnType<typeof mountPanel>, family: string): void => {
-    const input = p.root.one("fonts").all("opt").find((o) => o.dataset["family"] === family)?.children[0];
-    if (!input) throw new Error(`no ${family} tile`);
-    input.checked = true;
-    input.dispatch("change");
-  };
-
-  it("says nothing for the default face, and names a face without the subset once it is picked", () => {
-    const p = mountPanel();
-    expect(note(p).textContent).toBe("");
-    expect(p.root.one("fonts").getAttribute("aria-describedby")).toBe(note(p).id);
-    pick(p, "Caveat");
-    expect(note(p).textContent).toBe("Caveat has no Vietnamese accented letters, so those come from a system font.");
-    pick(p, "Instrument Serif");
-    expect(note(p).textContent).toBe("Instrument Serif has no Vietnamese accented letters, so those come from a system font.");
-    pick(p, "Bricolage Grotesque");
-    expect(note(p).textContent).toBe("");
-  });
-
+// The font picker and its note are gone (contract v4: Undertone picks the face), but the look picker
+// vetoes a face without the song's letters by these same flags (src/core/songlook.ts).
+describe("font-vietnamese: the faces' Vietnamese flags, which the look picker vetoes by", () => {
   it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", async () => {
     const fsModule = "node:fs";
     const fs = (await import(/* @vite-ignore */ fsModule)) as { readdirSync(path: URL): string[] };
@@ -438,7 +421,8 @@ describe("media-status-preview: with nothing reported, the mock's preview plays 
   it("starts on the demo under ?media=, and moves to the player once it is seen", async () => {
     const { bridge, preview, title, badge } = await mountPreview("?track=1&media=no-player");
     expect(preview.current.demo).toBe(true);
-    expect(title.textContent).toBe("Neon Monsoon");
+    // the demo starts with Glass Harbor (track 6), whose intro dots and held words show the motion best
+    expect(title.textContent).toBe("Glass Harbor");
     expect(badge.textContent).toBe("Demo");
 
     bridge.setMedia(null);
@@ -455,7 +439,7 @@ describe("media-status-preview: with nothing reported, the mock's preview plays 
     expect(preview.current.demo).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
     await vi.waitFor(() => expect(preview.current.demo).toBe(true));
-    expect(title.textContent).toBe("Neon Monsoon");
+    expect(title.textContent).toBe("Glass Harbor");
   });
 
   it("plain ?mock never shows the demo, through a track change", async () => {
@@ -514,7 +498,7 @@ describe("settings-button-cascade: button classes win over the page's button res
     const light = settingsCss.slice(settingsCss.indexOf(":root"), settingsCss.indexOf("@media (prefers-color-scheme: dark)"));
     const token = (name: string): string => light.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
     const [accent, card, bg] = [token("--accent"), token("--card"), token("--bg")];
-    // the tile ring, the on switch and the slider fill, on the card and the window
+    // the on switch, the slider fill and the picked style's glyph, on the card and the window
     expect(contrast(accent, card)).toBeGreaterThanOrEqual(3);
     expect(contrast(accent, bg)).toBeGreaterThanOrEqual(3);
     // the on switch's white knob on the accent
@@ -526,7 +510,7 @@ describe("settings-button-cascade: button classes win over the page's button res
     const over = [r, g, b].map((c) => Math.round((c ?? 0) * (a ?? 0) + 255 * (1 - (a ?? 0))));
     expect(contrast(`#${over.map((c) => c.toString(16).padStart(2, "0")).join("")}`, card)).toBeGreaterThanOrEqual(3);
     expect(rules(settingsCss).find(([sel]) => sel === ".switch:not(:checked)")?.[1]).toMatch(/inset 0 0 0 1px var\(--switch-ring\)/);
-    // the chosen segment has an accent edge, as the tiles have their ring
+    // the chosen segment has an accent edge
     expect(rules(settingsCss).find(([sel]) => sel === ".seg input:checked + .opt-face")?.[1]).toMatch(/inset 0 0 0 1px var\(--accent\)/);
   });
 
@@ -536,8 +520,9 @@ describe("settings-button-cascade: button classes win over the page's button res
     const forced = rules(settingsCss.slice(at));
     const body = (selector: string): string => forced.find(([sel]) => sel.split(",").map((s) => s.trim()).includes(selector))?.[1] ?? "";
     // a border, not the dropped box-shadow, and not an outline, which the focus ring needs
-    expect(body(".tiles input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
     expect(body(".seg input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    // the picked-look card keeps its edge without its shadow
+    expect(body(".picked-card")).toMatch(/border:\s*1px solid CanvasText/);
     // drawn with gradients and shadows: they keep their own drawing, in system colors
     expect(body(".switch")).toMatch(/forced-color-adjust:\s*none/);
     expect(body(".switch")).toMatch(/ButtonText/);

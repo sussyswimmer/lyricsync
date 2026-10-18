@@ -335,12 +335,6 @@ html.is-scrolled .top {
   box-shadow: var(--card-shadow);
 }
 
-.card-plain {
-  padding: 0;
-  background: none;
-  box-shadow: none;
-}
-
 .hint {
   margin: 0;
   color: var(--muted);
@@ -390,6 +384,136 @@ html.is-scrolled .top {
 .notice-path {
   color: var(--text);
   font-weight: 600;
+}
+
+/* ---------- the picked look ---------- */
+/* Read-only: the style and face Undertone picked for the preview's song, and why. A caption of the
+   preview more than a control, so it sits right under it, quieter than the groups below. */
+.picked {
+  margin-top: 12px;
+}
+
+.picked-intro {
+  margin: 0 0 6px;
+  padding: 0 4px;
+}
+
+.picked-card {
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+}
+
+.picked-live {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 11px;
+  padding: 10px 12px 11px;
+}
+
+/* the style's glyph on an accent-tinted tile, as the old style tiles drew it */
+.picked-glyph {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  color: var(--accent-strong);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.picked-glyph .icon {
+  width: 24px;
+  height: 16px;
+}
+
+.picked:not([data-state="look"]) .picked-glyph {
+  background: var(--btn);
+  color: var(--muted);
+}
+
+.picked[data-state="finding"] .picked-glyph .icon {
+  animation: ut-pulse 1.4s ease-in-out infinite;
+}
+
+.picked-note {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.picked-text {
+  min-width: 0;
+}
+
+.picked-kicker {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.picked-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.picked-sep {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* the face's name in that face (font-family and weight set inline), sized so each reads as large */
+.picked-face {
+  font-size: 16px;
+}
+.picked-face[data-family="Instrument Serif"] {
+  font-size: 18.5px;
+}
+.picked-face[data-family="Unbounded"],
+.picked-face[data-family="JetBrains Mono"] {
+  font-size: 13.5px;
+}
+.picked-face[data-family="Syne"],
+.picked-face[data-family="System"] {
+  font-size: 15px;
+}
+.picked-face[data-family="Caveat"] {
+  font-size: 19.5px;
+}
+
+.picked-message {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.picked[data-state="finding"] .picked-message {
+  color: var(--muted);
+}
+
+.picked-why {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@keyframes ut-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* ---------- rows ---------- */
@@ -636,7 +760,17 @@ html.is-scrolled .top {
   letter-spacing: 0.02em;
 }
 
-/* ---------- radio tiles and segments ---------- */
+/* ---------- icons ---------- */
+.icon {
+  width: 30px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---------- segmented radios ---------- */
 .opt {
   position: relative;
   display: block;
@@ -644,7 +778,7 @@ html.is-scrolled .top {
   cursor: pointer;
 }
 
-/* invisible, but as big as its tile, so keyboard focus scrolls the whole tile into view */
+/* invisible, but as big as its segment, so keyboard focus scrolls the whole segment into view */
 .opt input {
   position: absolute;
   inset: 0;
@@ -677,103 +811,6 @@ html.is-scrolled .top {
   text-overflow: ellipsis;
 }
 
-.tiles {
-  display: grid;
-  gap: 8px;
-}
-
-.tiles-4 {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.tiles-2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.tiles .opt-face {
-  border-radius: 10px;
-  background: var(--card);
-  box-shadow: var(--card-shadow);
-  color: var(--text-2);
-}
-
-.tiles .opt:hover .opt-face {
-  color: var(--text);
-}
-
-.tiles input:checked + .opt-face {
-  color: var(--text);
-  box-shadow:
-    inset 0 0 0 2px var(--accent),
-    var(--card-shadow);
-}
-
-.modes .opt-face {
-  flex-direction: column;
-  gap: 6px;
-  height: 62px;
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.icon {
-  width: 30px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.modes .icon {
-  color: var(--muted);
-  transition: color 0.15s ease;
-}
-
-.modes input:checked + .opt-face .icon {
-  color: var(--accent);
-}
-
-.mode-blurb {
-  min-height: 2.8em;
-  padding: 8px 4px 0;
-}
-
-/* each face in its own font, sized so they read at a similar weight */
-.fonts .opt-face {
-  height: 46px;
-  padding: 0 10px;
-  font-size: 17px;
-  line-height: 1;
-}
-
-.fonts [data-family="Instrument Serif"] .opt-face {
-  font-size: 20px;
-}
-.fonts [data-family="Unbounded"] .opt-face,
-.fonts [data-family="JetBrains Mono"] .opt-face {
-  font-size: 14px;
-}
-.fonts [data-family="Syne"] .opt-face {
-  font-size: 16px;
-}
-.fonts [data-family="Caveat"] .opt-face {
-  font-size: 22px;
-}
-.fonts [data-family="System"] .opt-face {
-  font-size: 15px;
-}
-
-/* empty (and without height) for a face with Vietnamese accented letters; more specific than
-   `.card > .hint`, which pads every caption in a card */
-.card > .hint.font-note {
-  padding: 8px 4px 0;
-}
-
-.card > .hint.font-note:empty {
-  padding: 0;
-}
-
 /* two-way choices */
 .seg {
   display: grid;
@@ -795,7 +832,7 @@ html.is-scrolled .top {
 }
 
 /* The raised pill alone is about 1.1:1 on the light track (1.7:1 in dark): an accent edge marks the
-   choice, as the ring does on the tiles. */
+   choice. */
 .seg input:checked + .opt-face {
   background: var(--seg-on);
   box-shadow:
@@ -809,7 +846,8 @@ html.is-scrolled .top {
 }
 
 /* ---------- sync ---------- */
-.slider-wide {
+.slider-wide,
+.slider-ends {
   row-gap: 0;
   padding: 6px 0 4px;
 }
@@ -1289,7 +1327,7 @@ html.is-scrolled .top {
   .pv-screen,
   .switch,
   .opt-face,
-  .modes .icon,
+  .picked-glyph,
   .range::-webkit-slider-thumb,
   .step,
   .btn,
@@ -1300,7 +1338,8 @@ html.is-scrolled .top {
   .confirm,
   .notice-card,
   .pv-off,
-  .sc-key.is-recording {
+  .sc-key.is-recording,
+  .picked[data-state="finding"] .picked-glyph .icon {
     animation: none;
   }
 }
@@ -1320,7 +1359,6 @@ html.is-scrolled .top {
     border: 1px solid CanvasText;
   }
 
-  .tiles .opt-face,
   .seg .opt-face,
   .step,
   .btn,
@@ -1328,7 +1366,6 @@ html.is-scrolled .top {
     border: 1px solid ButtonText;
   }
 
-  .tiles input:checked + .opt-face,
   .seg input:checked + .opt-face,
   .sc-key.is-recording {
     border: 2px solid Highlight;
@@ -1371,7 +1408,12 @@ html.is-scrolled .top {
   }
 
   .notice-card,
+  .picked-card,
   .confirm {
+    border: 1px solid CanvasText;
+  }
+
+  .picked-glyph {
     border: 1px solid CanvasText;
   }
 }
