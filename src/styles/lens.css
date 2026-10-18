@@ -1,12 +1,15 @@
-/* ---------- lens ---------- */
-/* Every word is placed by transform (translate + scale around its baseline), so a frame never lays out. */
+/* ---------- lens ----------
+   The focus row's words are slots placed by transform (translate + scale around each word's baseline,
+   modes/lens-plan.ts), each holding the word's karaoke box (.kw, stage.css). The slots' transforms and
+   opacities, and everything inside the karaoke boxes, run as Web Animations on the compositor: no
+   frame ever lays out, and no shadow is re-rastered as the lens moves. */
 .lens {
   position: absolute;
   inset: 0;
 }
 
 .lens-row,
-.lens-word,
+.lens-slot,
 .lens-next {
   position: absolute;
   left: 0;
@@ -15,24 +18,24 @@
   white-space: pre;
 }
 
-.lens-word {
-  /*
-   * Color only: a text-shadow transition re-lays out and re-rasters the word on every frame it runs.
-   * The glow switches at once (the color fade and the fisheye's growth carry the change), and the far
-   * words' shadow steps (lens.ts SHADOW_STEPS) are too small to see.
-   */
-  transition: color 0.12s linear;
-  /*
-   * Each word on its own layer: the fisheye then moves and scales bitmaps instead of re-rastering the
-   * row's blurred shadows every frame (about 10x less raster in Chromium). Chromium re-rasters a layer
-   * when it grows, so magnified words stay sharp.
-   */
-  will-change: transform;
+/* The plain text, where no overlay draws the word: plain lyrics, and a word whose overlay isn't built
+   yet. Its shadow is the slot's: drawn for the smallest and faintest the lens makes a word. */
+.lens-row {
+  color: var(--ut-lyric);
 }
 
-/* A line gliding up from the next slot eases its words from the next line's dim color itself (lens.ts mount). */
-.lens-arriving > .lens-word {
-  transition: none;
+.lens-slot .kw-txt {
+  text-shadow: var(--ut-dark);
+}
+
+/* An instrumental break: the dots where the focus line goes. */
+.lens-break {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Built and read once per build to size every word, then removed. */
@@ -59,11 +62,4 @@
   width: 0;
   height: 0;
   vertical-align: baseline;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lens-word {
-    transition: none;
-    will-change: auto;
-  }
 }
