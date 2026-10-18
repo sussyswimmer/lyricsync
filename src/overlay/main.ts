@@ -3,6 +3,7 @@ import "./fonts";
 import { connect, type Bridge } from "../bridge";
 import { OverlayController } from "./controller";
 import { mergeOverrides, overrideFromSettings, parseLookOverride, workAreaReference } from "./look";
+import { detectPower } from "./motion/power";
 import { LyricStage } from "./stage";
 
 /** What this page puts on `window`: the app's `--look` hand-off in, the overlay's parts out (mock and dev). */
@@ -21,6 +22,9 @@ if (host) {
     // In a plain browser, paint a stand-in wallpaper behind the transparent overlay (?wallpaper=dusk|light|busy|none).
     document.documentElement.dataset.wallpaper = params.get("wallpaper") ?? "dusk";
   }
+  // The power tier the stage draws with (full, or lite on software compositing), readable in the
+  // developer tools for docs/ACCEPTANCE.md's lite check. detectPower() is memoized: the stage reuses it.
+  document.documentElement.dataset.power = detectPower();
   let controller: OverlayController | null = null;
   const stage = new LyricStage(host, {
     onInvalidate: () => controller?.kick(),

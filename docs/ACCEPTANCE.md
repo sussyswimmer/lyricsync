@@ -1,6 +1,6 @@
 # Native acceptance
 
-The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, and the checks the 2026-10-15 fixes need. Log what you find in [HANDOFF.md](HANDOFF.md), and tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
+The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), contract v4 (Effects, and the look Undertone picks for each song), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, the checks the 2026-10-15 fixes need, and the v4 motion on WebKit and WebView2. Log what you find in [HANDOFF.md](HANDOFF.md), and tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
 
 Run on macOS 14 (the minimum) and the current release, and on Windows 10 and 11.
 
@@ -119,9 +119,10 @@ On both OSes, in a dev build, open the developer tools of the overlay and of Set
 The budget is 3% of the whole machine while playing, on a mid-range laptop (for example an M1 MacBook Air, or a four-core Intel Core i5 or Ryzen 5 laptop), with the installed app.
 
 1. Count Undertone and its web content processes together. On macOS, Activity Monitor's **% CPU** is per core, so divide the sum by the number of logical cores (`sysctl -n hw.logicalcpu`); count Undertone's WebKit processes too (Web Content and GPU; Activity Monitor may list them as `Undertone Web Content` or as `com.apple.WebKit.WebContent`). On Windows, Task Manager's **Processes** tab already shows a share of the whole machine; expand Undertone to include its `msedgewebview2.exe` processes.
-2. Play a song with synced lyrics and leave each style (Arc, Lens, Drift, Stack) on for 60 s with Settings closed. Note the average for each: it stays under 3%.
-3. Repeat Lens, the busiest style, on a 120 Hz or ProMotion display if you have one. Busy frames are capped near 60 fps there, so the number should be close to the 60 Hz one.
+2. Undertone picks the style for each song, so force each one with `--look` (the README's [Development](../README.md#development) section shows how to start the app with it): quit Undertone, start it with `--look=arc`, play a song with word-timed lyrics (LRCLIB marks them as enhanced; most popular songs have line timing only, which works too) and leave it on for 60 s with Settings closed. Note the average. Do the same with `--look=lens`, `--look=drift` and `--look=stack`, first at **Effects** 50 and then at 100. Every average stays under 3%.
+3. Repeat the busiest style from step 2 on a 120 Hz or ProMotion display if you have one. The motion runs on the compositor there, at the display's rate; the total should stay close to the 60 Hz one.
 4. Pause the song, switch off **Lyrics on the desktop**, and quit the player: each time the total drops to about 0% within a few seconds.
+5. Start Undertone without `--look` and play a few songs: the averages stay under 3% with the looks it picks.
 
 ## 8. Sync within ±150 ms (Definition of done)
 
@@ -136,3 +137,25 @@ The budget is 3% of the whole machine while playing, on a mid-range laptop (for 
 2. Record the screen at 60 fps. Skip to a song LRCLIB has: the time from the player showing the new song to the first lyric line on the desktop is under 1 s. The loading dots appear only after 0.6 s, so a fast lookup shows none.
 3. Skip back to that song: its lyrics show at once, from the cache.
 4. To see where the time goes, add a timestamp to every log line in a dev build: on macOS `pnpm tauri dev -- -- --media-test 2>&1 | ts '%.s'` (`ts` is in moreutils), in PowerShell `pnpm tauri dev -- -- --media-test 2>&1 | ForEach-Object { "$(Get-Date -Format HH:mm:ss.fff) $_" }`. Measure from the `now-playing` line with `"trackChanged":true` to `lyrics: status=Found`.
+
+## 10. Motion on WebKit and WebView2 (v4)
+
+The new motion was checked in Chromium with software compositing only. These need real machines with a GPU, on both OSes, with the installed app:
+
+1. Play a song with word-timed lyrics under each style (`--look=…`, as in section 7). Each word fills with the highlight color from left to right behind a soft edge, rises and swells a little as it's sung, and its letters hop one after another. A word held for about a second or more lights and lifts letter by letter, with its glow building. A glow in the highlight color follows the sung word; at **Glow** 0 it is faint but still there, and at 100 it is strongest.
+2. Watch a dozen line changes: the list (Stack, Drift), the next line (Lens) or the curve (Arc) moves just before the line starts, with a soft overshoot. Nothing freezes, stutters or flashes at the change, and the line that leaves fades back to plain text.
+3. Find a song with an intro or a break of a few seconds: three dots appear, fill one after another and breathe, then swell and pop just before the next line.
+4. Seek back a few seconds within a line, seek a few lines either way, pause and resume: the lit words always match the song, and a paused frame doesn't move.
+5. Turn **Effects** to Calm (0) and to Lively (100): at 0 words only light up, with no rising or hopping; at 100 they move about twice as much as at 50. Turn on the system's reduced-motion setting (macOS: **Accessibility › Display › Reduce motion**; Windows: **Accessibility › Visual effects › Animation effects** off): words fade in instead of moving, and line changes crossfade.
+6. On a light wallpaper and a dark one, every style stays readable, with no hard-edged dark boxes around words.
+7. **The lite tier.** In a dev build, open the overlay's developer tools (section 5) and evaluate `document.documentElement.dataset.power`: it reads `full` on a machine with a working GPU. In a virtual machine or over Remote Desktop it reads `lite`, and words fade in without moving while the line changes still glide.
+
+## 11. The look picked for each song (v4)
+
+Both OSes, with the installed app and a few dozen songs of different kinds:
+
+1. Each song gets a style and a font that suit it: dense, fast songs a list (Stack), slow songs with held notes Arc or Drift, short shouted hooks Lens. The **Picked for this song** card in Settings names the same style and font the desktop shows, and its reason reads sensibly.
+2. A song never changes style or font while it plays, except once, at a line change or a break, when its cover arrives late or synced lyrics replace plain ones.
+3. Plain (unsynced) lyrics always get the calm list. Songs in Vietnamese get a font with Vietnamese letters; Japanese, Chinese and Korean songs use the system's fonts for those characters.
+4. Play a song again later in the same session: it looks exactly as before, from its first line.
+5. The menu bar / tray menu's **Effects ▸** Calm, Balanced and Lively set the Effects slider in Settings, and its check follows the slider.
