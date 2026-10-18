@@ -10,6 +10,7 @@ import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
 import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
+import { FakeAnimation, FakeAnimationHost } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 /*
@@ -31,36 +32,9 @@ class FakeStyle {
   }
 }
 
-class FakeAnimation {
-  readonly keyframes: Keyframe[];
-  readonly options: KeyframeAnimationOptions;
-  readonly finished: Promise<void>;
-  cancelled = false;
-  paused = false;
-  startTime: number | null = null;
-  currentTime: number | null = null;
-  private reject: (e: Error) => void = () => undefined;
-  constructor(keyframes: Keyframe[], options: KeyframeAnimationOptions) {
-    this.keyframes = keyframes;
-    this.options = options;
-    this.finished = new Promise<void>((_, reject) => {
-      this.reject = reject;
-    });
-    // Engines create this promise when it is first asked for; one nobody asked for never rejects unheard.
-    this.finished.catch(() => undefined);
-  }
-  pause(): void {
-    this.paused = true;
-  }
-  cancel(): void {
-    this.cancelled = true;
-    this.reject(new Error("AbortError"));
-  }
-}
-
 let stageSize = { width: 1280, height: 720 };
 
-class FakeElement {
+class FakeElement extends FakeAnimationHost {
   readonly tagName: string;
   className = "";
   dir = "";
@@ -69,7 +43,6 @@ class FakeElement {
   parent: FakeElement | null = null;
   ownText = "";
   readonly attrs = new Map<string, string>();
-  animations: FakeAnimation[] = [];
   readonly classList = {
     add: (...names: string[]): void => {
       const set = new Set(this.className.split(" ").filter(Boolean));
@@ -92,6 +65,7 @@ class FakeElement {
   };
 
   constructor(tag: string) {
+    super();
     this.tagName = tag.toUpperCase();
   }
 
@@ -105,6 +79,9 @@ class FakeElement {
   }
   get isConnected(): boolean {
     return this.parent !== null;
+  }
+  get parentNode(): FakeElement | null {
+    return this.parent;
   }
   get clientWidth(): number {
     return stageSize.width;
@@ -174,14 +151,6 @@ class FakeElement {
     if (deep) copy.append(...this.children.map((c) => c.cloneNode(true)));
     return copy;
   }
-  animate(keyframes: Keyframe[], options: KeyframeAnimationOptions): FakeAnimation {
-    const anim = new FakeAnimation(keyframes, options);
-    this.animations.push(anim);
-    return anim;
-  }
-  getAnimations(): FakeAnimation[] {
-    return this.animations.filter((a) => !a.cancelled);
-  }
   find(className: string): FakeElement[] {
     const out: FakeElement[] = [];
     for (const c of this.children) {
@@ -231,7 +200,7 @@ const cue = (line: number, t: number, running = true, waiting = false): Cue => (
 const scaleOf = (row: FakeElement | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
 /** Where a row's center sits from the focus position: its translate (its top edge is on look.y) plus half its box. */
 const yOf = (row: FakeElement | undefined): number =>
-  Number(/translate3d\(0px, (-?[\d.]+)px/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]) + (row?.offsetHeight ?? 0) / 2;
+  Number(/translate(?:3d)?\(0px, (-?[\d.]+)px/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]) + (row?.offsetHeight ?? 0) / 2;
 /** A row's running scroll (Web Animations on the row itself). */
 const scrolling = (row: FakeElement | undefined): FakeAnimation[] => row?.getAnimations() ?? [];
 /** The word boxes of a row, and one word's part of the karaoke overlay. */
@@ -240,29 +209,38 @@ const partOf = (row: FakeElement | undefined, word: number, part: string): FakeE
 
 // Regression (drift-paused-freeze): Drift glided from performance.now(), and no frame follows a paused
 // paint, so a glide caught by a pause froze halfway and a seek while paused left the old line centered.
-// The scroll now runs on the compositor (Web Animations anchored to song time); a pause still lands it.
+// The scroll now runs on the document timeline from the state on screen: a pause lets it finish, where
+// it was headed, while the words hold still at their song time.
 describe("Drift while paused", () => {
-  it("lands a glide in flight on its line in the paint that pauses it", () => {
+  it("lets a glide in flight finish through a pause, the words held at their song time", () => {
     const { mode, rows } = drift();
     mode.paint(cue(0, 2000));
     clock += 16;
     // the scroll runs on the compositor: no frames asked for, an animation on every row it moves
     expect(mode.paint(cue(1, 4300))).toBe(false);
-    expect(scrolling(rows[1]).length).toBe(1);
-    expect(scrolling(rows[1])[0]?.keyframes.length).toBeGreaterThan(2);
+    const glide = scrolling(rows[1]);
+    expect(glide.length).toBe(1);
+    expect(glide[0]?.keyframes.length).toBeGreaterThan(2);
+    // on the document timeline, from now: not the song's
+    expect(glide[0]?.startTime).toBe(clock);
     clock += 150;
     expect(mode.paint(cue(1, 4450))).toBe(false);
-    // paused
+    // paused: the glide runs on to its line, which is where the rows' own style already is
     expect(mode.paint(cue(1, 4450, false))).toBe(false);
-    expect(scrolling(rows[1])).toEqual([]);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(glide[0]?.cancelled).toBe(false);
     expect(scaleOf(rows[1])).toBe(1);
     expect(yOf(rows[1])).toBe(0);
     expect(scaleOf(rows[0])).toBeCloseTo(0.58, 4);
-    // ...and resuming doesn't jump back into the glide
+    // the line's words hold at their song time
+    const words = wordsOf(rows[1]).flatMap((w) => [w, ...w.find("kw-track")]).flatMap((e) => e.getAnimations());
+    expect(words.length).toBeGreaterThan(0);
+    expect(words.every((a) => a.paused && Math.abs((a.currentTime ?? 0) - (4450 - 4200)) < 1e-6)).toBe(true);
+    // ...and resuming doesn't start the glide again
     clock += 100;
     expect(mode.paint(cue(1, 4460))).toBe(false);
-    expect(scrolling(rows[1])).toEqual([]);
-    expect(scaleOf(rows[1])).toBe(1);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(words.every((a) => !a.paused)).toBe(true);
   });
 
   it("cuts to the line a paused seek lands on, and has the stage crossfade it", () => {

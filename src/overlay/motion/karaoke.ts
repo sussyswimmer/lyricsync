@@ -1,25 +1,28 @@
 /**
- * The karaoke motion of one word, planned ahead as keyframes (pure, no DOM):
+ * The karaoke motion of one word, planned ahead as keyframes (pure, no DOM). Every number comes from
+ * the line's MotionParams (params.ts), worked out from the song's look and the user's Effects:
  *
- * - wipe: the word fills from the upcoming color to the highlight, left to right (right to left in
+ * - wipe: the word fills from the lyric color to the highlight, left to right (right to left in
  *   right-to-left text), syllable by syllable, linearly over each syllable's time, behind a soft edge
  *   FEATHER of the word's width. Drawn as a lit copy inside a window that slides over the word while
  *   its contents slide back the other way, so the text stays put and nothing repaints.
- * - pop: an upcoming word rests a little small and low (REST_SCALE, REST_LIFT); while sung it swells
- *   and rises past its rest, then settles to scale 1 and no lift. Springs carry it: the lift bouncy,
- *   the scale slow, so quick words barely move and held ones visibly rise, overshoot and settle.
- * - glow: the word's bloom rises in the first ~15 % of the word, holds, and fades by its end.
- * - letters: every letter rises in turn as the wipe crosses it (a ripple scaled by the song's energy);
- *   a held syllable (EMPHASIS_MS or longer, EMPHASIS_CHARS or fewer) lights letter by letter along a
- *   sine ease-out, each letter lifting further than a word does and glowing until the syllable ends.
+ * - pop: an upcoming word rests a little small and low; while sung it swells and rises past its rest,
+ *   then settles to scale 1 and no lift. Springs carry it: the lift bouncy, the scale slow, so quick
+ *   words barely move and held ones visibly rise, overshoot and settle.
+ * - glow: the word's bloom rises in the first 15 % of the word, holds, and fades by its end.
+ * - letters: every letter hops in turn as the wipe has lit it (a ripple as tall as the song is
+ *   lively); a held syllable (the look's emphasis rule) lights letter by letter along a sine ease-out,
+ *   each letter lifting further than a word does and glowing until the syllable ends.
+ * - "fade" karaoke (reduced motion, the lite tier): the lit copy fades in as the word starts and the
+ *   bloom holds steady while it is sung. Nothing moves.
  *
  * Times are song ms. Each track runs from its own `t0` for `duration` ms; `rebase` stretches tracks
  * onto one shared window so a whole line can start and end its animations together.
  */
-import type { Line } from "../../core/lrc";
-import { syllables } from "../../core/timing";
 import { clamp01, sineOut, spline } from "./curve";
 import { framesOf, keyPoints, liftScale, num, sampleTimes, thin } from "./keyframes";
+import { graphemes } from "./letters";
+import type { EmphasisRule, MotionParams } from "./params";
 import { chase, type SpringSpec } from "./spring";
 
 /** One timed piece of a word: a syllable from enhanced LRC, or the whole word. */
@@ -58,16 +61,14 @@ export interface WordShape {
   rtl: boolean;
 }
 
-export interface MotionOptions {
-  /** 0..1, how lively the song is (songEnergy): scales the letter ripple */
-  energy: number;
-  /** false under prefers-reduced-motion: color and glow crossfades only */
-  motion: boolean;
+export interface PlanOptions {
   /**
    * The pose the word starts its pop from: "rest" (small and low, as an upcoming word waits), or
    * "full" for a word sung the moment its line comes into focus (it never had time to settle into rest).
    */
   from?: "rest" | "full";
+  /** the line's last word: an emphasis rule with lastWordOnly applies to it alone */
+  isLast?: boolean;
   /**
    * Slow stretches step on the shared song-time beat (keyframes.ts keyPoints) instead of gliding,
    * where the engine still runs stepped keyframes on the compositor (compositorSteps).
@@ -83,7 +84,7 @@ export interface Track {
 }
 
 export interface WordMotion {
-  /** any part is held long enough to break into letters */
+  /** any part is a held note, lit letter by letter */
   emphasis: boolean;
   /** song time by which every track below has ended */
   until: number;
@@ -95,78 +96,25 @@ export interface WordMotion {
    */
   window: Track | null;
   inner: Track | null;
-  /** reduced motion: the lit copy fades in instead of wiping */
+  /** "fade" karaoke: the lit copy fades in instead of wiping */
   litFade: Track | null;
   /** opacity of the word's bloom */
   glow: Track | null;
-  /** transform per letter of the lit copy, null where a letter doesn't move */
+  /** transform per letter of the lit copy (and its dark twin), null where a letter doesn't move */
   letters: (Track | null)[];
   /** whether the base copy (and the letter's bloom) moves with it: letters of a held syllable rise while they light */
   moveBase: boolean[];
-  /** opacity of each letter's own bloom (emphasized letters only) */
+  /** opacity of each letter's own bloom (held letters only) */
   letterGlows: (Track | null)[];
   /** each letter's transform before its word is sung ("" = none) */
   letterRest: string[];
 }
 
-// ---------- tuning (re-derived by eye against Beautiful Lyrics' motion; see NOTES) ----------
-
 /** Soft edge of the wipe, as a share of the word's width. */
 export const FEATHER = 0.2;
 /** The wipe ends this many font sizes past the word's advance, so overhanging glyphs light fully. */
 export const OVERHANG = 0.06;
-export const REST_SCALE = 0.95;
-/** Lift at rest, in font sizes (positive is down). */
-export const REST_LIFT = 0.012;
-/** A syllable at least this long, of at most this many characters, breaks into letters. */
-export const EMPHASIS_MS = 1000;
-export const EMPHASIS_CHARS = 12;
-
-const SCALE_CURVE = spline([
-  [0, REST_SCALE],
-  [0.7, 1.028],
-  [1, 1],
-]);
-/** In font sizes; the spline swings to about -0.038 around 60 % before settling. */
-const LIFT_CURVE = spline([
-  [0, REST_LIFT],
-  [0.9, -0.019],
-  [1, 0],
-]);
-/** An emphasized letter swells further than a word, from (almost) its full size. */
-const LETTER_SCALE_CURVE = spline([
-  [0, 0.97],
-  [0.7, 1.075],
-  [1, 1],
-]);
-const GLOW_CURVE = spline([
-  [0, 0],
-  [0.15, 1],
-  [0.6, 1],
-  [1, 0],
-]);
-
-const LIFT_SPRING: SpringSpec = { hz: 1.35, damping: 0.4 };
-const SCALE_SPRING: SpringSpec = { hz: 0.8, damping: 0.6 };
-/** Faster than the lift so a short word still blooms visibly. */
-const GLOW_SPRING: SpringSpec = { hz: 2.1, damping: 0.62 };
-const LETTER_GLOW_SPRING: SpringSpec = { hz: 1.2, damping: 0.5 };
-/** The per-letter ripple: quick, a little springy. */
-const RIPPLE_SPRING: SpringSpec = { hz: 3.1, damping: 0.4 };
-
-/** Ripple height in font sizes: RIPPLE_MIN for the calmest song, plus up to RIPPLE_GAIN for the liveliest. */
-const RIPPLE_MIN = 0.04;
-const RIPPLE_GAIN = 0.05;
-/** A letter holds its ripple at least this long, so fast words still show a wave. */
-const RIPPLE_HOLD_MS = 130;
-const RIPPLE_HOLD_MAX_MS = 260;
-/** Letters of a held syllable lift this many times a word's lift. */
-const EMPHASIS_LIFT = 2.4;
-/** Peak opacity of a word's bloom (emphasized words bloom fully). */
-const GLOW_PEAK = 0.92;
-/** Springs run on this long after the word at most... */
-const TAIL_MS = 1300;
-/** ...and stop once they are this close to rest: px for lifts, scale units, opacity. */
+/** Springs stop once they are this close to rest: px for lifts, scale units, opacity. */
 const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005 };
 /** Keyframes are kept where straight lines between them would miss by more than this (all sub-pixel). */
 const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25 };
@@ -178,11 +126,30 @@ const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25 };
 const STEP_QUANTUM = { lift: 0.5, scale: 0.006, opacity: 0.04, x: 1.2 };
 /** Plans are sampled this often; the compositor interpolates linearly in between. */
 export const PLAN_MS = 1000 / 30;
-/** Reduced motion: the lit copy and the glow fade in this fast. */
-const FADE_MS = 140;
-const STATIC_GLOW = 0.6;
+/** The ripple's hop lasts its hold plus this long to settle back. */
+const HOP_SETTLE_MS = 700;
 
-const isEmphasized = (p: Part): boolean => p.end - p.start >= EMPHASIS_MS && [...p.text.trim()].length <= EMPHASIS_CHARS;
+/** The curves of one set of parameters, built once (a spline solves its tridiagonal system when made). */
+interface Curves {
+  lift: (x: number) => number;
+  scale: (x: number) => number;
+  glow: (x: number) => number;
+  letterScale: (x: number) => number;
+}
+const curveCache = new WeakMap<MotionParams, Curves>();
+function curvesOf(p: MotionParams): Curves {
+  let c = curveCache.get(p);
+  if (!c) {
+    c = { lift: spline(p.liftKeys), scale: spline(p.scaleKeys), glow: spline(p.glowKeys), letterScale: spline(p.letterScaleKeys) };
+    curveCache.set(p, c);
+  }
+  return c;
+}
+
+/** Whether a syllable is a held note under `rule`: long enough, and short enough to light letter by letter. */
+export function heldPart(p: Part, rule: EmphasisRule | null): boolean {
+  return rule !== null && p.end - p.start >= rule.minMs && graphemes(p.text.trim()).length <= rule.maxChars;
+}
 
 /** The word's parts, never empty: its syllables, or itself as one. */
 export function partsOf(word: WordTiming, text: string): Part[] {
@@ -190,39 +157,24 @@ export function partsOf(word: WordTiming, text: string): Part[] {
   return parts.length > 0 ? [...parts] : [{ text, start: word.start, end: word.end }];
 }
 
-/** Whether a word (by its parts) breaks into letters. */
-export function emphasized(word: WordTiming, text: string): boolean {
-  return partsOf(word, text).some(isEmphasized);
+/** Which of a word's parts are held notes (with `lastWordOnly`, only the line's last word has any). */
+export function heldParts(word: WordTiming, text: string, rule: EmphasisRule | null, isLast = false): boolean[] {
+  const parts = partsOf(word, text);
+  if (!rule || (rule.lastWordOnly && !isLast)) return parts.map(() => false);
+  return parts.map((p) => heldPart(p, rule));
 }
 
-/**
- * How lively a song is, 0..1, from how fast it is sung: the median syllables per second over its
- * lines (calm ballads around 2, quick pop 4 and up, rap 6 and up).
- */
-export function songEnergy(lines: readonly Pick<Line, "words">[]): number {
-  const rates: number[] = [];
-  for (const line of lines) {
-    const first = line.words[0];
-    const last = line.words[line.words.length - 1];
-    if (!first || !last) continue;
-    const span = last.end - first.start;
-    if (span <= 0) continue;
-    const count = line.words.reduce((n, w) => n + Math.max(1, syllables(w.text)), 0);
-    rates.push((count * 1000) / span);
-  }
-  if (rates.length === 0) return 0.4;
-  rates.sort((a, b) => a - b);
-  const mid = rates.length >> 1;
-  const median = rates.length % 2 ? (rates[mid] ?? 0) : ((rates[mid - 1] ?? 0) + (rates[mid] ?? 0)) / 2;
-  return clamp01((median - 1.5) / 3.5);
+/** Whether a word (by its parts) has a held note that breaks into letters. */
+export function emphasized(word: WordTiming, text: string, rule: EmphasisRule | null, isLast = false): boolean {
+  return heldParts(word, text, rule, isLast).some(Boolean);
 }
 
 /**
  * Where the wipe's edge (the end of the fully lit part) is `ms` after the word starts, in px from the
  * word's leading edge, by the word's parts: from -feather at the start to the far edge (plus the
- * overhang) at the end, linearly over each part, or eased out over a held one.
+ * overhang) at the end, linearly over each part, or eased out over a held one (`eased[j]`).
  */
-export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordShape): (ms: number) => number {
+export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordShape, eased: readonly boolean[] = []): (ms: number) => number {
   const W = shape.width;
   const feather = FEATHER * W;
   const over = OVERHANG * shape.size;
@@ -236,7 +188,7 @@ export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordSh
   let x = -feather;
   parts.forEach((p, j) => {
     const to = j === parts.length - 1 ? W + over : (ends[j] ?? x);
-    segments.push({ t0: p.start - word.start, t1: p.end - word.start, x0: x, x1: Math.max(x, to), ease: isEmphasized(p) });
+    segments.push({ t0: p.start - word.start, t1: p.end - word.start, x0: x, x1: Math.max(x, to), ease: eased[j] === true });
     x = Math.max(x, to);
   });
   return (ms: number): number => {
@@ -299,10 +251,17 @@ function opacityTrack(t0: number, times: number[], values: number[], steps = fal
   return { t0, duration, frames: framesOf(points, duration, ([o]) => ({ opacity: num(clamp01(o ?? 0), 3) })) };
 }
 
+/** Song time by which a word's motion has ended at the latest (its line's shared window can end there). */
+export function wordUntil(word: WordTiming, params: MotionParams): number {
+  return word.start + Math.max(1, word.end - word.start) + (params.karaoke === "fade" ? params.fadeMs : params.tailMs);
+}
+
 /** Plans one word's motion. `text` is the word without its trailing space. */
-export function planWord(word: WordTiming, text: string, shape: WordShape, options: MotionOptions): WordMotion {
+export function planWord(word: WordTiming, text: string, shape: WordShape, params: MotionParams, options: PlanOptions = {}): WordMotion {
+  const isLast = options.isLast === true;
   const parts = partsOf(word, text);
-  const emphasis = parts.some(isEmphasized);
+  const held = heldParts(word, text, params.emphasis, isLast);
+  const emphasis = params.karaoke === "full" && held.some(Boolean);
   // A word with no time to it still lights (in one step) when its time comes.
   const span = Math.max(1, word.end - word.start);
   const size = shape.size;
@@ -317,45 +276,51 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
     letters: shape.letters.map(() => null),
     moveBase: shape.letters.map(() => false),
     letterGlows: shape.letters.map(() => null),
-    letterRest: letterRest(word, text, shape, options.motion),
+    letterRest: letterRest(word, text, shape, params, isLast),
   };
-  if (!options.motion) {
-    // Reduced motion: the lit copy and a steady glow fade in at the word's start; the glow fades out at its end.
-    const total = span + FADE_MS;
+  if (params.karaoke === "fade") {
+    // The lit copy and a steady bloom fade in at the word's start; the bloom fades out at its end.
+    const fade = params.fadeMs;
+    const total = span + fade;
     return {
       ...none,
       until: word.start + total,
-      litFade: { t0: word.start, duration: FADE_MS, frames: [{ opacity: 0 }, { opacity: 1 }] },
+      litFade: { t0: word.start, duration: fade, frames: [{ opacity: 0 }, { opacity: 1 }] },
       glow: {
         t0: word.start,
         duration: total,
         frames: [
           { opacity: 0, offset: 0 },
-          { opacity: STATIC_GLOW, offset: Math.min(FADE_MS, span) / total },
-          { opacity: STATIC_GLOW, offset: span / total },
+          { opacity: params.steadyGlow, offset: Math.min(fade, span) / total },
+          { opacity: params.steadyGlow, offset: span / total },
           { opacity: 0, offset: 1 },
         ],
       },
     };
   }
 
+  const curves = curvesOf(params);
   const progress = (ms: number): number => clamp01(ms / span);
-  const runMs = span + TAIL_MS;
-  const fromFull = options.from === "full";
+  const runMs = span + params.tailMs;
   const steps = options.steps === true;
+  const moves = params.amp > 0;
 
   // the pop
-  const lift = springChannel((ms) => LIFT_CURVE(progress(ms)) * size, LIFT_SPRING, fromFull ? 0 : REST_LIFT * size, runMs, 0, SETTLED.lift);
-  const scale = springChannel((ms) => SCALE_CURVE(progress(ms)), SCALE_SPRING, fromFull ? 1 : REST_SCALE, runMs, 1, SETTLED.scale);
-  const pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale, steps);
+  let pop: Track | null = null;
+  if (moves) {
+    const fromFull = options.from === "full";
+    const lift = springChannel((ms) => curves.lift(progress(ms)) * size, params.liftSpring, fromFull ? 0 : params.restLift * size, runMs, 0, SETTLED.lift);
+    const scale = springChannel((ms) => curves.scale(progress(ms)), params.scaleSpring, fromFull ? 1 : params.restScale, runMs, 1, SETTLED.scale);
+    pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale, steps);
+  }
 
   // the bloom
-  const peak = emphasis ? 1 : GLOW_PEAK;
-  const glowValues = springChannel((ms) => Math.max(0, GLOW_CURVE(progress(ms))), GLOW_SPRING, 0, runMs, 0, SETTLED.opacity).map((g) => Math.max(0, g) * peak);
+  const peak = emphasis ? params.glowPeakHeld : params.glowPeak;
+  const glowValues = springChannel((ms) => Math.max(0, curves.glow(progress(ms))), params.glowSpring, 0, runMs, 0, SETTLED.opacity).map((g) => Math.max(0, g) * peak);
   const glow = opacityTrack(word.start, align([glowValues], [0]), glowValues, steps);
 
   // the wipe: linear between syllable boundaries, sampled where a held syllable eases out
-  const edge = wipeEdge(word, parts, shape);
+  const edge = wipeEdge(word, parts, shape, held);
   const sign = shape.rtl ? -1 : 1;
   const bounds = [...new Set([0, ...parts.map((p) => Math.min(span, Math.max(0, p.end - word.start))), span])].sort((a, b) => a - b);
   const wipeTimes = emphasis ? sampleTimes(span, PLAN_MS) : bounds;
@@ -367,37 +332,36 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
   const inner: Track = { t0: word.start, duration: span, frames: framesOf(wipe, span, ([x]) => ({ transform: `translateX(${num(-(x ?? 0), 2)}px)` })) };
 
   // the letters
-  const ripple = size * (RIPPLE_MIN + RIPPLE_GAIN * clamp01(options.energy));
+  const letters: (Track | null)[] = [];
+  const letterGlows: (Track | null)[] = [];
+  const moveBase: boolean[] = [];
+  const split = shape.letters.length >= 2;
   // how long the wipe takes to cross an average letter and the feather: the hop's hold
-  const plain = shape.letters.filter((l) => {
-    const part = parts[l.part] ?? parts[0];
-    return part !== undefined && !isEmphasized(part);
-  });
+  const plain = shape.letters.filter((l) => held[l.part] !== true);
   const avg = plain.length > 0 ? plain.reduce((n, l) => n + l.w, 0) / plain.length : 0;
   const crossing = (span * (avg + FEATHER * shape.width)) / Math.max(1, shape.width * (1 + FEATHER) + OVERHANG * size);
-  const hold = Math.min(RIPPLE_HOLD_MAX_MS, Math.max(RIPPLE_HOLD_MS, crossing));
+  const [holdMin, holdMax] = params.rippleHoldMs;
+  const hold = Math.min(holdMax, Math.max(holdMin, crossing));
+  const height = params.rippleHeight * size;
   let hopTrack: Track | null = null;
-  const hopFor = (height: number): Track => {
+  const hop = (): Track => {
     if (hopTrack) return hopTrack;
-    const hLift = springChannel((ms) => (ms < hold ? -height : 0), RIPPLE_SPRING, 0, hold + 700, 0, SETTLED.lift);
-    const hScale = hLift.map((y) => 1 + (-y / size) * 0.9);
+    const hLift = springChannel((ms) => (ms < hold ? -height : 0), params.rippleSpring, 0, hold + HOP_SETTLE_MS, 0, SETTLED.lift);
+    const hScale = hLift.map((y) => 1 + (-y / size) * params.rippleSwell);
     // shared by every letter of the word, each at its own t0, so it can't step on the beat (and is quick)
     hopTrack = transformTrack(0, align([hLift, hScale], [0, 1]), hLift, hScale);
     return hopTrack;
   };
   const lead = (l: LetterBox): number => (shape.rtl ? shape.width - l.x - l.w : l.x);
-  const letters: (Track | null)[] = [];
-  const letterGlows: (Track | null)[] = [];
-  const moveBase: boolean[] = [];
   for (const letter of shape.letters) {
     moveBase.push(false);
     const part = parts[letter.part] ?? parts[0];
-    if (shape.letters.length < 2 || !part) {
+    if (!split || !part) {
       letters.push(null);
       letterGlows.push(null);
       continue;
     }
-    if (isEmphasized(part)) {
+    if (held[letter.part] === true) {
       // letter by letter along a sine ease-out of the syllable; each letter's glow lasts to the syllable's end
       const mine = shape.letters.filter((l) => l.part === letter.part);
       const k = mine.length;
@@ -407,20 +371,29 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
       const alpha = (ms: number): number => sineOut((ms - p0) / pSpan);
       const own = (ms: number): number => clamp01((alpha(ms) - j / k) * k);
       const lit = (ms: number): number => clamp01((alpha(ms) - j / k) / (1 - j / k));
-      const lLift = springChannel((ms) => LIFT_CURVE(own(ms)) * size * EMPHASIS_LIFT, LIFT_SPRING, REST_LIFT * size * EMPHASIS_LIFT, runMs, 0, SETTLED.lift);
-      const lScale = springChannel((ms) => LETTER_SCALE_CURVE(own(ms)), SCALE_SPRING, LETTER_SCALE_CURVE(0), runMs, 1, SETTLED.scale);
-      letters.push(transformTrack(word.start, align([lLift, lScale], [0, 1]), lLift, lScale, steps));
-      moveBase[moveBase.length - 1] = true;
-      const g = springChannel((ms) => Math.max(0, GLOW_CURVE(lit(ms))), LETTER_GLOW_SPRING, 0, runMs, 0, SETTLED.opacity);
+      if (moves) {
+        const gain = params.letterLiftGain;
+        const lLift = springChannel((ms) => curves.lift(own(ms)) * size * gain, params.liftSpring, params.restLift * size * gain, runMs, 0, SETTLED.lift);
+        const lScale = springChannel((ms) => curves.letterScale(own(ms)), params.scaleSpring, curves.letterScale(0), runMs, 1, SETTLED.scale);
+        letters.push(transformTrack(word.start, align([lLift, lScale], [0, 1]), lLift, lScale, steps));
+        moveBase[moveBase.length - 1] = true;
+      } else {
+        letters.push(null);
+      }
+      const g = springChannel((ms) => Math.max(0, curves.glow(lit(ms))), params.letterGlowSpring, 0, runMs, 0, SETTLED.opacity);
       letterGlows.push(opacityTrack(word.start, align([g], [0]), g, steps));
+      continue;
+    }
+    letterGlows.push(null);
+    if (!moves || !(height > 0)) {
+      letters.push(null);
       continue;
     }
     // the ripple: each letter hops once it is fully lit (only the lit copy shows there), the same hop
     // for every letter of the word, shifted to its time
     const at = timeAtEdge(edge, lead(letter) + letter.w, span);
-    const hop = hopFor(ripple);
-    letters.push({ t0: word.start + Math.max(0, at - 20), duration: hop.duration, frames: hop.frames });
-    letterGlows.push(null);
+    const h = hop();
+    letters.push({ t0: word.start + Math.max(0, at - params.rippleLeadMs), duration: h.duration, frames: h.frames });
   }
 
   const ends = [pop, glow, window, ...letters, ...letterGlows].filter((x): x is Track => x !== null).map((x) => x.t0 + x.duration);
@@ -431,18 +404,16 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, optio
  * Each letter's transform before its word is sung: letters of a held syllable wait a little small and
  * low (they rise further than a word does); the others rest in place ("").
  */
-export function letterRest(word: WordTiming, text: string, shape: WordShape, motion: boolean): string[] {
-  const parts = partsOf(word, text);
-  return shape.letters.map((l) => {
-    const part = parts[l.part] ?? parts[0];
-    if (!motion || shape.letters.length < 2 || !part || !isEmphasized(part)) return "";
-    return liftScale(0, REST_LIFT * shape.size * EMPHASIS_LIFT, LETTER_SCALE_CURVE(0));
-  });
+export function letterRest(word: WordTiming, text: string, shape: WordShape, params: MotionParams, isLast = false): string[] {
+  const held = heldParts(word, text, params.emphasis, isLast);
+  const moves = params.karaoke === "full" && params.amp > 0 && shape.letters.length >= 2;
+  const scale0 = params.letterScaleKeys[0]?.[1] ?? 1;
+  return shape.letters.map((l) => (moves && held[l.part] === true ? liftScale(0, params.restLift * params.letterLiftGain * shape.size, scale0) : ""));
 }
 
 /** The word's transform before it is sung (upcoming), as a CSS transform. */
-export function restTransform(size: number): string {
-  return liftScale(0, REST_LIFT * size, REST_SCALE);
+export function restTransform(size: number, params: MotionParams): string {
+  return liftScale(0, params.restLift * size, params.restScale);
 }
 
 /** The same transform function list at full size, no lift. */

@@ -24,7 +24,8 @@
 /* ---------- drift / stack ----------
    Each row is projected through the box's perspective on its own (flat, not preserve-3d): rows never
    overlap, so they need no depth sorting, and a shared 3D context made the compositor's every frame
-   about a third dearer with the karaoke layers inside it. */
+   about a third dearer with the karaoke layers inside it. Rows within reach get `will-change` inline
+   (modes/drift.ts), so only those are layers. */
 .drift {
   position: absolute;
   inset: 0;
@@ -36,7 +37,6 @@
   position: absolute;
   left: 6%;
   width: 88%;
-  will-change: transform, opacity;
   backface-visibility: hidden;
 }
 
@@ -49,8 +49,9 @@
 }
 
 /* ---------- karaoke words (overlay/motion/line.ts) ----------
-   Every motion below runs as a Web Animation on transform or opacity, so the compositor draws it:
-   nothing here is re-laid out or repainted while a word is sung. */
+   For every style: any row container carrying `kw-host` gets these, and toggles `has-fx` while its
+   overlays show. Every motion below runs as a Web Animation on transform or opacity, so the
+   compositor draws it: nothing here is re-laid out or repainted while a word is sung. */
 .kw {
   display: inline-block;
   position: relative;
@@ -58,14 +59,20 @@
 }
 
 /* The plain text: what rests on screen, and the layout the overlay is drawn over. Shown again
-   (fading back in) when its line leaves focus; hidden at once when the overlay takes over. */
+   (fading back in) when its line leaves focus; hidden at once where an overlay takes over (a word
+   whose overlay isn't built yet keeps showing it). */
 .kw-txt {
   transition: opacity 0.32s ease;
 }
 
-.drift-row.has-fx .kw-txt {
+.kw-host.has-fx .kw-on > .kw-txt {
   opacity: 0;
   transition: none;
+}
+
+/* With letters placed (Arc): the word's own run keeps the box its size, unseen; the letters draw it. */
+.kw-hold {
+  visibility: hidden;
 }
 
 /* The overlay fades out as its line leaves focus, but takes over at once as one comes in (it may have
@@ -76,12 +83,20 @@
   transition: opacity 0.32s ease;
 }
 
-.drift-row.has-fx .kw-fx {
+.kw-host.has-fx .kw-fx {
   transition: none;
 }
 
-.drift-row:not(.has-fx) .kw-fx {
+.kw-host:not(.has-fx) .kw-fx {
   opacity: 0;
+}
+
+/* No copy inside the overlay carries a shadow of its own: windows clip and mask their contents, and
+   a clipped shadow is a hard-edged box. The dark legibility shadow is drawn once, by the dark copy
+   under everything, outside every window; the blooms are drawn by their own copies. */
+.kw-fx,
+.kw-fx * {
+  text-shadow: none;
 }
 
 .kw-track,
@@ -94,12 +109,21 @@
 }
 
 .kl,
-.kw-glow {
+.kw-glow,
+.kw-dark {
   position: absolute;
   left: 0;
   top: 0;
   white-space: pre;
   transform-origin: 50% 64%;
+}
+
+/* The dark copy: transparent text whose text-shadow is the row's legibility shadow (--ut-dark). Its
+   letters move with their lit twins wherever letters move. */
+.kw-fx .kw-dark,
+.kw-fx .kw-dark .kl {
+  color: transparent;
+  text-shadow: var(--ut-dark);
 }
 
 /* Bloom: a copy with no fill of its own whose text-shadow glows in the highlight color. Its opacity
@@ -110,11 +134,13 @@
   opacity: 0;
 }
 
-.kw-glow {
+.kw-fx .kw-glow,
+.kw-fx .kw-glow .kl {
+  color: transparent;
   text-shadow: var(--ut-bloom);
 }
 
-.kl-glow {
+.kw-fx .kl-glow {
   text-shadow: var(--ut-bloom-strong);
 }
 
@@ -141,11 +167,15 @@
   top: 0.5em;
 }
 
+.kw-bwin .kw-in {
+  color: var(--ut-lyric);
+}
+
 .kw-win .kw-in {
   color: var(--ut-hl);
 }
 
-/* ---------- instrumental breaks ---------- */
+/* ---------- instrumental breaks (overlay/motion/dots.ts) ---------- */
 .drift-break {
   display: flex;
   align-items: center;
@@ -159,6 +189,7 @@
   opacity: 0;
 }
 
+/* A dot in the lyric color, brightening as it fills, with the lyrics' dark shadow... */
 .ut-dot {
   position: relative;
   display: block;
@@ -169,11 +200,11 @@
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
 }
 
+/* ...and its halo in the highlight color, fading in as it fills. */
 .ut-dot > b {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: var(--ut-hl);
   box-shadow: var(--ut-dot-bloom);
   opacity: 0;
 }

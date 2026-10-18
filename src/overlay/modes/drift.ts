@@ -1,35 +1,47 @@
 import type { Line } from "../../core/lrc";
 import { h, put } from "../dom";
 import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
-import { bloomShadow, dotBloom } from "../motion/bloom";
+import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
-import { findInterludes, interludeAt, planDots, type Interlude } from "../motion/interlude";
-import { PLAN_MS, songEnergy, type Track } from "../motion/karaoke";
-import { compositorSteps, keyframesAt, num, sampleTimes, thin } from "../motion/keyframes";
-import { KaraokeLine } from "../motion/line";
-import { Glide, type SpringSpec, type SpringState } from "../motion/spring";
-import { SongTimeline } from "../motion/timeline";
+import { InterludeDots } from "../motion/dots";
+import { findInterludes, type Interlude } from "../motion/interlude";
+import { compositorSteps, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
+import { casedLines } from "../motion/letters";
+import { KaraokeLine, SLICE_MS } from "../motion/line";
+import {
+  BLUR_STEPS,
+  CALM_SCROLL_SPRING,
+  DOTS,
+  DRIFT_BLUR_EM,
+  DRIFT_NEIGHBOR_SCALE,
+  DRIFT_PERSPECTIVE_EM,
+  DRIFT_RECEDE_EM,
+  DRIFT_TILT_DEG,
+  LEAVE_MS,
+  MAX_GLIDE_LINES,
+  motionParams,
+  paramsKey,
+  REACH,
+  SCROLL_SPRING,
+  STACK_BLUR_EM,
+  STACK_NEIGHBOR_SCALE,
+  SUNG_LEVEL,
+  UPCOMING_LEVEL,
+  type MotionParams,
+} from "../motion/params";
+import { focusAt, leadTimes, untilNext } from "../motion/schedule";
+import { playWall, WallGlide } from "../motion/scroll";
+import { commit, SongTimeline } from "../motion/timeline";
 import type { Cue, ModeRenderer } from "./types";
 
 /** Line box height in font sizes (`.drift-row` in styles/stage.css). */
 const LINE_HEIGHT = 1.12;
 /** Distance between the centers of two one-row lines, in font sizes, from the prototype. */
 const PITCH = 1.15;
-/** Drift's neighbors shrink to this share of the focus size (prototype)... */
-const NEIGHBOR_SCALE = 0.58;
-/** ...Stack's stay nearly whole: lines read as one list, told apart by brightness and blur. */
-const STACK_NEIGHBOR_SCALE = 0.8;
-/** ...but no smaller than MIN_TEXT_PX on screen, as long as that takes at most this share. */
+/** Neighbors stay no smaller than MIN_TEXT_PX on screen, as long as that takes at most this share. */
 const NEIGHBOR_MAX_SCALE = 0.85;
 /** Least room between the focus line and a one-row neighbor, in font sizes, however large neighbors get. */
 const MIN_GAP = 0.265;
-/** Drift's depth: the perspective distance, and how far back each line of distance steps, in font sizes. */
-const PERSPECTIVE = 15.5;
-const RECEDE = 2.4;
-/** Degrees a line tilts per line of distance. */
-const TILT = 14;
-/** Lines further than this from the focus are hidden. */
-const REACH = 3.5;
 /** A wrapped line taller than this share of the stage is set smaller so it fits. */
 const MAX_ROW_SHARE = 0.45;
 /**
@@ -38,32 +50,24 @@ const MAX_ROW_SHARE = 0.45;
  * moves the whole stack inward to keep the same room.
  */
 const EDGE_PAD = 0.75 - LINE_HEIGHT / 2;
-/** A jump further than this many lines (a seek) cuts instead of scrolling through every line. */
-const MAX_GLIDE = 3;
-/** The list follows the song with an underdamped spring: a soft overshoot, then it settles. */
-const SCROLL_SPRING: SpringSpec = { hz: 1.45, damping: 0.68 };
-/** Unsynced lyrics move calmly: no overshoot. */
-const CALM_SPRING: SpringSpec = { hz: 0.75, damping: 1 };
-/** Brightness of the lines next to the focus: sung lines stay a little brighter than upcoming ones. */
-const SUNG_LEVEL = 0.58;
-const UPCOMING_LEVEL = 0.46;
-/** Blur per line of distance, in font sizes (1.25 px at 56 px), up to BLUR_STEPS lines. */
-const BLUR_EM = 0.0223;
-const BLUR_STEPS = 4;
-/** An instrumental break's slot (the dots) is this tall, in font sizes, and its dots this wide. */
+/** An instrumental break's slot (the dots) is this tall, in font sizes. */
 const BREAK_EM = 1.05;
-const DOT_EM = 0.4;
-/** A jump of the song further than this is a seek: the focus line's words are put straight. */
+/** A jump of the song further than this while playing is a seek: the focus line's words are put straight. */
 const SEEK_MS = 250;
-/** A line leaving focus keeps its overlay this long, while it fades back to plain text. */
-const LEAVE_MS = 420;
-/** The next line is prepared this long after a line change, once that change's frames are out. */
+/** ...and while paused (or pausing), any move further than this. */
+const PAUSED_SEEK_MS = 50;
+/** The next line is prepared from this long after a line change, once that change's frames are out... */
 const PREPARE_DELAY_MS = 600;
+/** ...in idle slices this far apart. */
+const PREPARE_GAP_MS = 40;
+/** The scroll's keyframes are thinned to this much of a px of position and of opacity, and of scale. */
+const SCROLL_THIN = { y: 0.25, opacity: 0.004, scale: 0.002 };
 
 interface Row {
   el: HTMLDivElement;
   /** the `.kw` box of each word */
   words: HTMLElement[];
+  /** the line as drawn: in the look's case */
   line: Line;
   index: number;
   /** font size, px: the look's, or less for a line that would wrap taller than the stage allows */
@@ -79,12 +83,9 @@ interface Row {
 interface Break {
   el: HTMLDivElement;
   il: Interlude;
-  dots: HTMLElement[];
-  glows: HTMLElement[];
-  group: HTMLElement | null;
+  dots: InterludeDots | null;
   /** song time its dots' motion ends */
   until: number;
-  played: boolean;
 }
 
 type Slot = { kind: "line"; row: Row } | { kind: "break"; brk: Break };
@@ -101,19 +102,31 @@ export interface Placed {
   off: number;
 }
 
+/** One slot's style with the list at some scroll position. */
+interface SlotStyle {
+  transform: string;
+  opacity: number;
+  off: number;
+  /** the transform's parts, for thinning the scroll's keyframes */
+  y: number;
+  scale: number;
+}
+
+const perfNow = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
+
 /**
- * Scale of the lines around the focus: `base` (Drift's NEIGHBOR_SCALE by default), raised at small
- * sizes so they still draw MIN_TEXT_PX tall once Drift's depth has pushed them back.
+ * Scale of the lines around the focus: `base` (Drift's neighbors by default), raised at small sizes so
+ * they still draw MIN_TEXT_PX tall once Drift's depth has pushed them back.
  */
-export function neighborScale(size: number, depth: number, base = NEIGHBOR_SCALE): number {
-  const recede = PERSPECTIVE / (PERSPECTIVE + RECEDE * depth);
+export function neighborScale(size: number, depth: number, base = DRIFT_NEIGHBOR_SCALE): number {
+  const recede = DRIFT_PERSPECTIVE_EM / (DRIFT_PERSPECTIVE_EM + DRIFT_RECEDE_EM * depth);
   return Math.min(Math.max(NEIGHBOR_MAX_SCALE, base), Math.max(base, MIN_TEXT_PX / (size * recede)));
 }
 
 /**
  * Each line's slot, per px of its box height: PITCH for one row, widened when neighbors are larger
- * than NEIGHBOR_SCALE so a one-row neighbor still keeps MIN_GAP from a one-row focus line. A line
- * never draws taller than its slot, so lines never overlap, however many rows they wrap to.
+ * than Drift's so a one-row neighbor still keeps MIN_GAP from a one-row focus line. A line never
+ * draws taller than its slot, so lines never overlap, however many rows they wrap to.
  */
 export function slotPerPx(low: number): number {
   return Math.max(PITCH, (LINE_HEIGHT / 2) * (1 + low) + MIN_GAP) / LINE_HEIGHT;
@@ -121,7 +134,7 @@ export function slotPerPx(low: number): number {
 
 /** How much a line `dist` lines from the focus shrinks on screen from Drift's depth (1 for Stack). */
 export function projection(dist: number, depth: number): number {
-  return PERSPECTIVE / (PERSPECTIVE + RECEDE * depth * dist);
+  return DRIFT_PERSPECTIVE_EM / (DRIFT_PERSPECTIVE_EM + DRIFT_RECEDE_EM * depth * dist);
 }
 
 /**
@@ -185,15 +198,21 @@ export function lineLevel(off: number): number {
   return near * (1 - (d - 1) / (REACH - 1));
 }
 
+/** Blur steps for a line `off` lines from the focus. */
+function blurStep(off: number): number {
+  return Math.min(BLUR_STEPS, Math.max(1, Math.round(Math.abs(off))));
+}
+
 /**
- * Drift: the song as a vertical list that springs up one line at a time, neighbors receding in 3D.
- * Stack is the same list flat (`depth` 0), its neighbors nearly full size. Lines around the focus are
- * dimmer and softer the further away they are; the focus line sings karaoke (motion/line.ts); long
- * instrumental breaks show three filling dots where the next line will be.
+ * Drift: the song as a vertical list that springs to each line just before it is sung, neighbors
+ * receding in 3D. Stack is the same list flat (`depth` 0), its neighbors nearly full size. Lines
+ * around the focus are dimmer and softer the further away they are; the focus line sings karaoke
+ * (motion/line.ts); long instrumental breaks show three filling dots where the next line will be.
  *
- * Nearly everything moves on the compositor: every motion is planned as keyframes when it begins
- * (a line change, a word start, a break) and anchored to song time by a SongTimeline. Between word
- * starts the page does nothing; paint asks for frames only while the clock slews.
+ * Everything moves on the compositor. The karaoke and the dots are planned as keyframes when they
+ * begin and kept on song time by a SongTimeline; the scroll is a WallGlide on the document timeline,
+ * started from what is on screen. The page sleeps between line changes: paint never asks for frames,
+ * and nextChange names the moments it must be woken for.
  */
 export class DriftMode implements ModeRenderer {
   /** Nothing happens at a word boundary that the compositor isn't already drawing: sleep through them. */
@@ -203,60 +222,87 @@ export class DriftMode implements ModeRenderer {
   /** slow motion steps on the song-time beat where the engine composites stepped keyframes */
   private readonly steps = compositorSteps();
   private look: Look | null = null;
+  private params: MotionParams | null = null;
+  private motionKey = "";
   private box: HTMLDivElement | null = null;
+  /** the lyric lines, in the look's case */
+  private lines: Line[] = [];
   private rows: Row[] = [];
   private breaks: Break[] = [];
   private slots: Slot[] = [];
   private specs: SlotSpec[] = [];
   private slotOfLine: number[] = [];
   private interludes: Interlude[] = [];
-  private energy = 0.4;
+  /** when the view moves to each line (schedule.ts) */
+  private leads: number[] = [];
   /** the slot in focus, -1 before the first paint */
   private target = -1;
-  /** the scroll spring in flight (slot units), and the song time it was released at */
-  private glide: Glide | null = null;
-  private glideAt = 0;
+  /** the scroll (slot units) on the document timeline, and its animations in flight */
+  private glide: WallGlide | null = null;
+  private scrolls: { el: HTMLElement; anim: Animation }[] = [];
+  /** slots shown (visible, layered) right now */
+  private readonly shown = new Set<number>();
   private karaoke: { line: KaraokeLine; row: Row } | null = null;
-  /** the next line's overlay and plans, made ahead in a task of their own */
+  /** the next line's overlay and plans, made ahead in idle slices */
   private prepared: { line: KaraokeLine; row: Row } | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
   private leaving: { line: KaraokeLine; row: Row; at: number }[] = [];
   private lastT = Number.NaN;
+  private lastPerf = 0;
   private lastRunning = false;
+  /** a retime moved the song onto another focus: paint at once (nextChange 0) */
+  private dirty = false;
+  /** freeze() stopped everything in place: the next paint sets it going again */
+  private frozen = false;
 
   constructor(depth: number) {
     this.depth = depth;
   }
 
   /**
-   * The stage crossfades the cut under reduced motion; while paused (a scroll needs the clock to run);
-   * and on a jump further than MAX_GLIDE lines (a seek, a repeated song starting over). Not when the
-   * song ends: the stack fades out by itself.
+   * The stage crossfades the cut under reduced motion; while paused (a glide while paused would show
+   * a line the song isn't at); and on a jump further than MAX_GLIDE_LINES lines (a seek, a repeated
+   * song starting over). Not when the song ends: the stack fades out by itself.
    */
   crossfades(next: Cue): boolean {
     const look = this.look;
     if (!look) return false;
     if (!look.motion || !next.running) return true;
-    return next.line >= 0 && this.target >= 0 && Math.abs(next.line - this.focusLine()) > MAX_GLIDE;
+    if (next.line < 0 || this.target < 0) return false;
+    return Math.abs(this.lineOfSlot(this.focusSlot(next)) - this.focusLine()) > MAX_GLIDE_LINES;
+  }
+
+  /** The list cuts to a break or a line within the stage's line (reduced motion, paused, far): crossfade it. */
+  cuts(cue: Cue): boolean {
+    const look = this.look;
+    if (!look || this.target < 0 || cue.line < 0) return false;
+    const focus = this.focusSlot(cue);
+    if (focus === this.target) return false;
+    return !look.motion || !cue.running || Math.abs(this.lineOfSlot(focus) - this.focusLine()) > MAX_GLIDE_LINES;
   }
 
   build(host: HTMLElement, lines: readonly Line[], look: Look): void {
     this.destroy();
     this.look = look;
+    this.params = motionParams(look);
+    this.motionKey = paramsKey(this.params);
     host.textContent = "";
     const box = h("div", "drift");
     box.style.fontFamily = look.font;
     box.style.fontWeight = String(look.weight);
     box.style.fontSize = `${look.size}px`;
-    box.style.perspective = `${look.size * PERSPECTIVE}px`;
+    if (look.letterSpacing !== 0) box.style.letterSpacing = `${num(look.letterSpacing, 3)}em`;
+    box.style.perspective = `${look.size * DRIFT_PERSPECTIVE_EM}px`;
     // Recede toward the focus line, not the middle of the stage: with the vanishing point elsewhere,
     // lines on the far side of it would fold back over the focus line at a high or low Height.
     box.style.perspectiveOrigin = `50% ${look.y.toFixed(1)}px`;
     if (look.unsynced) box.classList.add("is-calm");
-    this.interludes = look.unsynced ? [] : findInterludes(lines);
-    this.energy = songEnergy(lines);
-    this.rows = lines.map((line, index) => {
-      const el = h("div", "drift-row");
+    const sung = casedLines(lines, look.textCase);
+    this.lines = sung;
+    this.interludes = look.unsynced ? [] : findInterludes(sung);
+    this.leads = leadTimes(sung);
+    this.rows = sung.map((line, index) => {
+      const el = h("div", "drift-row kw-host");
       el.dir = "auto";
       el.style.top = `${look.y}px`;
       const words: HTMLElement[] = [];
@@ -279,7 +325,7 @@ export class DriftMode implements ModeRenderer {
       el.style.height = `${(BREAK_EM * look.size).toFixed(2)}px`;
       put(el, "visibility", "hidden");
       box.append(el);
-      return { el, il, dots: [], glows: [], group: null, until: 0, played: false };
+      return { el, il, dots: null, until: 0 };
     });
     // slots in song order: each break just before the line it leads into
     this.slots = [];
@@ -301,16 +347,17 @@ export class DriftMode implements ModeRenderer {
     this.lastT = Number.NaN;
   }
 
+  /**
+   * A look whose shape didn't change. Colors, glow and bloom only update the CSS variables; a change
+   * of the motion's energy, snap or Effects plans the focus line again at the current time, and the
+   * next line again ahead.
+   */
   restyle(look: Look): void {
     this.look = look;
     const box = this.box;
     if (!box) return;
-    box.style.setProperty("--ut-lyric", look.colors.lyric);
-    box.style.setProperty("--ut-hl", look.colors.highlight);
-    box.style.setProperty("--ut-dim", look.colors.dim);
-    box.style.setProperty("--ut-bloom", bloomShadow(look.colors.highlight, look.glow));
-    box.style.setProperty("--ut-bloom-strong", bloomShadow(look.colors.highlight, look.glow, true));
-    box.style.setProperty("--ut-dot-bloom", dotBloom(look.colors.highlight, look.glow, DOT_EM * look.size));
+    paintVars(box, look, look.size);
+    for (const row of this.rows) if (row.size !== look.size) paintVars(row.el, look, row.size);
     box.style.color = look.colors.dim;
     box.style.textShadow = textShadow(look, look.size);
     for (const row of this.rows) {
@@ -318,34 +365,77 @@ export class DriftMode implements ModeRenderer {
       row.state = "";
       if (state) this.styleRow(row, state);
     }
+    const params = motionParams(look);
+    const key = paramsKey(params);
+    if (key === this.motionKey) return;
+    this.params = params;
+    this.motionKey = key;
+    this.replan(look);
   }
 
   paint(cue: Cue): boolean {
     const look = this.look;
     const box = this.box;
     if (!look || !box) return false;
-    const sync = this.timeline.sync({ t: cue.t, running: cue.running, rate: cue.rate ?? (cue.running ? 1 : 0) });
-    const jumped = Number.isNaN(this.lastT) ? false : cue.running && this.lastRunning ? Math.abs(sync.moved) > SEEK_MS : cue.t !== this.lastT;
-    this.lastT = cue.t;
-    this.lastRunning = cue.running;
+    const perf = perfNow();
+    this.sync(cue, perf);
+    const jumped = this.jumped(cue, perf);
+    this.dirty = false;
     put(box, "opacity", cue.line < 0 ? "0" : "1");
     if (cue.line < 0) return false;
-
     const focus = this.focusSlot(cue);
-    if (focus !== this.target) this.moveTo(focus, cue, look);
-    else if (!cue.running && this.glide) this.land(look);
-    else if (jumped) this.refreshFocus(cue);
+    if (focus !== this.target) {
+      this.moveTo(focus, cue, look);
+    } else {
+      if (this.frozen) this.resume(look);
+      if (jumped || this.frozen) this.refreshFocus(cue, look);
+    }
+    this.frozen = false;
     this.tidy(cue);
     this.timeline.prune(cue.t);
-    return sync.slewing && cue.running;
+    return false;
   }
 
-  /** Song ms until this mode needs a paint that no word boundary brings: the next break starting. */
+  /** A clock sample between paints: the timeline follows it; a seek within the line re-lights it. */
+  retime(cue: Cue): void {
+    const look = this.look;
+    if (!look || !this.box) return;
+    const perf = perfNow();
+    this.sync(cue, perf);
+    const jumped = this.jumped(cue, perf);
+    if (cue.line < 0) return;
+    if (this.focusSlot(cue) !== this.target) {
+      this.dirty = true;
+      return;
+    }
+    if (jumped) this.refreshFocus(cue, look);
+  }
+
+  /**
+   * Song ms until this mode needs a paint no line boundary brings: the next line's lead, a break
+   * starting or ending, a leaving overlay to drop, the end of a playback-rate slew; 0 when a retime
+   * moved the song onto another focus.
+   */
   nextChange(t: number): number {
-    let next = Infinity;
-    for (const il of this.interludes) if (il.start > t) next = Math.min(next, il.start - t);
+    if (this.dirty) return 0;
+    let next = this.timeline.nextWake();
+    if (this.look?.motion !== false) next = Math.min(next, untilNext(this.leads, t));
+    for (const il of this.interludes) {
+      if (il.start > t) next = Math.min(next, il.start - t);
+      if (il.end > t) next = Math.min(next, il.end - t);
+    }
     for (const l of this.leaving) next = Math.min(next, Math.max(0, l.at + LEAVE_MS - t));
     return next;
+  }
+
+  /** Commits everything moving to inline style and stops it (before the stage copies the scene). */
+  freeze(): void {
+    this.karaoke?.line.freeze();
+    for (const l of this.leaving) l.line.freeze();
+    this.timeline.freeze();
+    for (const s of this.scrolls) commit(s.anim, s.el);
+    this.scrolls = [];
+    this.frozen = true;
   }
 
   destroy(): void {
@@ -358,30 +448,56 @@ export class DriftMode implements ModeRenderer {
     this.karaoke = null;
     for (const l of this.leaving) l.line.destroy();
     this.leaving = [];
+    for (const brk of this.breaks) brk.dots?.stop();
+    this.cancelScrolls();
     this.glide = null;
+    this.shown.clear();
     this.box?.remove();
     this.box = null;
     this.rows = [];
     this.breaks = [];
     this.slots = [];
     this.specs = [];
+    this.lines = [];
+    this.leads = [];
   }
 
-  /** The lyric line the list is on (a break counts as the line it leads into). */
-  private focusLine(): number {
-    const slot = this.slots[this.target];
+  private sync(cue: Cue, perf: number): void {
+    this.timeline.sync({ t: cue.t, running: cue.running, rate: cue.rate ?? (cue.running ? 1 : 0), target: cue.target ?? cue.t }, perf);
+  }
+
+  /** Whether the song moved since the last paint or retime by more than playing explains: a seek. */
+  private jumped(cue: Cue, perf: number): boolean {
+    const last = this.lastT;
+    const expected = this.lastRunning ? last + (perf - this.lastPerf) : last;
+    const both = cue.running && this.lastRunning;
+    this.lastT = cue.t;
+    this.lastPerf = perf;
+    this.lastRunning = cue.running;
+    if (Number.isNaN(last)) return false;
+    return Math.abs(cue.t - expected) > (both ? SEEK_MS : PAUSED_SEEK_MS);
+  }
+
+  private lineOfSlot(i: number): number {
+    const slot = this.slots[i];
     if (!slot) return -1;
     return slot.kind === "line" ? slot.row.index : slot.brk.il.next;
   }
 
-  /** The slot to bring into focus at `cue`: a break while one plays, else the cue's line. */
-  private focusSlot(cue: Cue): number {
-    const il = interludeAt(this.interludes, cue.t);
-    if (il) {
+  /** The lyric line the list is on (a break counts as the line it leads into). */
+  private focusLine(): number {
+    return this.lineOfSlot(this.target);
+  }
+
+  /** The slot to bring into focus at `cue`: a break while one plays, else the line whose lead has come. */
+  private focusSlot(cue: Pick<Cue, "line" | "waiting" | "t">): number {
+    const f = focusAt(cue, this.lines, this.leads, this.interludes, this.look?.motion !== false);
+    if (f.interlude) {
+      const il = f.interlude;
       const at = this.slots.findIndex((s) => s.kind === "break" && s.brk.il === il);
       if (at >= 0) return at;
     }
-    return this.slotOfLine[cue.line] ?? -1;
+    return f.line >= 0 ? (this.slotOfLine[f.line] ?? -1) : -1;
   }
 
   /**
@@ -414,14 +530,14 @@ export class DriftMode implements ModeRenderer {
   }
 
   private low(look: Look): number {
-    return neighborScale(look.size, this.depth, this.depth > 0 ? NEIGHBOR_SCALE : STACK_NEIGHBOR_SCALE);
+    return neighborScale(look.size, this.depth, this.depth > 0 ? DRIFT_NEIGHBOR_SCALE : STACK_NEIGHBOR_SCALE);
   }
 
   /**
-   * Every slot's transform and opacity with the list scrolled to `shown`, for the slots within reach.
-   * A tall focus line moves the whole list away from the edge it would run off.
+   * Every slot's style with the list scrolled to `shown`, for the slots within reach. A tall focus
+   * line moves the whole list away from the edge it would run off.
    */
-  private layout(shown: number, look: Look): Map<number, { transform: string; opacity: number; off: number }> {
+  private layout(shown: number, look: Look): Map<number, SlotStyle> {
     const depth = this.depth;
     const low = this.low(look);
     const placed = placeSlots(this.specs, shown, depth, slotPerPx(low));
@@ -433,8 +549,8 @@ export class DriftMode implements ModeRenderer {
     const room = half + look.size * EDGE_PAD;
     const center = room * 2 > look.height ? look.height / 2 : Math.min(look.height - room, Math.max(room, look.y));
     const shift = center - look.y;
-    const zUnit = look.size * RECEDE * depth;
-    const out = new Map<number, { transform: string; opacity: number; off: number }>();
+    const zUnit = look.size * DRIFT_RECEDE_EM * depth;
+    const out = new Map<number, SlotStyle>();
     for (const [i, p] of placed) {
       const slot = this.slots[i];
       if (!slot) continue;
@@ -444,10 +560,31 @@ export class DriftMode implements ModeRenderer {
       // `at` is where the slot should appear; the perspective (its origin on look.y) pulls a slot
       // `dist` lines back toward look.y by projection(dist), so place it that much further out.
       const y = snap(shift + p.at, look.dpr) / projection(dist, depth) - box / 2;
-      const transform = `translate3d(0px, ${num(y, 2)}px, ${num(-dist * zUnit, 1)}px) rotateX(${num(-p.off * TILT * depth, 2)}deg) scale(${num(scale, 4)})`;
-      out.set(i, { transform, opacity: slot.kind === "line" ? lineLevel(p.off) : 1, off: p.off });
+      const transform =
+        depth > 0
+          ? `translate3d(0px, ${num(y, 2)}px, ${num(-dist * zUnit, 1)}px) rotateX(${num(-p.off * DRIFT_TILT_DEG * depth, 2)}deg) scale(${num(scale, 4)})`
+          : `translate(0px, ${num(y, 2)}px) scale(${num(scale, 4)})`;
+      out.set(i, { transform, opacity: slot.kind === "line" ? lineLevel(p.off) : 1, off: p.off, y, scale });
     }
     return out;
+  }
+
+  private elOf(slot: Slot): HTMLDivElement {
+    return slot.kind === "line" ? slot.row.el : slot.brk.el;
+  }
+
+  /** A slot in reach: drawn, on its own compositor layer. */
+  private reveal(i: number, el: HTMLElement): void {
+    this.shown.add(i);
+    put(el, "visibility", "visible");
+    put(el, "will-change", "transform, opacity");
+  }
+
+  /** A slot out of reach: not drawn, no layer. */
+  private conceal(i: number, el: HTMLElement): void {
+    this.shown.delete(i);
+    put(el, "visibility", "hidden");
+    put(el, "will-change", "auto");
   }
 
   /** Brings slot `focus` into focus: springs the list there (or cuts), and hands the karaoke over. */
@@ -455,85 +592,97 @@ export class DriftMode implements ModeRenderer {
     const from = this.target;
     const fromLine = this.focusLine();
     this.target = focus;
-    const slot = this.slots[focus];
-    const line = slot ? (slot.kind === "line" ? slot.row.index : slot.brk.il.next) : -1;
-    const glide = look.motion && cue.running && from >= 0 && Math.abs(line - fromLine) <= MAX_GLIDE;
-    this.timeline.cancel("scroll");
-    if (glide) {
-      const now: SpringState = this.glide ? this.glide.at(cue.t - this.glideAt) : { x: from, v: 0 };
-      this.glide = new Glide(now, focus, look.unsynced ? CALM_SPRING : SCROLL_SPRING);
-      this.glideAt = cue.t;
-      this.scroll(look);
-    } else {
-      this.glide = null;
-      this.settle(look);
-    }
+    const glide = look.motion && cue.running && from >= 0 && Math.abs(this.lineOfSlot(focus) - fromLine) <= MAX_GLIDE_LINES;
+    if (glide) this.scroll(look);
+    else this.cut(look);
     this.restate(cue);
-  }
-
-  /** Paused mid-scroll: no frame follows, so land where the list was headed. */
-  private land(look: Look): void {
-    this.timeline.cancel("scroll");
-    this.glide = null;
-    this.settle(look);
   }
 
   /** The list at rest on the focus slot: every slot's own style, nothing animated. */
   private settle(look: Look): void {
     const layout = this.layout(this.target, look);
     this.slots.forEach((slot, i) => {
-      const el = slot.kind === "line" ? slot.row.el : slot.brk.el;
+      const el = this.elOf(slot);
       const at = layout.get(i);
       if (!at) {
-        put(el, "visibility", "hidden");
+        this.conceal(i, el);
         return;
       }
-      put(el, "visibility", "visible");
+      this.reveal(i, el);
       put(el, "transform", at.transform);
       put(el, "opacity", num(at.opacity, 3));
     });
   }
 
+  /** A cut to the focus slot: the scroll stops where it is headed. */
+  private cut(look: Look): void {
+    this.cancelScrolls();
+    const spec = look.unsynced ? CALM_SCROLL_SPRING : SCROLL_SPRING;
+    if (this.glide) this.glide.cut(this.target);
+    else this.glide = new WallGlide(this.target, spec);
+    this.settle(look);
+  }
+
+  /** After freeze(): a scroll caught in flight carries on from where it stopped, else the list rests. */
+  private resume(look: Look): void {
+    if (this.glide?.moving()) this.scroll(look);
+    else this.settle(look);
+  }
+
+  private cancelScrolls(): void {
+    for (const s of this.scrolls) {
+      try {
+        s.anim.cancel();
+      } catch {
+        // already gone
+      }
+    }
+    this.scrolls = [];
+  }
+
   /**
-   * The scroll as keyframes: the spring sampled from release to rest, and every slot it moves laid
-   * out at each sample. Slots end on the same style settle() gives them.
+   * The scroll as keyframes on the document timeline: the spring released from the position and
+   * velocity on screen right now toward the focus slot, sampled to rest, every slot it moves laid out
+   * at each sample. Slots end on the same style settle() gives them.
    */
   private scroll(look: Look): void {
-    const glide = this.glide;
-    if (!glide) return;
-    const duration = Math.min(2600, Math.max(200, glide.settle(0.002)));
-    const times = sampleTimes(duration, PLAN_MS);
-    const frames = times.map((ms) => this.layout(glide.at(ms).x, look));
+    const now = perfNow();
+    const spec = look.unsynced ? CALM_SCROLL_SPRING : SCROLL_SPRING;
+    this.glide ??= new WallGlide(this.target, spec, now);
+    this.glide.to(this.target, now, spec);
+    this.cancelScrolls();
+    const s = this.glide.samples(SAMPLE_MS);
+    const frames = s.xs.map((x) => this.layout(x, look));
     const final = this.layout(this.target, look);
     this.slots.forEach((slot, i) => {
-      const el = slot.kind === "line" ? slot.row.el : slot.brk.el;
-      const seen = frames.some((f) => f.has(i)) || final.has(i);
+      const el = this.elOf(slot);
+      const seen = final.has(i) || frames.some((f) => f.has(i));
       if (!seen) {
-        put(el, "visibility", "hidden");
+        this.conceal(i, el);
         return;
       }
-      put(el, "visibility", "visible");
+      this.reveal(i, el);
       const end = final.get(i);
       put(el, "opacity", num(end?.opacity ?? 0, 3));
       if (end) put(el, "transform", end.transform);
       // where a slot is out of reach at a sample, it holds its nearest known place at no opacity
-      let last = end?.transform ?? frames.find((f) => f.has(i))?.get(i)?.transform ?? "none";
-      const transforms: string[] = new Array<string>(times.length);
-      for (let k = times.length - 1; k >= 0; k--) {
+      let last = end ?? frames.find((f) => f.has(i))?.get(i) ?? null;
+      const styles = new Array<SlotStyle | null>(s.times.length);
+      for (let k = s.times.length - 1; k >= 0; k--) {
         const at = frames[k]?.get(i);
-        if (at) last = at.transform;
-        transforms[k] = last;
+        if (at) last = at;
+        styles[k] = last;
       }
       const opacity = frames.map((f) => f.get(i)?.opacity ?? 0);
-      // thin on the opacity and on the (numeric) vertical position, which is what moves
-      const ys = transforms.map((t) => Number(/translate3d\(0px, (-?[\d.]+)px/u.exec(t)?.[1] ?? 0));
-      const keep = thin(times, [ys, opacity], [0.25, 0.004]);
-      const track: Track = {
-        t0: this.glideAt,
-        duration,
-        frames: keyframesAt(times, keep, (k) => ({ transform: transforms[k] ?? "none", opacity: num(opacity[k] ?? 0, 3) })),
-      };
-      this.timeline.play(el, track.frames, track.t0, track.duration, "scroll");
+      const ys = styles.map((st) => st?.y ?? 0);
+      const scales = styles.map((st) => st?.scale ?? 1);
+      const keep = thin(s.times, [ys, opacity, scales], [SCROLL_THIN.y, SCROLL_THIN.opacity, SCROLL_THIN.scale]);
+      const anim = playWall(el, {
+        frames: keyframesAt(s.times, keep, (k) => ({ transform: styles[k]?.transform ?? "none", opacity: num(opacity[k] ?? 0, 3) })),
+        duration: s.duration,
+        startTime: s.startTime,
+      });
+      if (anim) this.scrolls.push({ el, anim });
     });
   }
 
@@ -572,7 +721,7 @@ export class DriftMode implements ModeRenderer {
       this.karaoke = { line, row: focusRow };
       line.mount(cue.t, cue.running);
     }
-    if (focusSlot?.kind === "break") this.startBreak(focusSlot.brk, cue, look);
+    if (focusSlot?.kind === "break") this.startBreak(focusSlot.brk, cue.t, look);
     this.schedulePrepare();
   }
 
@@ -580,15 +729,39 @@ export class DriftMode implements ModeRenderer {
     return new KaraokeLine(
       row.line.words,
       row.words,
-      { size: row.size, font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`, motion: look.motion, energy: this.energy, steps: this.steps },
+      {
+        size: row.size,
+        font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`,
+        letterSpacingPx: look.letterSpacing * row.size,
+        params: this.params ?? motionParams(look),
+        steps: this.steps,
+      },
       this.timeline,
       `kw${row.index}`,
     );
   }
 
+  /** New motion parameters: the focus line planned again at the current time, the next one again ahead. */
+  private replan(look: Look): void {
+    this.prepared?.line.destroy();
+    this.prepared = null;
+    const t = this.timeline.position();
+    const k = this.karaoke;
+    if (k) {
+      k.line.destroy();
+      const line = this.karaokeFor(k.row, look);
+      this.karaoke = { line, row: k.row };
+      line.mount(t, false);
+    }
+    const slot = this.slots[this.target];
+    if (slot?.kind === "break") this.startBreak(slot.brk, t, look, true);
+    this.schedulePrepare();
+  }
+
   /**
-   * Builds the next line's overlay (hidden until it is in focus) and plans its words a moment after
-   * this line change, in a task of its own, so the next change only has animations to start.
+   * Builds the next line's overlay (hidden until it is in focus) and plans its words ahead, in idle
+   * slices of SLICE_MS starting once this line's own mount has finished, so the next line change only
+   * has animations to start.
    */
   private schedulePrepare(): void {
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
@@ -596,28 +769,34 @@ export class DriftMode implements ModeRenderer {
     const look = this.look;
     if (!look || look.unsynced || typeof setTimeout !== "function") return;
     const box = this.box;
-    this.prepareTimer = setTimeout(() => {
+    const step = (): void => {
       this.prepareTimer = null;
       if (this.box !== box || !box) return;
-      const slot = this.slots[this.target];
-      const next = slot ? this.rows[(slot.kind === "line" ? slot.row.index : slot.brk.il.next - 1) + 1] : undefined;
-      if (!next || next === this.prepared?.row || next === this.karaoke?.row || next.line.words.length === 0) return;
-      this.prepared?.line.destroy();
-      const line = this.karaokeFor(next, look);
-      line.prepare();
-      this.prepared = { line, row: next };
-    }, PREPARE_DELAY_MS);
+      // the line in focus finishes mounting first
+      if (this.karaoke?.line.mounting) {
+        this.prepareTimer = setTimeout(step, PREPARE_GAP_MS);
+        return;
+      }
+      const next = this.rows[this.focusLine() + (this.slots[this.target]?.kind === "break" ? 0 : 1)];
+      if (!next || next === this.karaoke?.row || next.line.words.length === 0) return;
+      if (this.prepared?.row !== next) {
+        this.prepared?.line.destroy();
+        this.prepared = { line: this.karaokeFor(next, look), row: next };
+      }
+      if (!this.prepared.line.prepare(SLICE_MS, this.leads[next.index])) this.prepareTimer = setTimeout(step, PREPARE_GAP_MS);
+    };
+    this.prepareTimer = setTimeout(step, PREPARE_DELAY_MS);
   }
 
-  /** After a seek that kept the focus: the focus line's words and the break's dots to the new time. */
-  private refreshFocus(cue: Cue): void {
-    // the focus line's animations span the whole line: the song timeline has already moved them
+  /** After a seek that kept the focus: the focus line re-lit if its animations no longer cover the time, the break's dots likewise. */
+  private refreshFocus(cue: Cue, look: Look): void {
     const slot = this.slots[this.target];
-    const look = this.look;
-    if (slot?.kind === "break" && look) {
-      slot.brk.played = false;
-      this.startBreak(slot.brk, cue, look);
+    if (slot?.kind === "break") {
+      this.startBreak(slot.brk, cue.t, look);
+      return;
     }
+    const k = this.karaoke;
+    if (k && !k.line.covers(cue.t)) k.line.mount(cue.t, false);
   }
 
   /** A row's look for its state: the focus line crisp in the lyric color, others dim and softer with distance. */
@@ -635,7 +814,7 @@ export class DriftMode implements ModeRenderer {
       put(row.el, "text-shadow", shadow);
     } else {
       const step = Number(state.split(":")[1] ?? BLUR_STEPS);
-      const blur = Math.max(0.6, step * BLUR_EM * row.size);
+      const blur = Math.max(0.6, step * (this.depth > 0 ? DRIFT_BLUR_EM : STACK_BLUR_EM) * row.size);
       put(row.el, "color", "transparent");
       put(row.el, "text-shadow", `0 0 ${blur.toFixed(2)}px ${rgba(look.colors.dim, 1)}, ${shadow}`);
     }
@@ -645,48 +824,14 @@ export class DriftMode implements ModeRenderer {
   }
 
   /** The break's dots, anchored to its start (a seek into the middle of a break joins it there). */
-  private startBreak(brk: Break, cue: Cue, look: Look): void {
-    if (brk.played && this.timeline.busy(`dots${brk.il.start}`, cue.t)) return;
-    this.timeline.cancel(`dots${brk.il.start}`);
-    const dotPx = DOT_EM * look.size;
-    if (!brk.group) {
-      const group = h("div", "ut-dots");
-      group.setAttribute("aria-hidden", "true");
-      for (let d = 0; d < 3; d++) {
-        const dot = h("i", "ut-dot");
-        dot.style.width = `${dotPx.toFixed(2)}px`;
-        dot.style.height = `${dotPx.toFixed(2)}px`;
-        const glow = h("b");
-        dot.append(glow);
-        group.append(dot);
-        brk.dots.push(dot);
-        brk.glows.push(glow);
-      }
-      group.style.gap = `${(dotPx * 0.55).toFixed(2)}px`;
-      brk.el.append(group);
-      brk.group = group;
-    }
-    const plan = planDots(brk.il, dotPx, look.motion, this.steps);
-    const key = `dots${brk.il.start}`;
-    const group = brk.group;
-    // at rest (outside the break) the group is gone
-    put(group, "transform", "scale(0)");
-    put(group, "opacity", "0");
-    this.timeline.play(group, plan.group.transform.frames, plan.group.transform.t0, plan.group.transform.duration, key);
-    this.timeline.play(group, plan.group.opacity.frames, plan.group.opacity.t0, plan.group.opacity.duration, key);
-    plan.dots.forEach((track, d) => {
-      const dot = brk.dots[d];
-      if (dot) this.timeline.play(dot, track.frames, track.t0, track.duration, key);
-    });
-    plan.glows.forEach((track, d) => {
-      const glow = brk.glows[d];
-      if (glow) this.timeline.play(glow, track.frames, track.t0, track.duration, key);
-    });
-    brk.until = plan.until;
-    brk.played = true;
+  private startBreak(brk: Break, t: number, look: Look, force = false): void {
+    const group = `dots${brk.il.start}`;
+    if (!force && brk.dots && this.timeline.busy(group, t)) return;
+    brk.dots ??= new InterludeDots(brk.el, DOTS.em * look.size);
+    brk.until = brk.dots.play(brk.il, this.timeline, this.params ?? motionParams(look), group, this.steps);
   }
 
-  /** Drops overlays that have faded out, and dots whose break is over. */
+  /** Drops overlays that have faded out, dots whose break is over, and layers of slots a glide left behind. */
   private tidy(cue: Cue): void {
     if (this.leaving.length > 0) {
       this.leaving = this.leaving.filter((l) => {
@@ -698,22 +843,23 @@ export class DriftMode implements ModeRenderer {
         return false;
       });
     }
+    const focus = this.slots[this.target];
+    const focusBreak = focus?.kind === "break" ? focus.brk : null;
     for (const brk of this.breaks) {
-      if (brk.group && (cue.t >= brk.until || cue.t < brk.il.start) && this.slots[this.target]?.kind !== "break") {
-        this.timeline.cancel(`dots${brk.il.start}`);
-        brk.group.remove();
-        brk.group = null;
-        brk.dots = [];
-        brk.glows = [];
-        brk.played = false;
+      if (brk.dots && brk !== focusBreak && (cue.t >= brk.until || cue.t < brk.il.start)) {
+        brk.dots.stop();
+        brk.dots = null;
+      }
+    }
+    const look = this.look;
+    if (look && this.shown.size > 0 && !this.glide?.moving()) {
+      const layout = this.layout(this.target, look);
+      for (const i of [...this.shown]) {
+        const slot = this.slots[i];
+        if (slot && !layout.has(i)) this.conceal(i, this.elOf(slot));
       }
     }
   }
-}
-
-/** Blur steps for a line `off` lines from the focus. */
-function blurStep(off: number): number {
-  return Math.min(BLUR_STEPS, Math.max(1, Math.round(Math.abs(off))));
 }
 
 export function createDrift(depth: number): ModeRenderer {
