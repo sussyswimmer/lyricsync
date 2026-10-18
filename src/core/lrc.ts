@@ -1,3 +1,4 @@
+import { clamp } from "./math";
 import { LINE_GAP_MS, isKnownDuration, splitWords, spreadWords, timeWords } from "./timing";
 
 /**
@@ -146,7 +147,7 @@ function wordsFor(entry: Entry, end: number): Word[] {
   const counted = times.length > 1 && marks[marks.length - 1]?.index === text.length ? times.slice(0, -1) : times;
   const sane = forwards && counted.filter(near).length >= Math.ceil(counted.length / 2);
   if (marks.length === 0 || !sane) return timeWords(splitWords(text), start, end);
-  return taggedWords(text, marks, times.map((t) => Math.min(end, Math.max(start, t))), start, end);
+  return taggedWords(text, marks, times.map((t) => clamp(t, start, end)), start, end);
 }
 
 /**
@@ -192,7 +193,7 @@ export function parseLrc(raw: string, durationMs: number): Line[] {
   return kept.map((entry, i): Line => {
     const next = kept[i + 1];
     const natural = next ? next.start - LINE_GAP_MS : Number.isFinite(limit) ? limit : entry.start + LAST_LINE_MS;
-    const end = Math.max(entry.start, Math.min(natural, limit));
+    const end = clamp(natural, entry.start, limit);
     return { start: entry.start, end, text: entry.text, words: entry.text === "" ? [] : wordsFor(entry, end) };
   });
 }

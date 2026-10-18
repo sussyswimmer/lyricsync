@@ -1,7 +1,7 @@
 import type { ShortcutAction, Shortcuts } from "../../contract/contract";
 
 /**
- * Global shortcut accelerators (contract v3), validated by the same rules as the Rust core
+ * Global shortcut accelerators, validated by the same rules as the Rust core
  * (`src-tauri/src/shortcuts.rs`), so the mock bridge, the Settings key recorder and the store agree.
  *
  * An accelerator is case-insensitive tokens joined by "+", with no spaces: modifiers, each at most

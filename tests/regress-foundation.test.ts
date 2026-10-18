@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
+import type { Settings } from "../contract/contract";
 import { MOCK_TRACKS } from "../src/bridge/mock";
 import { parseLrc } from "../src/core/lrc";
 import { pacePlain, progress, wordState, type Timeline } from "../src/core/timing";
-import { resolveLook, shadowLayers, type Frame, type Look } from "../src/overlay/look";
+import { shadowLayers } from "../src/overlay/look";
 import { neighborScale, projection, slotPerPx, stackOffsets } from "../src/overlay/modes/drift";
 import { cueAt, cueMap, lookKeys, untilNextChange } from "../src/overlay/stage";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
+import { look } from "./helpers";
 
-const FRAME: Frame = { width: 1280, height: 720, dpr: 1, motion: true, unsynced: false };
-const look = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
-  resolveLook({ ...structuredClone(DEFAULT_SETTINGS), ...over }, null, { ...FRAME, ...frame });
-
-// Regression (word-boundary-late): modes lit a word only once progress() > 0, i.e. one ms after it
+// Modes lit a word only once progress() > 0, i.e. one ms after it
 // started, while the scheduler counted a boundary at exactly t as passed. A frame landing on a word's
 // start drew it unlit and then slept up to 250 ms.
 describe("wordState", () => {
@@ -82,7 +79,7 @@ describe("scheduling against what the modes paint", () => {
   });
 });
 
-// Regression (stage-rebuild-paint-only): every glow, color or opacity step tore down and re-measured the mode.
+// Every glow, color or opacity step tore down and re-measured the mode.
 describe("lookKeys", () => {
   const base = lookKeys(look(), "drift");
 
@@ -109,7 +106,7 @@ describe("lookKeys", () => {
   });
 });
 
-// Regression (small-text-shadow-floor): the dark legibility shadow shrank with the text to a
+// The dark legibility shadow shrank with the text to a
 // sub-pixel offset and a 1–3 px blur, so small dim lines vanished on busy wallpapers.
 describe("shadowLayers at small sizes", () => {
   const l = look({ glow: 40 });
@@ -143,7 +140,6 @@ describe("shadowLayers at small sizes", () => {
   });
 });
 
-// Regressions (drift-perspective-overlap, drift-wrapped-offscreen, drift-small-neighbors).
 describe("Drift and Stack layout", () => {
   const LINE = 1.12;
   /** Each row's drawn half-height at `shown`: box height × its scale × its depth projection. */
@@ -208,7 +204,6 @@ describe("Drift and Stack layout", () => {
   });
 });
 
-// Regression (mock-qa-track): C8's visual QA cases had no mock track.
 describe("the script sampler mock track", () => {
   const sampler = MOCK_TRACKS[5];
   const lines = parseLrc(sampler?.synced ?? "", sampler?.durationMs ?? 0).filter((l) => l.words.length > 0);

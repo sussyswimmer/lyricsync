@@ -8,7 +8,7 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
 
-> **Status: pre-release.** Every part of v1 is built. A first run on a real Mac (macOS 26, Spotify) showed the song, cover art and lyrics arriving and the overlay sitting on the desktop. The rest of the Mac checks, Apple Music and Windows haven't been run yet, so expect rough edges. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
+> **Status: pre-release.** Every part of v1 is built. A first run on a real Mac (macOS 26, Spotify) showed the song, cover art and lyrics arriving and the overlay sitting on the desktop. The rest of the Mac checks, Apple Music and Windows haven't been run yet, so expect rough edges.
 
 ## Install
 
@@ -215,7 +215,7 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
+[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, and bump `CONTRACT_VERSION`; add fields rather than renaming or removing them.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.
 

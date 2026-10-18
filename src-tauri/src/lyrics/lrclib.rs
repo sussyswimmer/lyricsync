@@ -74,13 +74,28 @@ fn null_as_nan<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Err
 }
 /// A search answer's records, without the ones that don't decode: one malformed record must not
 /// throw away the good match next to it.
-pub fn records(values: Vec<serde_json::Value>) -> Vec<Record> {
+fn records(values: Vec<serde_json::Value>) -> Vec<Record> {
     values
         .into_iter()
         .filter_map(|value| serde_json::from_value(value).ok())
         .collect()
 }
 impl Record {
+    /// `#7 "Title" by Artist on "Album", instrumental`, never the lyrics.
+    pub fn name(&self) -> String {
+        let artist = match self.artist_name.trim() {
+            "" => "(no artist)",
+            _ => &self.artist_name,
+        };
+        let mut name = format!("#{} {:?} by {artist}", self.id, self.track_name);
+        if !self.album_name.is_empty() {
+            name.push_str(&format!(" on {:?}", self.album_name));
+        }
+        if self.instrumental {
+            name.push_str(", instrumental");
+        }
+        name
+    }
     pub fn into_lyrics(&self, key: &str) -> Lyrics {
         if self.instrumental {
             return empty(key, LyricsStatus::Instrumental);
@@ -114,11 +129,13 @@ impl LrcLib {
             false,
         )
     }
-    fn build(base: Url, local_test: bool) -> Result<Self, String> {
+    pub(crate) fn build(base: Url, local_test: bool) -> Result<Self, String> {
         let mut builder = Client::builder()
             .user_agent(USER_AGENT)
-            .timeout(Duration::from_secs(6))
-            .connect_timeout(Duration::from_secs(3))
+            // Room for LRCLIB's 3-5 s answers, yet inside the lookup's 6 s deadline; connecting
+            // gets less, so a dead connection leaves time for the retry.
+            .timeout(Duration::from_secs(4))
+            .connect_timeout(Duration::from_secs(2))
             .redirect(reqwest::redirect::Policy::none());
         if local_test {
             builder = builder.no_proxy();
@@ -162,7 +179,7 @@ impl LrcLib {
                 }
                 Ok(response) => break response,
                 Err(error) if !retried && (error.is_connect() || error.is_timeout()) => RETRY_WAIT,
-                Err(error) => return Err(Failure::transient(error.to_string())),
+                Err(error) => return Err(Failure::transient(error_chain(&error))),
             };
             retried = true;
             tokio::time::sleep(wait).await;
@@ -193,7 +210,7 @@ impl LrcLib {
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(|e| Failure::transient(e.to_string()))?
+            .map_err(|e| Failure::transient(error_chain(&e)))?
         {
             if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
                 return Err(too_large());
@@ -204,23 +221,57 @@ impl LrcLib {
             .map(Some)
             .map_err(|e| Failure::transient(format!("invalid LRCLIB JSON: {e}")))
     }
-    /// A body that isn't a JSON array is still an error.
-    async fn search(&self, track: &Track, title: &str) -> Result<Vec<Record>, Failure> {
-        self.json(
-            "search",
-            &[
-                ("track_name", title.into()),
-                ("artist_name", track.artist.clone()),
-            ],
-            false,
-        )
-        .await
-        .map(|values| records(values.unwrap_or_default()))
+    /// A body that isn't a JSON array is still an error. Logs the request and its answer to
+    /// `trace`.
+    async fn search(
+        &self,
+        track: &Track,
+        title: &str,
+        trace: &mut Vec<String>,
+    ) -> Result<Option<Record>, Failure> {
+        let label = format!("search {title:?} by {}", track.artist);
+        let records = self
+            .json(
+                "search",
+                &[
+                    ("track_name", title.into()),
+                    ("artist_name", track.artist.clone()),
+                ],
+                false,
+            )
+            .await
+            .inspect_err(|failure| trace.push(format!("{label} -> {failure}")))
+            .map(|values| records(values.unwrap_or_default()))?;
+        let best = matching::best(track, &records);
+        let results = match records.len() {
+            1 => "1 result".to_string(),
+            n => format!("{n} results"),
+        };
+        trace.push(match best {
+            _ if records.is_empty() => format!("{label} -> no results"),
+            Some(record) => format!("{label} -> {results}, picked {}", record.name()),
+            None => {
+                let seconds = track.duration_ms / 1000.0;
+                let closest = records
+                    .iter()
+                    .map(|record| record.duration - seconds)
+                    .filter(|delta| delta.is_finite())
+                    .min_by(|a, b| a.abs().total_cmp(&b.abs()));
+                let closest = closest
+                    .map(|delta| format!(" (closest duration delta {delta:+.1} s)"))
+                    .unwrap_or_default();
+                format!("{label} -> {results}, none accepted{closest}")
+            }
+        });
+        Ok(best.cloned())
     }
-}
-#[async_trait]
-impl Provider for LrcLib {
-    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure> {
+    /// `Provider::lookup`, also returning the record it accepts and logging each request and its
+    /// answer to `trace` (for the diagnose report).
+    pub(crate) async fn find(
+        &self,
+        track: &Track,
+        trace: &mut Vec<String>,
+    ) -> Result<(Option<Record>, Lyrics), Failure> {
         if !track.duration_ms.is_finite() || track.duration_ms < 0.0 {
             return Err(Failure::permanent("track metadata is incomplete"));
         }
@@ -230,39 +281,77 @@ impl Provider for LrcLib {
             || track.title.trim().is_empty()
             || track.artist.trim().is_empty()
         {
-            return Ok(empty(&track.key, LyricsStatus::NotFound));
+            trace.push("no request: LRCLIB needs a length, a title and an artist".into());
+            return Ok((None, empty(&track.key, LyricsStatus::NotFound)));
         }
-        // An exact answer that isn't a usable record counts as a miss: search still gets its turn.
-        let exact: Option<Record> = self
+        let seconds = track.duration_ms / 1000.0;
+        let label = format!(
+            "get {:?} by {} on {:?}, {seconds:.1} s",
+            track.title, track.artist, track.album
+        );
+        let exact = self
             .json::<serde_json::Value>(
                 "get",
                 &[
                     ("track_name", track.title.clone()),
                     ("artist_name", track.artist.clone()),
                     ("album_name", track.album.clone()),
-                    ("duration", (track.duration_ms / 1000.0).to_string()),
+                    ("duration", seconds.to_string()),
                 ],
                 true,
             )
-            .await?
-            .and_then(|value| serde_json::from_value(value).ok());
-        if let Some(record) = exact {
-            if matching::best(track, std::slice::from_ref(&record)).is_some() {
-                return Ok(record.into_lyrics(&track.key));
+            .await
+            .inspect_err(|failure| trace.push(format!("{label} -> {failure}")))?;
+        // An exact answer that isn't a usable record counts as a miss: search still gets its turn.
+        // The decode error isn't logged, since it can quote the record's text.
+        match exact.map(serde_json::from_value::<Record>) {
+            None => trace.push(format!("{label} -> not found")),
+            Some(Err(_)) => trace.push(format!("{label} -> unusable record, searching")),
+            Some(Ok(record)) => {
+                if matching::best(track, std::slice::from_ref(&record)).is_some() {
+                    trace.push(format!("{label} -> {}, accepted", record.name()));
+                    let lyrics = record.into_lyrics(&track.key);
+                    return Ok((Some(record), lyrics));
+                }
+                trace.push(format!(
+                    "{label} -> {}, rejected (delta {:+.1} s, or another title or artist)",
+                    record.name(),
+                    record.duration - seconds
+                ));
             }
         }
-        let records = self.search(track, &track.title).await?;
-        if let Some(record) = matching::best(track, &records) {
-            return Ok(record.into_lyrics(&track.key));
-        }
+        let mut found = self.search(track, &track.title, trace).await?;
         let retry = matching::retry_title(&track.title);
-        if !retry.is_empty() && retry != track.title {
-            let records = self.search(track, &retry).await?;
-            if let Some(record) = matching::best(track, &records) {
-                return Ok(record.into_lyrics(&track.key));
-            }
+        if found.is_none() && !retry.is_empty() && retry != track.title {
+            found = self.search(track, &retry, trace).await?;
         }
-        Ok(empty(&track.key, LyricsStatus::NotFound))
+        Ok(match found {
+            Some(record) => {
+                let lyrics = record.into_lyrics(&track.key);
+                (Some(record), lyrics)
+            }
+            None => (None, empty(&track.key, LyricsStatus::NotFound)),
+        })
+    }
+}
+/// An error with its causes, which name the real problem (DNS, TLS, proxy).
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
+}
+#[async_trait]
+impl Provider for LrcLib {
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure> {
+        Ok(self.find(track, &mut Vec::new()).await?.1)
     }
 }
 #[cfg(test)]

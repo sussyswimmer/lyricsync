@@ -1,4 +1,4 @@
-/* Settings window (C7): about 380×640, light and dark aware. The live preview stays pinned on top while
+/* Settings window: about 380×640, light and dark aware. The live preview stays pinned on top while
    the controls scroll beneath it. The preview's stage styles come from stage.css (via stage.ts). */
 
 :root {

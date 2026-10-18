@@ -273,7 +273,7 @@ impl MacSource {
         if ask {
             let (consent, wake) = (self.consent.clone(), self.notify.clone());
             drop(tauri::async_runtime::spawn_blocking(move || {
-                let status = automation_permission(player.bundle_id());
+                let status = automation_permission(player.bundle_id(), true);
                 lock(&consent)
                     .entry(player)
                     .or_default()
@@ -540,7 +540,7 @@ fn failure(info: Option<&NSDictionary<NSString, AnyObject>>) -> Failure {
 }
 
 /// Main thread: one player's answer, stamped halfway through the call that produced it.
-fn read_on_main(script: Script) -> Result<(String, f64), Failure> {
+pub(crate) fn read_on_main(script: Script) -> Result<(String, f64), Failure> {
     autoreleasepool(|_| {
         let compiled = compiled(script)?;
         let before = epoch_ms();
@@ -623,11 +623,11 @@ fn observe_players(wake: Arc<Notify>) {
     });
 }
 
-/// Asks macOS whether Undertone may send Apple events to `bundle_id`, showing the Automation
-/// prompt if the user has not decided yet. It blocks until they answer, so it runs on a blocking
-/// thread, never the main one. A player that is not running answers procNotFound (-600) and is
-/// never launched.
-fn automation_permission(bundle_id: &str) -> i32 {
+/// Asks macOS whether Undertone may send Apple events to `bundle_id`: 0 granted, -1743 denied,
+/// -1744 not decided yet. With `ask` it shows the Automation prompt if the user has not decided
+/// yet and blocks until they answer, so it runs on a blocking thread, never the main one. A
+/// player that is not running answers procNotFound (-600) and is never launched.
+pub(crate) fn automation_permission(bundle_id: &str, ask: bool) -> i32 {
     const TYPE_APPLICATION_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
     const TYPE_WILD_CARD: u32 = u32::from_be_bytes(*b"****");
     /// Room for an AEDesc (a type code and a handle: 12 or 16 bytes depending on packing).
@@ -663,8 +663,12 @@ fn automation_permission(bundle_id: &str) -> i32 {
         if created != 0 {
             return created.into();
         }
-        let status =
-            AEDeterminePermissionToAutomateTarget(&target, TYPE_WILD_CARD, TYPE_WILD_CARD, 1);
+        let status = AEDeterminePermissionToAutomateTarget(
+            &target,
+            TYPE_WILD_CARD,
+            TYPE_WILD_CARD,
+            u8::from(ask),
+        );
         AEDisposeDesc(&mut target);
         status
     }

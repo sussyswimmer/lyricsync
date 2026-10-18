@@ -1,24 +1,11 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { readRepo as read } from "./helpers";
 
 /*
  * THIRD_PARTY_NOTICES.txt carries the notices the bundled fonts (OFL 1.1 §2), @tauri-apps/api and the
  * Rust crates require with every copy. scripts/notices.mjs writes it and CI's `--check` keeps it current
  * with the lockfiles; these tests guard what the file must say and that the installers ship it.
  */
-
-interface Fs {
-  readFileSync(path: URL, encoding: "utf8"): string;
-}
-
-const ROOT = new URL("../", import.meta.url);
-let fs: Fs;
-const read = (path: string): string => fs.readFileSync(new URL(path, ROOT), "utf8");
-
-beforeAll(async () => {
-  // Through a variable, so the strict config (no Node types) doesn't resolve the module.
-  const fsModule = "node:fs";
-  fs = (await import(/* @vite-ignore */ fsModule)) as Fs;
-});
 
 interface Pkg {
   name: string;

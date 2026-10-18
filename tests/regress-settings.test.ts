@@ -9,17 +9,11 @@ import type { PanelState, SettingsPanel as Panel } from "../src/settings/panel";
 import { SettingsPreview } from "../src/settings/preview";
 import { applyWrite, clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "../src/settings/store";
 import { pendingFrames, resetDom, runFrames, stubDom, type FakeElement } from "./fake-dom";
+import { fs, readRepo } from "./helpers";
 
 /*
- * Regressions from the settings-window QA pass:
- * - settings-button-cascade: a page-wide `button { font; color }` reset outranked every button class.
- * - settings-nudge-focus: self-disabling sync buttons handed focus to the opposite action, and a brief
- *   "nothing playing" between songs disabled them all and dropped focus to <body>.
- * - settings-song-aria-live: the "This song" value was a live region rewritten on every render.
- * - settings-preview-bar: the preview's stage ran under its 22 px menu bar and a top mask, so at
- *   Height 0–15 the focus line the stage clamps into view was drawn behind the bar.
- * - media-status-preview: under the mock's `?media=` the preview stayed an empty "Nothing playing"
- *   stage, where the app plays the demo.
+ * The settings window: button styles, sync-button focus across songs, the song label's live region,
+ * the preview's stage under its menu bar, and what the preview plays under the mock's `?media=`.
  */
 
 // The preview's stage and controller draw and animate; choosing what it plays needs neither.
@@ -125,7 +119,7 @@ const spoken = (root: FakeElement): string => {
   return root.children.find((c) => c.getAttribute("role") === "status" && c.classList.contains("sr-only"))?.textContent ?? "";
 };
 
-describe("settings-nudge-focus: the sync buttons keep focus and never act backwards", () => {
+describe("the sync buttons keep focus and never act backwards", () => {
   it("holding Enter on +100 climbs to the limit and stays there, focus never leaving +100", () => {
     const p = mountPanel();
     p.plus100.focus();
@@ -183,7 +177,7 @@ describe("settings-nudge-focus: the sync buttons keep focus and never act backwa
   });
 });
 
-describe("settings-song-aria-live: nudges are announced once, with context", () => {
+describe("nudges are announced once, with context", () => {
   it("the value is not a live region; the stepper group reads it as its description", () => {
     const p = mountPanel(50);
     expect(p.value.getAttribute("aria-live")).toBeNull();
@@ -286,7 +280,7 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
   });
 });
 
-describe("font-vietnamese: the font picker says which faces draw Vietnamese accents in another font", () => {
+describe("the font picker says which faces draw Vietnamese accents in another font", () => {
   const note = (p: ReturnType<typeof mountPanel>): FakeElement => p.root.one("font-note");
   const pick = (p: ReturnType<typeof mountPanel>, family: string): void => {
     const input = p.root.one("fonts").all("opt").find((o) => o.dataset["family"] === family)?.children[0];
@@ -307,9 +301,7 @@ describe("font-vietnamese: the font picker says which faces draw Vietnamese acce
     expect(note(p).textContent).toBe("");
   });
 
-  it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", async () => {
-    const fsModule = "node:fs";
-    const fs = (await import(/* @vite-ignore */ fsModule)) as { readdirSync(path: URL): string[] };
+  it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", () => {
     for (const face of FONTS) {
       if (face.family === "System") {
         expect(face.vietnamese).toBe(true);
@@ -322,7 +314,7 @@ describe("font-vietnamese: the font picker says which faces draw Vietnamese acce
   });
 });
 
-describe("media-status: Settings says why it can't see the song", () => {
+describe("Settings says why it can't see the song", () => {
   const DENIED_SPOTIFY: MediaStatus = { source: "spotify", problem: "automation-denied" };
   const DENIED_MUSIC: MediaStatus = { source: "apple-music", problem: "automation-denied" };
   const NO_PLAYER: MediaStatus = { source: null, problem: "no-player" };
@@ -412,9 +404,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 });
 
-// ---------- media-status-preview ----------
-
-describe("media-status-preview: with nothing reported, the mock's preview plays the demo as the app's does", () => {
+describe("with nothing reported, the mock's preview plays the demo as the app's does", () => {
   const live: { bridge: MockBridge; preview: SettingsPreview }[] = [];
   afterEach(() => {
     for (const { bridge, preview } of live.splice(0)) {
@@ -466,16 +456,7 @@ describe("media-status-preview: with nothing reported, the mock's preview plays 
   });
 });
 
-// ---------- settings-button-cascade ----------
-
-// Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
-// non-literal specifier, because the strict type check runs without node's types.
-let settingsCss = "";
-beforeAll(async () => {
-  const fsModule = "node:fs";
-  const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-  settingsCss = fs.readFileSync(new URL("../src/styles/settings.css", import.meta.url), "utf8");
-});
+const settingsCss = readRepo("src/styles/settings.css");
 
 /** WCAG contrast of two #rrggbb colors. */
 function contrast(a: string, b: string): number {
@@ -495,7 +476,7 @@ function rules(css: string): [string, string][] {
   return out;
 }
 
-describe("settings-button-cascade: button classes win over the page's button reset", () => {
+describe("button classes win over the page's button reset", () => {
   it("the page-wide button reset has no class specificity", () => {
     const resets = rules(settingsCss).filter(([sel, body]) => /(^|[\s,])button\s*$/.test(sel) && /font\s*:\s*inherit/.test(body));
     expect(resets.length).toBeGreaterThan(0);
@@ -557,8 +538,6 @@ describe("settings-button-cascade: button classes win over the page's button res
   });
 });
 
-// ---------- settings-preview-bar ----------
-
 /** The declarations of the rule with exactly this selector. */
 function declarations(selector: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -594,8 +573,7 @@ function edges(decls: Map<string, string>): string[] {
   ];
 }
 
-describe("settings-preview-bar: the preview's lyric stage starts below its menu bar", () => {
-  // the stylesheet is read in a beforeAll, after this block is collected
+describe("the preview's lyric stage starts below its menu bar", () => {
   const bar = (): Map<string, string> => declarations(".pv-bar");
   const stage = (): Map<string, string> => declarations(".pv-stage.ut-stage");
 

@@ -107,7 +107,7 @@ export class ShortcutRecorder {
     return this.listening;
   }
 
-  /** The saved binding and what the core says about it (null from an older core). */
+  /** The saved binding and what the core says about it (null until it says). */
   set(binding: string, state: ShortcutState | null): void {
     if (binding === this.binding && state === this.state) return;
     this.binding = binding;

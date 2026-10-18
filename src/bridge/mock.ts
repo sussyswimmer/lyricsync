@@ -10,6 +10,8 @@ import {
   type Shortcuts,
   type ShortcutsStatus,
 } from "../../contract/contract";
+import { clamp } from "../core/math";
+import { TRACK_OFFSET_LIMIT_MS } from "../settings/store";
 import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, recordKey, SHORTCUT_ACTIONS, type KeyLayout } from "../core/accelerator";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
@@ -38,7 +40,7 @@ const LETTERS = [
 ].join("\n");
 
 /**
- * Visual QA for scripts and line shapes (C8): Japanese, Chinese with per-character tags, Korean,
+ * Visual QA for scripts and line shapes: Japanese, Chinese with per-character tags, Korean,
  * Vietnamese with stacked diacritics (lower and upper case), a line of about 120 characters, a line
  * of 20 words, a one-word line, and right-to-left lines with punctuation. Original placeholder text.
  */
@@ -176,7 +178,7 @@ export class MockPlayer {
   }
 
   seek(ms: number): void {
-    this.set({ positionMs: Math.max(0, Math.min(this.current.durationMs, ms)) });
+    this.set({ positionMs: clamp(ms, 0, this.current.durationMs) });
   }
 
   seekBy(deltaMs: number): void {
@@ -288,7 +290,7 @@ function wrap(index: number): number {
 function normalize(s: PlayerState, now: number): PlayerState {
   const track = wrap(s.track);
   const duration = MOCK_TRACKS[track]?.durationMs ?? 0;
-  const positionMs = Math.max(0, Math.min(duration, Number.isFinite(s.positionMs) ? s.positionMs : 0));
+  const positionMs = clamp(Number.isFinite(s.positionMs) ? s.positionMs : 0, 0, duration);
   const sampledAt = Number.isFinite(s.sampledAt) ? s.sampledAt : now;
   if (s.isPlaying && positionMs + Math.max(0, now - sampledAt) >= duration) {
     return { track: wrap(track + 1), positionMs: 0, sampledAt: now, isPlaying: true };
@@ -297,7 +299,6 @@ function normalize(s: PlayerState, now: number): PlayerState {
 }
 
 /** Per-song offsets share the global offset's range. */
-const OFFSET_LIMIT_MS = 2000;
 const FONT_FAMILY_MAX_CHARS = 64;
 const MODES = ["arc", "lens", "drift", "stack"] as const satisfies readonly Settings["mode"][];
 const SHOW_WHEN = ["playing", "always"] as const satisfies readonly Settings["showWhen"][];
@@ -307,8 +308,8 @@ const COLOR_KEYS = ["lyric", "highlight", "dim"] as const satisfies readonly (ke
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 // Each returns the valid value, or undefined so the caller keeps the current one.
-const clamp = (v: unknown, lo: number, hi: number): number | undefined =>
-  typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
+const inRange = (v: unknown, lo: number, hi: number): number | undefined =>
+  typeof v === "number" && Number.isFinite(v) ? clamp(v, lo, hi) : undefined;
 const hex = (v: unknown): string | undefined => (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : undefined);
 /** Not blank, at most 64 characters, both as Rust counts them: Unicode White_Space, code points. */
 const family = (v: unknown): string | undefined =>
@@ -318,14 +319,14 @@ const oneOf = <T extends string>(v: unknown, options: readonly T[]): T | undefin
 const offsetsOf = (v: unknown): Record<string, number> | undefined => {
   if (!isObject(v)) return undefined;
   const entries = Object.entries(v).flatMap(([key, ms]): [string, number][] => {
-    const clamped = clamp(ms, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);
+    const clamped = inRange(ms, -TRACK_OFFSET_LIMIT_MS, TRACK_OFFSET_LIMIT_MS);
     return clamped === undefined || clamped === 0 ? [] : [[key, clamped]];
   });
   return Object.fromEntries(entries);
 };
 
 /**
- * What the Rust store does with `update_settings` (X4, `settings::merge_patch`): a shallow merge
+ * What the Rust store does with `update_settings` (`settings::merge_patch`): a shallow merge
  * validated field by field. Unknown keys are dropped, numbers are clamped to the SPEC ranges, and a
  * value of the wrong type or outside an enum keeps the current one. A partial `colors`, `font` or
  * `shortcuts` object changes only the keys it has; a shortcut that isn't usable or that another
@@ -334,7 +335,6 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
  */
 export function mergeSettings(current: Settings, patch: unknown): Settings {
   const next = structuredClone(current);
-  // The settings schema, not the contract: contract v2 left it at 1.
   next.version = DEFAULT_SETTINGS.version;
   if (!isObject(patch)) return next;
   const p = patch;
@@ -345,16 +345,16 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   const font = p.font;
   if (isObject(font)) {
     next.font.family = family(font.family) ?? next.font.family;
-    next.font.weight = clamp(font.weight, 100, 900) ?? next.font.weight;
+    next.font.weight = inRange(font.weight, 100, 900) ?? next.font.weight;
   }
-  next.size = clamp(p.size, 22, 140) ?? next.size;
-  next.curve = clamp(p.curve, -100, 100) ?? next.curve;
-  next.yPos = clamp(p.yPos, 0, 100) ?? next.yPos;
-  next.glow = clamp(p.glow, 0, 100) ?? next.glow;
-  next.opacity = clamp(p.opacity, 20, 100) ?? next.opacity;
+  next.size = inRange(p.size, 22, 140) ?? next.size;
+  next.curve = inRange(p.curve, -100, 100) ?? next.curve;
+  next.yPos = inRange(p.yPos, 0, 100) ?? next.yPos;
+  next.glow = inRange(p.glow, 0, 100) ?? next.glow;
+  next.opacity = inRange(p.opacity, 20, 100) ?? next.opacity;
   next.showWhen = oneOf(p.showWhen, SHOW_WHEN) ?? next.showWhen;
   next.displays = oneOf(p.displays, DISPLAYS) ?? next.displays;
-  next.globalOffsetMs = clamp(p.globalOffsetMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
+  next.globalOffsetMs = inRange(p.globalOffsetMs, -TRACK_OFFSET_LIMIT_MS, TRACK_OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
   next.trackOffsetsMs = offsetsOf(p.trackOffsetsMs) ?? next.trackOffsetsMs;
   if (typeof p.enabled === "boolean") next.enabled = p.enabled;
   if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
@@ -368,7 +368,7 @@ export function migrateSettings(stored: unknown): Settings {
 }
 
 /**
- * What the core reports for each shortcut after registering them (contract v3): "off" when shortcuts
+ * What the core reports for each shortcut after registering them: "off" when shortcuts
  * are off or the action has none, "invalid" when the binding doesn't parse, "unavailable" when
  * another app holds the combination (here: one of `taken`), else "ok".
  */
@@ -390,7 +390,7 @@ export const SHORTCUT_NUDGE_MS = 50;
 export function withTrackOffset(current: Settings, trackKey: string, ms: number): Settings {
   if (!Number.isFinite(ms)) throw new Error("offset must be finite");
   const next = structuredClone(current);
-  const clamped = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms));
+  const clamped = clamp(ms, -TRACK_OFFSET_LIMIT_MS, TRACK_OFFSET_LIMIT_MS);
   if (clamped === 0) delete next.trackOffsetsMs[trackKey];
   else next.trackOffsetsMs[trackKey] = clamped;
   return next;

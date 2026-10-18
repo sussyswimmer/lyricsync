@@ -28,9 +28,9 @@ export interface PanelState {
   artPending: boolean;
   /** the song playing now, for the per-song sync nudge; null when nothing (real) is playing */
   track: { key: string; title: string; artist: string } | null;
-  /** why nothing plays, as the core reports it (contract v2); null from an older core */
+  /** why nothing plays, as the core reports it; null until it does */
   media: MediaStatus | null;
-  /** whether each global shortcut works (contract v3); null from an older core */
+  /** whether each global shortcut works; null until the core reports it */
   shortcuts: ShortcutsStatus | null;
   /** the last Launch at login change failed (the OS refused the login item) */
   loginError: boolean;

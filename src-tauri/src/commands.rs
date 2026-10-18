@@ -1,4 +1,4 @@
-//! Every command in contract v3. Settings go through `settings::runtime`; media and lyrics come
+//! Every command in the contract. Settings go through `settings::runtime`; media and lyrics come
 //! from their services, shortcut registration from `shortcuts`.
 //!
 //! A plain `#[tauri::command] fn` runs on the main thread, behind every window operation (and on

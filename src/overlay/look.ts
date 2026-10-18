@@ -1,4 +1,5 @@
 import type { Settings } from "../../contract/contract";
+import { clamp } from "../core/math";
 import type { Palette } from "../core/palette";
 import { fontFor, stackFor, type CjkLang } from "./fonts";
 
@@ -53,7 +54,7 @@ export interface Frame {
  */
 export function workAreaReference(stageHeight: number, screenHeight: number): number {
   const share = stageHeight / screenHeight;
-  return REFERENCE_HEIGHT * (Number.isFinite(share) && share > 0 ? Math.min(1, Math.max(0.8, share)) : 1);
+  return REFERENCE_HEIGHT * (Number.isFinite(share) && share > 0 ? clamp(share, 0.8, 1) : 1);
 }
 
 export function resolveLook(settings: Settings, palette: Palette | null, frame: Frame): Look {
@@ -103,7 +104,7 @@ const SMALL_TEXT_RAMP_PX = 16;
 export function shadowLayers(look: Look, size: number, active: boolean): [x: string, y: string, blur: string, color: string][] {
   const k = size / 58;
   const g = look.glow;
-  const small = Math.min(1, Math.max(0, (SMALL_TEXT_PX - size) / SMALL_TEXT_RAMP_PX));
+  const small = clamp((SMALL_TEXT_PX - size) / SMALL_TEXT_RAMP_PX, 0, 1);
   const layers: [string, string, string, string][] = [
     ["0px", px(Math.max(1 * k, 1)), px(Math.max((2 + 2 * g) * k, 1.5)), `rgba(0, 0, 0, ${(0.4 + 0.15 * g + 0.2 * small).toFixed(3)})`],
     ["0px", "0px", px(Math.max((8 + 14 * g) * k, 4)), `rgba(0, 0, 0, ${(0.16 + 0.2 * g + 0.04 * small).toFixed(3)})`],

@@ -1,192 +1,28 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
+import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying } from "../contract/contract";
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { parseLrc, type Line } from "../src/core/lrc";
 import { PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
-import { resolveLook, type Frame, type Look } from "../src/overlay/look";
 import { DriftMode } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
 import { LINGER_MS, LyricStage, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
+import { asHtml, FakeAnimation, StageElement, stageSize, stubStageDom } from "./fake-dom";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
-
-/*
- * Just enough DOM for the stage, the states and Drift/Stack to run in node: elements with inline
- * styles, a text layout that wraps at the row width, and Web Animations that only record themselves.
- */
+import { cue, LINES, look as lookFor, settings, stylesheet } from "./helpers";
 
 /** Opacity the fake getComputedStyle reports: an element's own, or whatever a test says a fade is at. */
-const drawnOpacity = new WeakMap<FakeElement, number>();
-
-class FakeStyle {
-  readonly props = new Map<string, string>();
-  [key: string]: unknown;
-  setProperty(name: string, value: string): void {
-    this.props.set(name, value);
-  }
-  getPropertyValue(name: string): string {
-    return this.props.get(name) ?? "";
-  }
-}
-
-class FakeAnimation {
-  readonly keyframes: Keyframe[];
-  readonly options: KeyframeAnimationOptions;
-  readonly finished: Promise<void>;
-  cancelled = false;
-  private reject: (e: Error) => void = () => undefined;
-  constructor(keyframes: Keyframe[], options: KeyframeAnimationOptions) {
-    this.keyframes = keyframes;
-    this.options = options;
-    this.finished = new Promise<void>((_, reject) => {
-      this.reject = reject;
-    });
-  }
-  cancel(): void {
-    this.cancelled = true;
-    this.reject(new Error("AbortError"));
-  }
-}
-
-let stageSize = { width: 1280, height: 720 };
-
-class FakeElement {
-  readonly tagName: string;
-  className = "";
-  dir = "";
-  style = new FakeStyle();
-  children: FakeElement[] = [];
-  parent: FakeElement | null = null;
-  ownText = "";
-  readonly attrs = new Map<string, string>();
-  animations: FakeAnimation[] = [];
-  readonly classList = {
-    add: (...names: string[]): void => {
-      const set = new Set(this.className.split(" ").filter(Boolean));
-      for (const n of names) set.add(n);
-      this.className = [...set].join(" ");
-    },
-    remove: (...names: string[]): void => {
-      this.className = this.className
-        .split(" ")
-        .filter((c) => c && !names.includes(c))
-        .join(" ");
-    },
-    toggle: (name: string, force?: boolean): boolean => {
-      const on = force ?? !this.classList.contains(name);
-      if (on) this.classList.add(name);
-      else this.classList.remove(name);
-      return on;
-    },
-    contains: (name: string): boolean => this.className.split(" ").includes(name),
-  };
-
-  constructor(tag: string) {
-    this.tagName = tag.toUpperCase();
-  }
-
-  get textContent(): string {
-    return this.ownText + this.children.map((c) => c.textContent).join("");
-  }
-  set textContent(value: string) {
-    for (const c of this.children) c.parent = null;
-    this.children = [];
-    this.ownText = value;
-  }
-  get isConnected(): boolean {
-    return this.parent !== null;
-  }
-  get clientWidth(): number {
-    return stageSize.width;
-  }
-  get clientHeight(): number {
-    return stageSize.height;
-  }
-  /** Rows wrap at 88% of the stage width with glyphs about 0.5 em wide, 1.12 em per row. */
-  get offsetHeight(): number {
-    const size = this.fontSize();
-    const width = this.textContent.length * size * 0.5;
-    const rows = Math.max(1, Math.ceil(width / (stageSize.width * 0.88)));
-    return Math.round(rows * size * 1.12);
-  }
-  fontSize(): number {
-    for (let el: FakeElement | null = this; el; el = el.parent) {
-      const v = el.style["fontSize"];
-      if (typeof v === "string" && v) return Number.parseFloat(v);
-    }
-    return 16;
-  }
-  append(...nodes: FakeElement[]): void {
-    for (const n of nodes) {
-      n.remove();
-      n.parent = this;
-      this.children.push(n);
-    }
-  }
-  appendChild(node: FakeElement): FakeElement {
-    this.append(node);
-    return node;
-  }
-  after(node: FakeElement): void {
-    const p = this.parent;
-    if (!p) return;
-    node.remove();
-    node.parent = p;
-    p.children.splice(p.children.indexOf(this) + 1, 0, node);
-  }
-  remove(): void {
-    const p = this.parent;
-    if (!p) return;
-    p.children.splice(p.children.indexOf(this), 1);
-    this.parent = null;
-  }
-  setAttribute(name: string, value: string): void {
-    this.attrs.set(name, value);
-  }
-  toggleAttribute(name: string, force?: boolean): boolean {
-    const on = force ?? !this.attrs.has(name);
-    if (on) this.attrs.set(name, "");
-    else this.attrs.delete(name);
-    return on;
-  }
-  cloneNode(deep = false): FakeElement {
-    const copy = new FakeElement(this.tagName);
-    copy.className = this.className;
-    copy.dir = this.dir;
-    copy.ownText = this.ownText;
-    for (const [k, v] of Object.entries(this.style)) if (k !== "props") copy.style[k] = v;
-    for (const [k, v] of this.style.props) copy.style.props.set(k, v);
-    for (const [k, v] of this.attrs) copy.attrs.set(k, v);
-    if (deep) copy.append(...this.children.map((c) => c.cloneNode(true)));
-    return copy;
-  }
-  animate(keyframes: Keyframe[], options: KeyframeAnimationOptions): FakeAnimation {
-    const anim = new FakeAnimation(keyframes, options);
-    this.animations.push(anim);
-    return anim;
-  }
-  getAnimations(): FakeAnimation[] {
-    return this.animations.filter((a) => !a.cancelled);
-  }
-  find(className: string): FakeElement[] {
-    const out: FakeElement[] = [];
-    for (const c of this.children) {
-      if (c.classList.contains(className)) out.push(c);
-      out.push(...c.find(className));
-    }
-    return out;
-  }
-}
+const drawnOpacity = new WeakMap<StageElement, number>();
 
 let clock = 0;
 
 beforeEach(() => {
   clock = 10_000;
-  stageSize = { width: 1280, height: 720 };
-  vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
-  vi.stubGlobal("getComputedStyle", (el: FakeElement) => ({ opacity: String(drawnOpacity.get(el) ?? el.style["opacity"] ?? 1) }));
+  Object.assign(stageSize, { width: 1280, height: 720 });
+  stubStageDom();
+  vi.stubGlobal("getComputedStyle", (el: StageElement) => ({ opacity: String(drawnOpacity.get(el) ?? el.style["opacity"] ?? 1) }));
   vi.spyOn(performance, "now").mockImplementation(() => clock);
 });
 
@@ -195,12 +31,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const asHtml = (el: FakeElement): HTMLElement => el as unknown as HTMLElement;
-const settings = (over: Partial<Settings> = {}): Settings => ({ ...structuredClone(DEFAULT_SETTINGS), ...over });
-const lookFor = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
-  resolveLook(settings(over), null, { width: stageSize.width, height: stageSize.height, dpr: 1, motion: true, unsynced: false, ...frame });
-
-const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
 /** Eight one-row placeholder lines, two seconds apart. */
 const EIGHT: Line[] = parseLrc(
   Array.from({ length: 8 }, (_, i) => `[00:${String(2 * i + 1).padStart(2, "0")}.00]placeholder line number ${i + 1}`).join("\n"),
@@ -208,18 +38,17 @@ const EIGHT: Line[] = parseLrc(
 );
 
 /** A built Drift (depth 1) or Stack (depth 0) on a fake host. */
-function drift(depth = 1, look = lookFor(), lines: readonly Line[] = LINES): { mode: DriftMode; host: FakeElement; rows: FakeElement[] } {
-  const host = new FakeElement("div");
+function drift(depth = 1, look = lookFor(), lines: readonly Line[] = LINES): { mode: DriftMode; host: StageElement; rows: StageElement[] } {
+  const host = new StageElement("div");
   const mode = new DriftMode(depth);
   mode.build(asHtml(host), lines, look);
   return { mode, host, rows: host.find("drift-row") };
 }
 
-const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, running, waiting });
-const scaleOf = (row: FakeElement | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
-const yOf = (row: FakeElement | undefined): number => Number(/calc\(-50% \+ (-?[\d.]+)px\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
+const scaleOf = (row: StageElement | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
+const yOf = (row: StageElement | undefined): number => Number(/calc\(-50% \+ (-?[\d.]+)px\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
 
-// Regression (drift-paused-freeze): Drift glided from performance.now(), and no frame follows a paused
+// Drift glided from performance.now(), and no frame follows a paused
 // paint, so a glide caught by a pause froze halfway and a seek while paused left the old line centered.
 describe("Drift while paused", () => {
   it("lands a glide in flight on its line in the paint that pauses it", () => {
@@ -266,7 +95,7 @@ describe("Drift while paused", () => {
   });
 });
 
-// Regression (drift-seek-cut): a jump of more than three lines while playing cut the whole stack in
+// A jump of more than three lines while playing cut the whole stack in
 // one frame, where Arc and Lens fade a seek out and in.
 describe("Drift on a seek while playing", () => {
   it("has the stage crossfade a jump of more than three lines, and glides a step", () => {
@@ -297,7 +126,7 @@ describe("Drift on a seek while playing", () => {
   });
 });
 
-// Regression (drift-noop-frames): after a rebuild or a cut, paint kept asking for frames for the whole
+// After a rebuild or a cut, paint kept asking for frames for the whole
 // ease although nothing moved.
 describe("Drift asks for frames only while something moves", () => {
   it("is idle on the first paint after a build, and after a cut", () => {
@@ -318,7 +147,7 @@ describe("Drift asks for frames only while something moves", () => {
   });
 });
 
-// Regression (word-boundary-late): a word drew unlit at exactly its start time.
+// A word drew unlit at exactly its start time.
 describe("Drift word states", () => {
   it("lights a word, with its glow, at the very millisecond it starts", () => {
     const { mode, rows } = drift();
@@ -332,7 +161,6 @@ describe("Drift word states", () => {
   });
 });
 
-// Regressions (drift-perspective-overlap, drift-wrapped-offscreen, drift-small-neighbors).
 describe("Drift geometry", () => {
   it("recedes toward the focus line, wherever Height puts it", () => {
     for (const yPos of [5, 46, 95]) {
@@ -400,19 +228,19 @@ function reduceMotion(): void {
 }
 
 /** A stage on a fake host, mid-song, with the clock and opacities under the test's control. */
-function stage(): { stage: LyricStage; root: FakeElement; scenes: () => FakeElement[] } {
-  const host = new FakeElement("main");
+function stage(): { stage: LyricStage; root: StageElement; scenes: () => StageElement[] } {
+  const host = new StageElement("main");
   const s = new LyricStage(asHtml(host));
   s.setSettings(settings({ mode: "stack" }));
-  const root = host.children[0] as FakeElement;
+  const root = host.children[0] as StageElement;
   return { stage: s, root, scenes: () => root.children.filter((c) => c.classList.contains("ut-scene")) };
 }
 
 const lyricsView = { kind: "lyrics", timeline: { lines: parseLrc(paperLanterns, 24_000), unsynced: false } } as const;
-const fadeIn = (el: FakeElement | undefined): FakeAnimation | undefined => el?.animations.find((a) => a.keyframes[1]?.opacity === 1);
-const fadeOut = (el: FakeElement | undefined): FakeAnimation | undefined => el?.animations.find((a) => a.keyframes[1]?.opacity === 0);
+const fadeIn = (el: StageElement | undefined): FakeAnimation | undefined => el?.animations.find((a) => a.keyframes[1]?.opacity === 1);
+const fadeOut = (el: StageElement | undefined): FakeAnimation | undefined => el?.animations.find((a) => a.keyframes[1]?.opacity === 0);
 
-// Regression (fade-in-waits-invisible-loading): a new song waited 250 ms behind a loading state
+// A new song waited 250 ms behind a loading state
 // nobody could see yet.
 describe("song changes", () => {
   it("brings lyrics in at once behind a loading state that hasn't shown anything yet", () => {
@@ -446,14 +274,14 @@ describe("song changes", () => {
   });
 });
 
-// Regression (stage-fade-from-current): fades restarted from their nominal opacity, so a half-faded
+// Fades restarted from their nominal opacity, so a half-faded
 // scene or a ghost copy flashed to full brightness.
 describe("fades start from what is on screen", () => {
   it("fades a song out from wherever its own fade-in had got to", () => {
     const { stage: s, scenes } = stage();
     s.show(lyricsView, "a");
     clock += 600;
-    const first = scenes()[0] as FakeElement;
+    const first = scenes()[0] as StageElement;
     drawnOpacity.set(first, 0.44);
     s.show({ kind: "loading" }, "b");
     expect(fadeOut(first)?.keyframes[0]?.opacity).toBe(0.44);
@@ -466,7 +294,7 @@ describe("fades start from what is on screen", () => {
     s.show(lyricsView, "a");
     clock += 1000;
     s.render(2000);
-    const scene = scenes()[0] as FakeElement;
+    const scene = scenes()[0] as StageElement;
     drawnOpacity.set(scene, 0.7);
     s.render(4300);
     const ghost = root.children.find((c) => c.classList.contains("ut-ghost"));
@@ -500,7 +328,7 @@ describe("frames on a boundary", () => {
   });
 });
 
-// Regression (dpr-change-no-resize): layouts are snapped to device pixels, but only a resize rebuilt
+// Layouts are snapped to device pixels, but only a resize rebuilt
 // them, and a window moved between a 2× and a 1× screen of the same size never resizes.
 describe("the stage on a device pixel ratio change", () => {
   interface Query {
@@ -547,7 +375,7 @@ describe("the stage on a device pixel ratio change", () => {
   });
 });
 
-// Regression (cjk-fallback-order): every song got one fixed CJK fallback order, and the page said
+// Every song got one fixed CJK fallback order, and the page said
 // lang="en", so Chinese lines mixed Japanese and Chinese faces.
 describe("the stage's CJK language", () => {
   const song = (text: string): StageView => ({
@@ -579,11 +407,11 @@ describe("the stage's CJK language", () => {
 describe("the stage's reference height", () => {
   it("asks for one given as a function on every layout (the overlay's follows its screen)", () => {
     let reference = 720;
-    const host = new FakeElement("main");
+    const host = new StageElement("main");
     const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
     s.setSettings(settings({ mode: "stack" }));
     s.show(lyricsView, "a");
-    const drift = (): FakeElement | undefined => host.find("drift")[0];
+    const drift = (): StageElement | undefined => host.find("drift")[0];
     expect(drift()?.style["fontSize"]).toBe("58px");
     reference = 360;
     s.setSettings(settings({ mode: "stack", glow: 41 }));
@@ -621,31 +449,23 @@ describe("the stage while paused", () => {
   });
 });
 
-// Regression (chip-short-hold): the chip's 4 s animation started at build and included its own
+// The chip's 4 s animation started at build and included its own
 // fade-in, so it was fully readable for only about 2.5 s.
 describe("the not-found chip", () => {
   it("holds for 4 s after its scene has faded in, then fades out", () => {
-    const host = new FakeElement("div");
+    const host = new StageElement("div");
     buildState(asHtml(host), "not-found", lookFor());
     expect(host.children[0]?.style["animationDelay"]).toBe("4700ms");
   });
 
   it("resumes where it was after a rebuild, so a faded chip stays gone", () => {
-    const host = new FakeElement("div");
+    const host = new StageElement("div");
     buildState(asHtml(host), "not-found", lookFor(), 6000);
     expect(host.children[0]?.style["animationDelay"]).toBe("-1300ms");
   });
 });
 
-/**
- * stage.css without comments, read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline,
- * which yields "" in node. A non-literal specifier, because the strict type check runs without node's types.
- */
-async function stageCss(): Promise<string> {
-  const fsModule = "node:fs";
-  const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-  return fs.readFileSync(new URL("../src/styles/stage.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-}
+const stageCss = (): string => stylesheet("src/styles/stage.css");
 
 /** A stylesheet's top-level `prelude { body }` blocks; nested blocks stay whole in their body. */
 function blocks(sheet: string): { prelude: string; body: string }[] {
@@ -663,12 +483,12 @@ function blocks(sheet: string): { prelude: string; body: string }[] {
   return out;
 }
 
-// Regression (reduced-motion-loading-pulse): under reduced motion the loading dots kept pulsing forever;
-// only the instrumental ♪ had stopped breathing. C6: reduced motion means crossfades only.
+// Under reduced motion the loading dots kept pulsing forever;
+// only the instrumental ♪ had stopped breathing. Reduced motion means crossfades only.
 describe("stage.css under reduced motion", () => {
   let css = "";
   beforeAll(async () => {
-    css = await stageCss();
+    css = stageCss();
   });
 
   const animationOf = (body: string): string => /(?:^|;)\s*animation\s*:\s*([^;]*)/.exec(body)?.[1]?.trim() ?? "";
@@ -704,7 +524,7 @@ describe("stage.css under reduced motion", () => {
     // to a level that can still be seen
     expect(Number(/\bto\s*\{\s*opacity:\s*([\d.]+)/.exec(frames)?.[1])).toBeGreaterThan(0.1);
     // the quiet start is the inline delay states.ts sets, which the sheet's shorthand can't override
-    const host = new FakeElement("div");
+    const host = new StageElement("div");
     buildState(asHtml(host), "loading", lookFor());
     expect(host.children[0]?.style["animationDelay"]).toBe("600ms");
   });
@@ -724,11 +544,11 @@ const contrast = (a: number[], b: number[]): number => {
 describe("stage.css legibility", () => {
   let css = "";
   beforeAll(async () => {
-    css = await stageCss();
+    css = stageCss();
   });
   const rule = (selector: string): string => blocks(css).find((b) => b.prelude === selector)?.body ?? "";
 
-  // Regression (chip-contrast): the not-found and error chips' 0.42 dark fill left light lyric text at
+  // The not-found and error chips' 0.42 dark fill left light lyric text at
   // about 2.8:1 over a light wallpaper, under the 4.5:1 that 17 px text needs.
   it("keeps the chip's text at 4.5:1 or better over a white wallpaper, and gives it the lyrics' dark shadow", () => {
     const m = /background:\s*rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/.exec(rule(".state-chip"));
@@ -737,7 +557,7 @@ describe("stage.css legibility", () => {
     const fill = [1, 2, 3].map((i) => Number(m?.[i]) * alpha + 255 * (1 - alpha));
     // the default lyric color, and the bluest album lyric color paletteFromPixels makes (HSL lightness 0.92, saturation 0.3)
     for (const lyric of [DEFAULT_SETTINGS.colors.lyric, "#e4e4f1"]) expect(contrast(rgbOf(lyric), fill), lyric).toBeGreaterThanOrEqual(4.5);
-    const host = new FakeElement("div");
+    const host = new StageElement("div");
     buildState(asHtml(host), "not-found", lookFor());
     expect(String(host.children[0]?.style["textShadow"])).toMatch(/rgba\(0, 0, 0,/);
   });
@@ -753,8 +573,8 @@ describe("stage.css legibility", () => {
   });
 });
 
-// DoD (C6 performance budget): with nothing to sing, the stage gives the frame loop nothing to wake
-// for, so the controller only takes its 250 ms safety wake (tests/regress-foundation-controller.test.ts).
+// Performance budget: with nothing to sing, the stage gives the frame loop nothing to wake
+// for, so the controller sleeps until something changes (tests/regress-foundation-controller.test.ts).
 describe("the stage with nothing to sing", () => {
   it("asks for no frames in any state", () => {
     for (const kind of ["loading", "not-found", "instrumental", "error"] as const) {
@@ -803,7 +623,7 @@ class StubBridge implements Bridge {
   }
 }
 
-// DoD (C6 performance budget), end to end: the overlay as overlay/main.ts builds it (a gated controller,
+// The performance budget, end to end: the overlay as overlay/main.ts builds it (a gated controller,
 // the stage invalidating through it) on the real stage, through a song, its states and a pause.
 describe("the overlay's frame loop on a real stage", () => {
   const T0 = 1_760_000_000_000;
@@ -821,12 +641,7 @@ describe("the overlay's frame loop on a real stage", () => {
     vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
       frames.delete(id);
     });
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeElement(tag),
-      visibilityState: "visible",
-      addEventListener: (): void => undefined,
-      removeEventListener: (): void => undefined,
-    });
+    stubStageDom({ visibilityState: "visible", addEventListener: (): void => undefined, removeEventListener: (): void => undefined });
   });
 
   afterEach(() => {
@@ -866,13 +681,13 @@ describe("the overlay's frame loop on a real stage", () => {
     source: "lrclib",
   });
 
-  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; controller: OverlayController }> {
+  async function overlay(): Promise<{ bridge: StubBridge; host: StageElement; paints: number[]; controller: OverlayController }> {
     const bridge = new StubBridge();
     bridge.answers.get_settings = settings({ mode: "stack" });
     bridge.answers.get_now_playing = track("a");
     bridge.answers.get_lyrics = result("a", "loading");
     // as overlay/main.ts wires them
-    const host = new FakeElement("main");
+    const host = new StageElement("main");
     let controller: OverlayController | null = null;
     const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick() });
     controller = new OverlayController(bridge, s, { gate: true, palettes: new PaletteCache(async () => null) });
@@ -886,18 +701,11 @@ describe("the overlay's frame loop on a real stage", () => {
     return { bridge, host, paints, controller };
   }
 
-  /**
-   * Over the next `ms`, the loop only takes its 250 ms safety wake: the timer (246 ms) plus the next
-   * vsync, never two paints closer together, yet still awake.
-   */
+  /** Over the next `ms` the loop doesn't wake at all: nothing will change until an event kicks it. */
   function expectAsleep(paints: number[], ms: number, what: string): void {
     const from = paints.length;
     run(ms);
-    const times = paints.slice(from);
-    const gaps = times.slice(1).map((t, i) => t - (times[i] ?? t));
-    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / 262));
-    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / 246));
-    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(246);
+    expect(paints.length - from, what).toBe(0);
   }
 
   it("sleeps through loading, after the last line and in empty states, and stops on pause", async () => {

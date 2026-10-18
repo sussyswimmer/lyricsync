@@ -355,6 +355,7 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
     let directory = tempfile::tempdir().unwrap();
     let provider = fake(None, false);
     let service = Service::new(provider.clone(), cache::Cache::new(directory.path()));
+    let mut events = service.subscribe();
     let third = Track {
         key: "demo artist|still water|demo album|190".into(),
         title: "Still Water".into(),
@@ -375,6 +376,30 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
     drop(busy);
     assert_eq!(wait(queued, &track().key).await.status, LyricsStatus::Error);
     assert_eq!(wait(playing, &third.key).await.status, LyricsStatus::Found);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    // A skip is no failure: nothing is broadcast or remembered for either.
+    assert_eq!(
+        sent(&mut events)
+            .into_iter()
+            .map(|(status, _)| status)
+            .collect::<Vec<_>>(),
+        [
+            LyricsStatus::Loading,
+            LyricsStatus::Loading,
+            LyricsStatus::Loading,
+            LyricsStatus::Found
+        ]
+    );
+    {
+        let completed = &service.state.lock().unwrap().completed;
+        assert!(!completed.contains_key(&track().key) && !completed.contains_key(&other().key));
+    }
+    // Asking for a skipped song answers error without a new lookup, a loading event or a bump of
+    // `quiet` (which would cancel the playing song's retry).
+    let quiet = service.state.lock().unwrap().quiet;
+    assert_eq!(service.get(&other().key).await.status, LyricsStatus::Error);
+    assert_eq!(service.state.lock().unwrap().quiet, quiet);
+    assert!(sent(&mut events).is_empty());
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     // Nothing was cached for it: playing it again looks it up.
     assert_eq!(

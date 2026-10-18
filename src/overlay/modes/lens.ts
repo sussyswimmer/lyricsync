@@ -1,30 +1,23 @@
 import "../../styles/lens.css";
 import type { Line, Word } from "../../core/lrc";
+import { clamp } from "../../core/math";
 import { progress, wordState } from "../../core/timing";
 import { h, put } from "../dom";
 import { whenFaceLoads } from "../fonts";
 import { MIN_TEXT_PX, shadowLayers, snap, textShadow, type Look } from "../look";
+import { CALM_GLIDE_MS, GLIDE_MS, LINE_IN_DELAY_MS, LINE_IN_MS, LINE_OUT_MS } from "../states";
 import type { Cue, ModeRenderer } from "./types";
 
 /**
- * The fisheye, from the prototype. For word j at distance d = j + 0.5 - a from the singing position a:
- * k = exp(-d² / SPREAD), scale = SCALE_MIN + (SCALE_MAX - SCALE_MIN)·k, opacity = OPACITY_MIN + (1 - OPACITY_MIN)·k.
+ * The fisheye: for word j at d = j + 0.5 - a from the singing position a, k = exp(-d² / SPREAD) sets
+ * scale (SCALE_MIN..SCALE_MAX) and opacity (OPACITY_MIN..1).
  */
 const SPREAD = 1.4;
 const SCALE_MIN = 0.5;
 const SCALE_MAX = 1.35;
-/**
- * The prototype fades far words to 0.4; 0.6 keeps the falloff and keeps them readable. The fade is
- * the element's opacity, so hues stay true, but it must not take the word's dark legibility shadow
- * with it: each word's shadow is drawn for its drawn size and fade (see drawnShadow), so a far word
- * keeps a full-strength halo of at least the px floors on light and busy wallpapers.
- */
+/** Far words fade by element opacity (hues stay true); each keeps a full-strength shadow (see drawnShadow). */
 const OPACITY_MIN = 0.6;
-/**
- * The far words' shadow comes in this many steps, from in focus (0) to farthest; a word takes the
- * nearest. A step changes the word's text-shadow, which costs a re-raster of that word, so only a
- * few happen as the lens passes; the difference between neighboring steps is too small to see.
- */
+/** Far words' shadow comes in this many steps: each step re-rasters the word, so only a few happen per pass. */
 const SHADOW_STEPS = 3;
 /** The focus row never gets wider than this share of the stage; long lines get a smaller base size. */
 const ROW_FIT = 0.92;
@@ -38,25 +31,10 @@ const NEXT_FIT = 0.88;
 const NEXT_DEPTH = 1.15;
 /** A line that was shown at rest while waiting eases into the fisheye over this long as it starts. */
 const RAMP_MS = 320;
-/**
- * Stepping to the next line, the old next line grows up into focus (its fisheye blooming on the way,
- * its color easing from dim), the old focus line fades out where it is, and the new next line rises
- * in from a little below. Lens draws this itself instead of the stage's whole-scene crossfade, which
- * would keep a copy of the old next line under the same text gliding up. Runs on the compositor;
- * slower for unsynced lyrics; never under reduced motion (the stage crossfades there).
- */
-const GLIDE_MS = 460;
-const CALM_GLIDE_MS = 800;
+/** Lens glides its own steps (GLIDE_MS) rather than use the stage's crossfade, which would double the rising next line. */
 const GLIDE_EASING = "cubic-bezier(0.45, 0, 0.2, 1)";
 /** The incoming next line rises this many focus sizes into place. */
 const NEXT_RISE = 0.5;
-/**
- * Any other line change (a seek, the first line after nothing): the old lines fade out where they
- * are, and the new ones fade in just behind them, as the stage's line crossfade does.
- */
-const LINE_OUT_MS = 170;
-const LINE_IN_MS = 240;
-const LINE_IN_DELAY_MS = 80;
 /** Lens positions sampled per word when finding the widest a row can get. */
 const SAMPLES_PER_WORD = 8;
 /**
@@ -132,8 +110,6 @@ interface NextShown {
 
 const easeOut = (x: number): number => 1 - (1 - x) ** 3;
 
-const clamp01 = (x: number): number => Math.min(1, Math.max(0, x));
-
 /** How strongly the lens pulls word j with the singing position at a: 1 at the center, falling off to 0. */
 export function pull(j: number, a: number): number {
   const d = j + 0.5 - a;
@@ -142,7 +118,7 @@ export function pull(j: number, a: number): number {
 
 /** The smallest fisheye scale for a line at `size` px. */
 function lowScale(size: number): number {
-  return Math.min(0.85, Math.max(SCALE_MIN, MIN_TEXT_PX / size));
+  return clamp(MIN_TEXT_PX / size, SCALE_MIN, 0.85);
 }
 
 /** Width of a row of words at the given scales (by logical index). A space takes the mean scale of the two words beside it. */
@@ -387,7 +363,7 @@ export class LensMode implements ModeRenderer {
       f.rampFrom = null;
     }
     const ramp = f.rampFrom === null ? 1 : (t - f.rampFrom) / f.rampMs;
-    const lens = lensOn ? easeOut(clamp01(ramp)) : 0;
+    const lens = lensOn ? easeOut(clamp(ramp, 0, 1)) : 0;
     const a = lens > 0 ? singingAt(words, t) : 0;
 
     let singing = false;

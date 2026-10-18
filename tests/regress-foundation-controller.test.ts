@@ -125,7 +125,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Regression (no-artwork-palette): every resync re-armed the 1.5 s artwork grace period, so while
+// Every resync re-armed the 1.5 s artwork grace period, so while
 // playing it never ran out, and a track without artwork kept the last album's colors all song.
 describe("album colors for a track without artwork", () => {
   it("switch to the manual colors 1.5 s into the track, although resyncs keep coming", async () => {
@@ -180,9 +180,18 @@ describe("album colors for a track without artwork", () => {
     expect(get).toHaveBeenCalledTimes(1);
     c.destroy();
   });
+
+  it("a destroyed controller never sets colors on a stage it shared (the preview swapping demo for real track)", async () => {
+    const { bridge, stage, controller } = setup();
+    await controller.start();
+    bridge.emit("now-playing", np("a", { artwork: "data:cover" }));
+    controller.destroy();
+    await settle();
+    expect(stage.palettes).toHaveLength(0);
+  });
 });
 
-// Regression (controller-start-race): replies to get_settings / get_now_playing overwrote newer
+// Replies to get_settings / get_now_playing overwrote newer
 // events that had overtaken them, and a sample the clock dropped as stale still became `track`.
 describe("start-up races between events and replies", () => {
   it("keeps a pause that arrived before the older get_now_playing reply", async () => {
@@ -243,6 +252,59 @@ describe("start-up races between events and replies", () => {
     expect(stage.shows).toEqual(["loading a"]);
     expect(controller.track?.trackKey).toBe("a");
     controller.destroy();
+  });
+
+  it("survives get_settings and get_now_playing failing, and still follows events and visibility", async () => {
+    const { bridge, stage, controller } = setup();
+    const fail = (): never => Promise.reject(new Error("ipc")) as never;
+    bridge.answers.get_settings = fail;
+    bridge.answers.get_now_playing = fail;
+    const listen = vi.fn();
+    vi.stubGlobal("document", { addEventListener: listen, removeEventListener: () => undefined, visibilityState: "visible" });
+    await expect(controller.start()).resolves.toBeUndefined();
+    expect(listen).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+    bridge.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), mode: "lens" });
+    bridge.emit("now-playing", np("a"));
+    expect(stage.settings.map((s) => s.mode)).toEqual(["lens"]);
+    expect(controller.track?.trackKey).toBe("a");
+    controller.destroy();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps a gated stage hidden after a failed get_settings, asking again each second until settings arrive", async () => {
+    const { bridge, stage, controller } = setup(true);
+    let reads = 0;
+    const off = { ...structuredClone(DEFAULT_SETTINGS), enabled: false };
+    bridge.answers.get_settings = () => (++reads < 3 ? (Promise.reject(new Error("ipc")) as never) : off);
+    await controller.start();
+    bridge.emit("now-playing", np("a"));
+    // the defaults (enabled) would show lyrics the user turned off
+    expect(stage.visible).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reads).toBe(2);
+    expect(stage.settings).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(reads).toBe(3);
+    expect(stage.settings).toEqual([off]);
+    expect(stage.visible).toBe(false);
+    bridge.emit("settings-changed", structuredClone(DEFAULT_SETTINGS));
+    expect(stage.visible).toBe(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(reads).toBe(3);
+    controller.destroy();
+
+    // A settings event, or destroy(), ends the retries too.
+    for (const end of ["event", "destroy"] as const) {
+      const env = setup(true);
+      let tries = 0;
+      env.bridge.answers.get_settings = () => (++tries, Promise.reject(new Error("ipc")) as never);
+      await env.controller.start();
+      if (end === "event") env.bridge.emit("settings-changed", structuredClone(DEFAULT_SETTINGS));
+      else env.controller.destroy();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(tries, end).toBe(1);
+      env.controller.destroy();
+    }
   });
 
   it("ignores a sample older than the clock's, so track and clock never disagree", async () => {
@@ -423,7 +485,7 @@ class FakeDisplay {
 
 const gaps = (times: number[]): number[] => times.slice(1).map((t, i) => t - (times[i] ?? t));
 
-// DoD (C6 performance budget): the frame loop runs only while a track plays and the stage can be seen.
+// Performance budget: the frame loop runs only while a track plays and the stage can be seen.
 // It stops on pause, a hidden page, showWhen gating and a null track, and starts again on the way back.
 // Between word boundaries, and with nothing to sing, it sleeps instead of drawing identical frames.
 describe("the frame loop", () => {
@@ -473,7 +535,7 @@ describe("the frame loop", () => {
     controller.destroy();
   });
 
-  // Regression (busy-at-display-rate): a busy stage (Lens follows the sung word through every line)
+  // A busy stage (Lens follows the sung word through every line)
   // asked for every display frame, so a 120 or 144 Hz display drew it two or more times as often as a
   // 60 Hz one, against the CPU budget.
   // Whole-ms stand-ins for 60, 100, 120, 144 and 240 Hz: every frame up to 100 Hz, then every other or third.
@@ -523,7 +585,7 @@ describe("the frame loop", () => {
     }) as unknown as typeof setTimeout);
   };
 
-  // Regression (busy-frame-timer): after every busy frame the loop waited on a timer for the cap, even
+  // After every busy frame the loop waited on a timer for the cap, even
   // on a display too slow to need it, so a frame came only if the timer fired in time to ask for the
   // next vsync. With an 8 ms timer a 77 Hz display drew a busy stage 48 times a second, a 91 Hz one 57.
   it.each([17, 13, 11])("with a coarse timer, draws a busy stage at every frame of a display that needs no cap (a vsync every %s ms)", async (frameMs) => {
@@ -674,16 +736,6 @@ describe("the frame loop", () => {
     }
   });
 
-  it("counts settings without `enabled` (a core older than contract v3) as on", async () => {
-    const { bridge, stage, controller } = await playing();
-    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-    delete old.enabled;
-    bridge.emit("settings-changed", old as Settings);
-    expect(stage.visible).toBe(true);
-    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(60);
-    controller.destroy();
-  });
-
   it("stops when the track goes away, and starts again with the next one", async () => {
     // the overlay (gated) and the settings preview (never gated)
     for (const gate of [true, false]) {
@@ -719,15 +771,15 @@ describe("the frame loop", () => {
     controller.destroy();
   });
 
-  it("with nothing to sing (loading, not found, instrumental, after the last line) only wakes every 250 ms", async () => {
-    const { stage, controller } = await playing();
+  it("with nothing to sing (loading, not found, instrumental, after the last line) sleeps until something changes", async () => {
+    const { bridge, stage, controller } = await playing();
     stage.busy = false;
     stage.next = Infinity;
     paintsIn(stage, 300);
-    const times = paintsIn(stage, 10_000);
-    expect(times.length).toBeGreaterThan(0);
-    expect(times.length).toBeLessThanOrEqual(Math.ceil(10_000 / 246));
-    for (const gap of gaps(times)) expect(gap).toBeGreaterThanOrEqual(246);
+    expect(paintsIn(stage, 10_000)).toHaveLength(0);
+    expect(display.pending).toBe(0);
+    bridge.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), glow: 90 });
+    expect(paintsIn(stage, 16)).toHaveLength(1);
     controller.destroy();
   });
 

@@ -1,4 +1,4 @@
-//! X7 `undertone --diagnose`: the first thing to run when something breaks. It prints what
+//! `undertone --diagnose`: the first thing to run when something breaks. It prints what
 //! Undertone sees right now (version and OS, media sources, the current track and its LRCLIB
 //! match, settings and the login item, the lyrics cache, displays and the desktop layer) without
 //! starting the app, then the running app's recent log, and saves the same text to
@@ -19,9 +19,8 @@ use crate::{
     login_item::{self, Here, Refresh, StartupApproved},
     lyrics::{
         cache::Cache,
-        empty,
-        lrclib::{self, Record, USER_AGENT},
-        matching, Track,
+        lrclib::{LrcLib, Record},
+        Track, DEADLINE,
     },
     media::{
         applescript::{
@@ -32,8 +31,6 @@ use crate::{
     settings,
     shortcuts::{plan, Plan},
 };
-use reqwest::{Client, StatusCode, Url};
-use serde::de::DeserializeOwned;
 use std::{
     ffi::OsString,
     fs::{File, OpenOptions},
@@ -73,13 +70,9 @@ pub fn run() -> i32 {
 pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 pub type RuntimeResult = Result<tokio::runtime::Runtime, String>;
 
-/// The LRCLIB lookup gives up after this long, as the lyrics service does.
-const LOOKUP_TIMEOUT: Duration = Duration::from_secs(6);
 /// Windows' media controls answer in well under this; a hung session must not hang the report.
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 const MEDIA_TIMEOUT: Duration = Duration::from_secs(10);
-const LRCLIB_API: &str = "https://lrclib.net/api/";
-const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// How much of the running app's log the report shows.
 const LOG_LINES: usize = 60;
 
@@ -208,7 +201,7 @@ impl Output<'_> {
 
 /// `undertone-diagnose-<stamp>.txt` in `dir`, never overwriting a file that is already there
 /// (another run in the same second, or something planted in a shared temp dir).
-pub fn create_report_file(dir: &Path, stamp: &str) -> Result<(PathBuf, File), String> {
+fn create_report_file(dir: &Path, stamp: &str) -> Result<(PathBuf, File), String> {
     for attempt in 1..=20 {
         let name = if attempt == 1 {
             format!("undertone-diagnose-{stamp}.txt")
@@ -273,7 +266,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// `name: value`, with the values of one section lined up. An empty name continues the line above.
-pub fn field(name: &str, value: impl std::fmt::Display) -> String {
+fn field(name: &str, value: impl std::fmt::Display) -> String {
     let name = if name.is_empty() {
         String::new()
     } else {
@@ -291,7 +284,7 @@ pub struct Header {
     pub executable: Result<PathBuf, String>,
     pub report: Result<PathBuf, String>,
 }
-pub fn header_section(header: &Header) -> Section {
+fn header_section(header: &Header) -> Section {
     let path = |path: &Result<PathBuf, String>| match path {
         Ok(path) => path.display().to_string(),
         Err(error) => format!("unknown: {error}"),
@@ -326,7 +319,7 @@ pub struct Media {
     pub sources: Result<Vec<String>, String>,
     pub track: Result<Option<NowPlaying>, String>,
 }
-pub fn sources_section(sources: &Result<Vec<String>, String>) -> Section {
+fn sources_section(sources: &Result<Vec<String>, String>) -> Section {
     Section::new("Media sources", sources.clone())
 }
 
@@ -509,19 +502,7 @@ pub fn now_playing(raw: RawTrack) -> Result<NowPlaying, String> {
         })
 }
 
-/// How `media/windows.rs` classifies a session's app id.
-pub fn smtc_source(app_id: &str) -> Source {
-    let app_id = app_id.to_lowercase();
-    if app_id.contains("spotify") {
-        Source::Spotify
-    } else if app_id.contains("applemusic") || app_id.contains("apple-music") {
-        Source::AppleMusic
-    } else {
-        Source::System
-    }
-}
-
-pub fn track_section(
+fn track_section(
     track: &Result<Option<NowPlaying>, String>,
     settings: Option<&Settings>,
     now_ms: f64,
@@ -620,7 +601,7 @@ pub struct LyricsProbe {
     pub cache: CacheProbe,
     pub lookup: Lookup,
 }
-pub fn lyrics_section(probe: &Result<LyricsProbe, String>, now_secs: u64) -> Section {
+fn lyrics_section(probe: &Result<LyricsProbe, String>, now_secs: u64) -> Section {
     Section::new(
         "Lyrics (LRCLIB)",
         probe
@@ -659,7 +640,7 @@ fn lyrics_lines(probe: &LyricsProbe, now_secs: u64) -> Vec<String> {
     match &probe.lookup.result {
         Ok((Some(record), lyrics)) => {
             let delta = record.duration - probe.track_ms / 1000.0;
-            lines.push(field("match", record_name(record)));
+            lines.push(field("match", record.name()));
             lines.push(field(
                 "duration",
                 format!(
@@ -679,7 +660,7 @@ fn lyrics_lines(probe: &LyricsProbe, now_secs: u64) -> Vec<String> {
 }
 
 /// Status and line counts, never the text.
-pub fn describe(lyrics: &Lyrics) -> String {
+fn describe(lyrics: &Lyrics) -> String {
     let status = status_name(&lyrics.status);
     let mut parts = Vec::new();
     if let Some(synced) = &lyrics.synced {
@@ -706,20 +687,6 @@ fn status_name(status: &LyricsStatus) -> &'static str {
         LyricsStatus::NotFound => "not-found",
         LyricsStatus::Error => "error",
     }
-}
-fn record_name(record: &Record) -> String {
-    let mut name = format!(
-        "#{} {}",
-        record.id,
-        title_by(&record.track_name, &record.artist_name)
-    );
-    if !record.album_name.is_empty() {
-        name.push_str(&format!(" on {:?}", record.album_name));
-    }
-    if record.instrumental {
-        name.push_str(", instrumental");
-    }
-    name
 }
 /// LRCLIB's duration tiers (`matching::best`).
 fn tier(delta: f64) -> &'static str {
@@ -755,7 +722,7 @@ impl StoredSettings {
     }
 }
 /// The settings file read as `settings::open` reads it on start.
-pub fn read_settings(path: &Path) -> StoredSettings {
+fn read_settings(path: &Path) -> StoredSettings {
     match settings::read_file(path) {
         settings::Stored::Missing => StoredSettings::Missing,
         settings::Stored::Unusable(error) => StoredSettings::Unreadable(error),
@@ -769,7 +736,7 @@ pub fn read_settings(path: &Path) -> StoredSettings {
         }
     }
 }
-pub fn settings_section(
+fn settings_section(
     path: &Result<PathBuf, String>,
     stored: &Result<StoredSettings, String>,
     login_item: &Result<LoginItem, String>,
@@ -818,7 +785,7 @@ pub fn settings_section(
 /// Lyrics on or off, launch at login with the OS login item as it is now, and the shortcuts,
 /// ahead of the full settings. Whether another app holds a key combination only the running app
 /// can tell (Settings › Shortcuts).
-pub fn switch_lines(
+fn switch_lines(
     settings: &Settings,
     macos: bool,
     login_item: &Result<LoginItem, String>,
@@ -908,7 +875,7 @@ impl LoginItem {
 }
 /// The login item under the stored switch: where it is and what it starts, whether the OS lets it
 /// run, and what Undertone changes on start (the switch to match it, the item to start this copy).
-pub fn login_item_lines(item: &Result<LoginItem, String>, launch_at_login: bool) -> Vec<String> {
+fn login_item_lines(item: &Result<LoginItem, String>, launch_at_login: bool) -> Vec<String> {
     let item = match item {
         Ok(item) => item,
         Err(error) => return vec![field("login item", format!("unknown: {error}"))],
@@ -974,7 +941,7 @@ pub struct CacheDir {
     /// Entry count and total size; `None` while the directory does not exist.
     pub contents: Result<Option<(usize, u64)>, String>,
 }
-pub fn scan_cache(path: &Path) -> Result<Option<(usize, u64)>, String> {
+fn scan_cache(path: &Path) -> Result<Option<(usize, u64)>, String> {
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -989,7 +956,7 @@ pub fn scan_cache(path: &Path) -> Result<Option<(usize, u64)>, String> {
     }
     Ok(Some((count, bytes)))
 }
-pub fn cache_section(cache: &Result<CacheDir, String>) -> Section {
+fn cache_section(cache: &Result<CacheDir, String>) -> Section {
     Section::new(
         "Lyrics cache",
         cache.as_ref().map_err(Clone::clone).map(|cache| {
@@ -1023,7 +990,7 @@ pub struct Display {
     pub scale: Option<f64>,
     pub primary: bool,
 }
-pub fn display_line(index: usize, display: &Display) -> String {
+fn display_line(index: usize, display: &Display) -> String {
     let mut line = format!(
         "#{index} {}{}: {} at ({}, {})",
         or_text(&display.name, "(unnamed)"),
@@ -1052,7 +1019,7 @@ pub fn display_line(index: usize, display: &Display) -> String {
     }
     line
 }
-pub fn displays_section(displays: &Result<Vec<Display>, String>) -> Section {
+fn displays_section(displays: &Result<Vec<Display>, String>) -> Section {
     Section::new(
         "Displays",
         displays.as_ref().map_err(Clone::clone).map(|displays| {
@@ -1064,7 +1031,7 @@ pub fn displays_section(displays: &Result<Vec<Display>, String>) -> Section {
         }),
     )
 }
-pub fn desktop_section(lines: &Result<Vec<String>, String>) -> Section {
+fn desktop_section(lines: &Result<Vec<String>, String>) -> Section {
     Section::new("Desktop layer", lines.clone())
 }
 
@@ -1075,7 +1042,7 @@ pub struct RecentLog {
     /// The last `LOG_LINES` lines, oldest first; `None` when there is no log yet.
     pub lines: Result<Option<Vec<String>>, String>,
 }
-pub fn log_section(log: &Result<RecentLog, String>) -> Section {
+fn log_section(log: &Result<RecentLog, String>) -> Section {
     Section::new(
         "Recent log",
         log.as_ref().map_err(Clone::clone).map(|log| {
@@ -1199,37 +1166,14 @@ fn age(now_secs: u64, then_secs: u64) -> String {
     }
 }
 
-/// Days since 1970-01-01 to (year, month, day), proleptic Gregorian (Howard Hinnant's algorithm).
-fn civil(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let day_of_era = z.rem_euclid(146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let shifted_month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
-    let month = if shifted_month < 10 {
-        shifted_month + 3
-    } else {
-        shifted_month - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month as u32, day as u32)
-}
-pub(crate) fn utc_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
-    let (year, month, day) = civil((secs / 86_400) as i64);
-    let rest = secs % 86_400;
-    (year, month, day, rest / 3600, rest / 60 % 60, rest % 60)
-}
 /// `2026-10-06 09:05:00 UTC`.
-pub fn utc(secs: u64) -> String {
-    let (year, month, day, hour, minute, second) = utc_parts(secs);
+fn utc(secs: u64) -> String {
+    let (year, month, day, hour, minute, second) = applog::utc_parts(secs);
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
 }
 /// `20261006-090500`, for the report's file name.
-pub fn file_stamp(secs: u64) -> String {
-    let (year, month, day, hour, minute, second) = utc_parts(secs);
+fn file_stamp(secs: u64) -> String {
+    let (year, month, day, hour, minute, second) = applog::utc_parts(secs);
     format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
 }
 
@@ -1254,7 +1198,7 @@ fn config_text(key: &str) -> Result<String, String> {
 }
 /// Tauri's `app_data_dir` without an app: the OS data dir (`dirs::data_dir`) joined with the
 /// bundle identifier. Windows: the roaming AppData; macOS: `~/Library/Application Support`.
-pub fn app_data_dir(os: &str, identifier: &str, env: Env<'_>) -> Result<PathBuf, String> {
+fn app_data_dir(os: &str, identifier: &str, env: Env<'_>) -> Result<PathBuf, String> {
     let var = |name: &str| env_dir(env, name);
     let base = match os {
         "windows" => var("APPDATA").ok_or("APPDATA is not set")?,
@@ -1321,15 +1265,11 @@ async fn probe_lyrics(data_dir: Option<PathBuf>, track: Track, now_secs: u64) ->
             (Some(path), probe)
         }
     };
-    let lookup = match (lrclib_client(false), Url::parse(LRCLIB_API)) {
-        (Ok(client), Ok(base)) => lookup(&client, &base, &track).await,
-        (Err(error), _) => Lookup {
+    let lookup = match LrcLib::new() {
+        Ok(lrclib) => lookup(&lrclib, &track).await,
+        Err(error) => Lookup {
             requests: Vec::new(),
             result: Err(error),
-        },
-        (_, Err(error)) => Lookup {
-            requests: Vec::new(),
-            result: Err(error.to_string()),
         },
     };
     LyricsProbe {
@@ -1340,215 +1280,23 @@ async fn probe_lyrics(data_dir: Option<PathBuf>, track: Track, now_secs: u64) ->
     }
 }
 
-/// Configured like `LrcLib`'s client. `local_test` skips proxies for a server on 127.0.0.1.
-pub fn lrclib_client(local_test: bool) -> Result<Client, String> {
-    let mut builder = Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(LOOKUP_TIMEOUT)
-        .connect_timeout(Duration::from_secs(3))
-        .redirect(reqwest::redirect::Policy::none());
-    if local_test {
-        builder = builder.no_proxy();
-    }
-    builder.build().map_err(|error| error.to_string())
-}
-
-/// The provider's lookup (`LrcLib::lookup`: the exact get, a search, then a search with the
-/// cleaned-up title, each answer ranked by `matching::best`), keeping the record it accepts so the
-/// report can show its duration. Read-only: nothing is cached. Gives up after six seconds overall.
-pub async fn lookup(client: &Client, base: &Url, track: &Track) -> Lookup {
-    let deadline = tokio::time::Instant::now() + LOOKUP_TIMEOUT;
+/// The provider's lookup, keeping the record it accepts so the report can show its duration.
+/// Read-only: nothing is cached. Gives up at the lyrics service's deadline.
+async fn lookup(lrclib: &LrcLib, track: &Track) -> Lookup {
     let mut requests = Vec::new();
-    let result = lookup_steps(client, base, track, deadline, &mut requests).await;
-    Lookup { requests, result }
-}
-async fn lookup_steps(
-    client: &Client,
-    base: &Url,
-    track: &Track,
-    deadline: tokio::time::Instant,
-    log: &mut Vec<String>,
-) -> Result<(Option<Record>, Lyrics), String> {
-    if !track.duration_ms.is_finite()
-        || track.duration_ms < 0.0
-        || track.title.trim().is_empty()
-        || track.artist.trim().is_empty()
-    {
-        return Err("track metadata is incomplete: LRCLIB needs a title and an artist".into());
-    }
-    let seconds = track.duration_ms / 1000.0;
-    let label = format!(
-        "get {} on {:?}, {} s",
-        title_by(&track.title, &track.artist),
-        track.album,
-        round1(seconds)
-    );
-    let exact = fetch::<serde_json::Value>(
-        client,
-        base,
-        "get",
-        &[
-            ("track_name", track.title.clone()),
-            ("artist_name", track.artist.clone()),
-            ("album_name", track.album.clone()),
-            ("duration", seconds.to_string()),
-        ],
-        true,
-        deadline,
-    )
-    .await
-    .inspect_err(|error| log.push(format!("{label} -> {error}")))?;
-    // Like the app, an answer that isn't a usable record is a miss: search still gets its turn.
-    // The decode error isn't shown, since it can quote the record's text.
-    match exact.map(serde_json::from_value::<Record>) {
-        None => log.push(format!("{label} -> not found (404)")),
-        Some(Err(_)) => log.push(format!("{label} -> unusable record, searching")),
-        Some(Ok(record)) => {
-            if matching::best(track, std::slice::from_ref(&record)).is_some() {
-                log.push(format!("{label} -> {}, accepted", record_name(&record)));
-                let lyrics = record.into_lyrics(&track.key);
-                return Ok((Some(record), lyrics));
-            }
-            log.push(format!(
-                "{label} -> {}, rejected (delta {} s, or another title or artist)",
-                record_name(&record),
-                signed(record.duration - seconds, 1)
-            ));
-        }
-    }
-    if let Some(record) = search(client, base, track, &track.title, deadline, log).await? {
-        let lyrics = record.into_lyrics(&track.key);
-        return Ok((Some(record), lyrics));
-    }
-    let retry = matching::retry_title(&track.title);
-    if !retry.is_empty() && retry != track.title {
-        if let Some(record) = search(client, base, track, &retry, deadline, log).await? {
-            let lyrics = record.into_lyrics(&track.key);
-            return Ok((Some(record), lyrics));
-        }
-    }
-    Ok((None, empty(&track.key, LyricsStatus::NotFound)))
-}
-async fn search(
-    client: &Client,
-    base: &Url,
-    track: &Track,
-    title: &str,
-    deadline: tokio::time::Instant,
-    log: &mut Vec<String>,
-) -> Result<Option<Record>, String> {
-    let label = format!("search {}", title_by(title, &track.artist));
-    // One record at a time, like the app: a malformed one is skipped, not the whole answer.
-    let records = lrclib::records(
-        fetch::<Vec<serde_json::Value>>(
-            client,
-            base,
-            "search",
-            &[
-                ("track_name", title.to_owned()),
-                ("artist_name", track.artist.clone()),
-            ],
-            false,
-            deadline,
-        )
-        .await
-        .inspect_err(|error| log.push(format!("{label} -> {error}")))?
-        .unwrap_or_default(),
-    );
-    let seconds = track.duration_ms / 1000.0;
-    if let Some(record) = matching::best(track, &records) {
-        log.push(format!(
-            "{label} -> {}, picked {}",
-            count(records.len(), "result"),
-            record_name(record)
-        ));
-        return Ok(Some(record.clone()));
-    }
-    if records.is_empty() {
-        log.push(format!("{label} -> no results"));
-        return Ok(None);
-    }
-    let closest = records
-        .iter()
-        .map(|record| record.duration - seconds)
-        .filter(|delta| delta.is_finite())
-        .min_by(|a, b| a.abs().total_cmp(&b.abs()));
-    log.push(format!(
-        "{label} -> {}, none accepted{}",
-        count(records.len(), "result"),
-        closest
-            .map(|delta| format!(" (closest duration delta {} s)", signed(delta, 1)))
-            .unwrap_or_default()
-    ));
-    Ok(None)
-}
-async fn fetch<T: DeserializeOwned>(
-    client: &Client,
-    base: &Url,
-    endpoint: &str,
-    query: &[(&str, String)],
-    allow_404: bool,
-    deadline: tokio::time::Instant,
-) -> Result<Option<T>, String> {
-    let url = base.join(endpoint).map_err(|error| error.to_string())?;
-    let request = async {
-        let mut response = client
-            .get(url)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .query(query)
-            .send()
-            .await
-            .map_err(|error| error_chain(&error))?;
-        let status = response.status();
-        if allow_404 && status == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !status.is_success() {
-            return Err(format!("HTTP {}", status.as_u16()));
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-        {
-            return Err("response exceeds 2 MiB".into());
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| error_chain(&error))?
-        {
-            if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                return Err("response exceeds 2 MiB".into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| format!("invalid JSON: {error}"))
-    };
-    tokio::time::timeout_at(deadline, request)
-        .await
-        .map_err(|_| {
-            format!(
+    let outcome = tokio::time::timeout(DEADLINE, lrclib.find(track, &mut requests)).await;
+    let result = match outcome {
+        Ok(result) => result.map_err(|failure| failure.to_string()),
+        Err(_) => {
+            let message = format!(
                 "timed out (Undertone gives up after {} s)",
-                LOOKUP_TIMEOUT.as_secs()
-            )
-        })?
-}
-/// An error with its causes, which name the real problem (DNS, TLS, proxy).
-fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let cause_text = cause.to_string();
-        if !text.contains(&cause_text) {
-            text.push_str(": ");
-            text.push_str(&cause_text);
+                DEADLINE.as_secs()
+            );
+            requests.push(message.clone());
+            Err(message)
         }
-        source = cause.source();
-    }
-    text
+    };
+    Lookup { requests, result }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1558,14 +1306,16 @@ fn error_chain(error: &dyn std::error::Error) -> String {
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 mod native {
     use super::{
-        field, now_playing, session_line, smtc_source, windows_version, Approval, Display,
-        LoginItem, Media, RuntimeResult, SmtcSession, MEDIA_TIMEOUT,
+        field, now_playing, session_line, windows_version, Approval, Display, LoginItem, Media,
+        RuntimeResult, SmtcSession, MEDIA_TIMEOUT,
     };
     use crate::{
         contract::NowPlaying,
         desktop_layer::{self, geometry::Rect},
         login_item::{self, Here},
-        media::{epoch_ms, select_candidate, windows_sample_time, Candidate, RawTrack},
+        media::{
+            epoch_ms, select_candidate, smtc_source, windows_sample_time, Candidate, RawTrack,
+        },
     };
     use std::{
         ffi::c_void,
@@ -2157,28 +1907,22 @@ mod native {
         RuntimeResult,
     };
     use crate::{
-        desktop_layer::{
-            self,
-            geometry::{self, Rect},
-        },
+        desktop_layer::{self, geometry, macos::rect},
         login_item::{self, Here},
         media::{
             applescript::{self, Failure, Player, Reading},
-            epoch_ms,
+            epoch_ms, macos,
         },
     };
     use objc2::{
         class, msg_send,
         rc::{autoreleasepool, Retained},
         runtime::{AnyObject, NSObjectProtocol},
-        sel, AnyThread, MainThreadMarker,
+        sel, MainThreadMarker,
     };
     use objc2_app_kit::{NSScreen, NSWorkspace};
     use objc2_core_graphics::{CGWindowLevelForKey, CGWindowLevelKey};
-    use objc2_foundation::{
-        NSAppleEventDescriptor, NSAppleScript, NSAppleScriptErrorMessage, NSAppleScriptErrorNumber,
-        NSDictionary, NSNumber, NSRect, NSString,
-    };
+    use objc2_foundation::NSString;
     use std::{collections::HashMap, path::Path};
 
     const MAIN_THREAD: &str = "AppKit and AppleScript need the main thread";
@@ -2254,7 +1998,7 @@ mod native {
                 selected: false,
             };
             if info.process == super::Process::Running {
-                let status = automation_status(player.bundle_id());
+                let status = macos::automation_permission(player.bundle_id(), false);
                 info.automation = Some(status);
                 if super::automation_allows(status) {
                     let result = read(player);
@@ -2322,104 +2066,13 @@ mod native {
         })
     }
 
-    /// One read script, stamped halfway through the call like the app's.
+    /// One read script, compiled, run and stamped as the app does it.
     fn read(player: Player) -> Result<Option<(Reading, f64)>, Failure> {
-        let before = epoch_ms();
-        let text = run_script(player.read_script().source())?;
-        let sampled_at = applescript::midpoint(before, epoch_ms());
+        let (text, sampled_at) = macos::read_on_main(player.read_script())?;
         let reading = applescript::parse_reading(player, &text).map_err(Failure::other)?;
         Ok(reading.map(|reading| (reading, sampled_at)))
     }
 
-    /// Compiles and runs `source`; each script bounds its Apple events to 2 s.
-    fn run_script(source: &str) -> Result<String, Failure> {
-        autoreleasepool(|_| {
-            let script =
-                NSAppleScript::initWithSource(NSAppleScript::alloc(), &NSString::from_str(source))
-                    .ok_or_else(|| Failure::other("NSAppleScript rejected the script source"))?;
-            let mut info: Option<Retained<NSDictionary<NSString, AnyObject>>> = None;
-            // SAFETY: `executeAndReturnError:` takes that out-parameter and compiles the script
-            // first. It returns nil on failure, so the result is read as an Option.
-            let result: Option<Retained<NSAppleEventDescriptor>> =
-                unsafe { msg_send![&*script, executeAndReturnError: &mut info] };
-            let result = result.ok_or_else(|| failure(info.as_deref()))?;
-            Ok(result
-                .stringValue()
-                .map(|text| text.to_string())
-                .unwrap_or_default())
-        })
-    }
-    fn failure(info: Option<&NSDictionary<NSString, AnyObject>>) -> Failure {
-        let Some(info) = info else {
-            return Failure::other("AppleScript failed without details");
-        };
-        // SAFETY: Foundation's immutable NSString key constants.
-        let (number_key, message_key) =
-            unsafe { (NSAppleScriptErrorNumber, NSAppleScriptErrorMessage) };
-        let number = info
-            .objectForKey(number_key)
-            .and_then(|value| value.downcast::<NSNumber>().ok())
-            .map(|number| number.as_i64());
-        let message = info
-            .objectForKey(message_key)
-            .and_then(|value| value.downcast::<NSString>().ok())
-            .map(|message| message.to_string())
-            .unwrap_or_default();
-        Failure::new(number, message)
-    }
-
-    /// AEDeterminePermissionToAutomateTarget without asking: 0 granted, -1743 denied, -1744 not
-    /// decided yet, -600 not running. A diagnostic never shows the Automation prompt.
-    fn automation_status(bundle_id: &str) -> i32 {
-        const TYPE_APPLICATION_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
-        const TYPE_WILD_CARD: u32 = u32::from_be_bytes(*b"****");
-        /// Room for an AEDesc; only CoreServices reads or writes it (see `media/macos.rs`).
-        #[repr(C, align(8))]
-        struct AEDesc([u8; 16]);
-        #[link(name = "CoreServices", kind = "framework")]
-        extern "C" {
-            fn AECreateDesc(
-                type_code: u32,
-                data: *const std::ffi::c_void,
-                size: isize,
-                result: *mut AEDesc,
-            ) -> i16;
-            fn AEDisposeDesc(desc: *mut AEDesc) -> i16;
-            fn AEDeterminePermissionToAutomateTarget(
-                target: *const AEDesc,
-                event_class: u32,
-                event_id: u32,
-                ask_user_if_needed: u8,
-            ) -> i32;
-        }
-        let mut target = AEDesc([0; 16]);
-        // SAFETY: AECreateDesc copies `bundle_id`'s bytes into `target`, which is then only
-        // passed back to CoreServices and disposed of exactly once, after it was created.
-        unsafe {
-            let created = AECreateDesc(
-                TYPE_APPLICATION_BUNDLE_ID,
-                bundle_id.as_ptr().cast(),
-                bundle_id.len() as isize,
-                &mut target,
-            );
-            if created != 0 {
-                return created.into();
-            }
-            let status =
-                AEDeterminePermissionToAutomateTarget(&target, TYPE_WILD_CARD, TYPE_WILD_CARD, 0);
-            AEDisposeDesc(&mut target);
-            status
-        }
-    }
-
-    fn rect(frame: NSRect) -> Rect {
-        Rect {
-            x: frame.origin.x,
-            y: frame.origin.y,
-            width: frame.size.width,
-            height: frame.size.height,
-        }
-    }
     /// NSScreen's frames, flipped to Quartz points like the desktop layer compares them.
     pub fn displays() -> Result<Vec<Display>, String> {
         let mtm = MainThreadMarker::new().ok_or(MAIN_THREAD)?;
@@ -2515,8 +2168,10 @@ mod tests {
     use super::*;
     use crate::{
         contract::{LyricsSource, Mode},
-        media::applescript::parse_reading,
+        lyrics::{empty, lrclib::USER_AGENT},
+        media::{applescript::parse_reading, smtc_source},
     };
+    use reqwest::Url;
     use std::sync::{Arc, Mutex};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -2810,7 +2465,7 @@ mod tests {
     #[tokio::test]
     async fn the_exact_match_is_accepted_and_its_record_kept() {
         let (base, requests, server) = serve(vec![(200, json(&record()))]).await;
-        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        let lookup = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
         server.await.unwrap();
         let (matched, lyrics) = lookup.result.unwrap();
         assert_eq!(matched.unwrap().id, 7);
@@ -2845,10 +2500,10 @@ mod tests {
             (200, json(&vec![record()])),
         ])
         .await;
-        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &decorated).await;
+        let lookup = lookup(&LrcLib::build(base, true).unwrap(), &decorated).await;
         server.await.unwrap();
         assert_eq!(lookup.result.unwrap().0.unwrap().id, 7);
-        assert!(lookup.requests[0].ends_with("-> not found (404)"));
+        assert!(lookup.requests[0].ends_with("-> not found"));
         assert!(
             lookup.requests[1]
                 .ends_with("-> 1 result, none accepted (closest duration delta +20.0 s)"),
@@ -2872,7 +2527,7 @@ mod tests {
             ),
         ])
         .await;
-        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        let lookup = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
         server.await.unwrap();
         assert_eq!(lookup.result.unwrap().0.unwrap().id, 7);
         assert!(
@@ -2892,7 +2547,7 @@ mod tests {
         found.id = 9;
         let (base, requests, server) =
             serve(vec![(200, json(&broken)), (200, json(&vec![found]))]).await;
-        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        let lookup = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
         server.await.unwrap();
         let (matched, lyrics) = lookup.result.unwrap();
         assert_eq!(matched.unwrap().id, 9);
@@ -2917,7 +2572,7 @@ mod tests {
         let mut far = record();
         far.duration = 190.0;
         let (base, _, server) = serve(vec![(200, json(&far)), (200, "[]".into())]).await;
-        let lookup = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        let lookup = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
         server.await.unwrap();
         let (matched, lyrics) = lookup.result.unwrap();
         assert!(matched.is_none());
@@ -2930,39 +2585,35 @@ mod tests {
 
     #[tokio::test]
     async fn errors_keep_the_requests_made_so_far() {
-        let (base, _, server) = serve(vec![(404, "{}".into()), (503, "{}".into())]).await;
-        let failed = lookup(&lrclib_client(true).unwrap(), &base, &track()).await;
+        let (base, _, server) = serve(vec![(404, "{}".into()), (403, "{}".into())]).await;
+        let failed = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
         server.await.unwrap();
-        assert_eq!(failed.result.unwrap_err(), "HTTP 503");
+        assert_eq!(failed.result.unwrap_err(), "LRCLIB returned HTTP 403");
         assert_eq!(failed.requests.len(), 2);
-        assert!(failed.requests[1].ends_with("-> HTTP 503"));
+        assert!(failed.requests[1].ends_with("-> LRCLIB returned HTTP 403"));
 
         let incomplete = Track {
             artist: " ".into(),
             ..track()
         };
         let base = Url::parse("http://127.0.0.1:9/api/").unwrap();
-        let skipped = lookup(&lrclib_client(true).unwrap(), &base, &incomplete).await;
-        assert!(skipped.requests.is_empty());
-        assert!(skipped.result.unwrap_err().contains("incomplete"));
+        // Like the app, a track LRCLIB can't match has no lyrics, without a request.
+        let skipped = lookup(&LrcLib::build(base, true).unwrap(), &incomplete).await;
+        assert_eq!(skipped.result.unwrap().1.status, LyricsStatus::NotFound);
+        assert_eq!(
+            skipped.requests,
+            ["no request: LRCLIB needs a length, a title and an artist"]
+        );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_silent_server_times_out_with_a_clear_reason() {
         // Accepts connections (the OS backlog does) but never answers.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = Url::parse(&format!("http://{}/api/", listener.local_addr().unwrap())).unwrap();
-        let mut log = Vec::new();
-        let result = lookup_steps(
-            &lrclib_client(true).unwrap(),
-            &base,
-            &track(),
-            tokio::time::Instant::now(),
-            &mut log,
-        )
-        .await;
-        assert!(result.unwrap_err().starts_with("timed out"));
-        assert!(log[0].ends_with("-> timed out (Undertone gives up after 6 s)"));
+        let timed_out = lookup(&LrcLib::build(base, true).unwrap(), &track()).await;
+        assert!(timed_out.result.unwrap_err().contains("timed out"));
+        assert!(timed_out.requests.last().unwrap().contains("timed out"));
         drop(listener);
     }
 

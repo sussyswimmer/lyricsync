@@ -1,6 +1,6 @@
 # Native acceptance
 
-The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, and the checks the 2026-10-15 fixes need. Log what you find in [HANDOFF.md](HANDOFF.md), and tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
+The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, and the checks the 2026-10-15 fixes need. Tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
 
 Run on macOS 14 (the minimum) and the current release, and on Windows 10 and 11.
 

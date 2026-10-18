@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
+import { clamp } from "./math";
 
 /** Lyric, highlight and dim colors as #rrggbb. */
 export type Palette = Settings["colors"];
@@ -50,7 +51,6 @@ export function hexToHsl(hex: string): [number, number, number] {
   return rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255);
 }
 
-const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
 function buckets(rgba: ArrayLike<number>): Bucket[] {
   const sums = new Map<number, { r: number; g: number; b: number; n: number }>();

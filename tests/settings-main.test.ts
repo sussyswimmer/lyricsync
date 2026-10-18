@@ -182,7 +182,7 @@ describe("settings window: shortcut status", () => {
     expect(messages(host.children[1] as FakeElement)[0]).toBe("Not a usable combination.");
   });
 
-  it("with an older core that rejects both v3 commands, rows show no status and recording still works", async () => {
+  it("when both shortcut commands fail, rows show no status and recording still works", async () => {
     const core = scriptedBridge({
       get_shortcuts_status: () => Promise.reject(new Error("unknown command")),
       suspend_shortcuts: () => Promise.reject(new Error("unknown command")),
@@ -198,17 +198,42 @@ describe("settings window: shortcut status", () => {
   });
 });
 
-describe("settings window: an older core", () => {
-  it("boots on settings without the contract v3 fields, showing their defaults", async () => {
-    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-    delete old.enabled;
-    delete old.launchAtLogin;
-    delete old.shortcuts;
-    const core = scriptedBridge({ get_settings: () => Promise.resolve(old) });
-    const root = await boot(core);
-    expect(shortcutsGroup(root).all("sc-key").map((k) => k.textContent)).toEqual(["⌥⇧⌘L", "⌥⇧⌘]", "⌥⇧⌘["]);
+describe("settings window: get_settings failing", () => {
+  it("shows no panel until the stored settings arrive, so an edit can't save defaults over them", async () => {
+    vi.useFakeTimers();
+    const stored: Settings = { ...structuredClone(DEFAULT_SETTINGS), colors: { lyric: "#111111", highlight: "#222222", dim: "#333333" } };
+    let fail = true;
+    const core = scriptedBridge({ get_settings: () => (fail ? Promise.reject(new Error("ipc")) : Promise.resolve(structuredClone(stored))) });
+    env.bridge = core.bridge;
+    vi.resetModules();
+    await import("../src/settings/main");
+    const host = (document as unknown as { getElementById(id: string): FakeElement }).getElementById("app");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(host.children).toHaveLength(0);
+    fail = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.children).toHaveLength(2);
+    const root = host.children[1] as FakeElement;
     const general = root.all("group").find((g) => g.one("group-title").textContent === "General") as FakeElement;
-    expect(general.all("switch").map((s) => s.checked)).toEqual([true, false]);
+    expect(general.all("switch")).toHaveLength(2);
+    expect(core.calls("update_settings")).toEqual([]);
+  });
+
+  it("takes a settings-changed echo that arrives while it waits", async () => {
+    vi.useFakeTimers();
+    const core = scriptedBridge({ get_settings: () => Promise.reject(new Error("ipc")) });
+    env.bridge = core.bridge;
+    vi.resetModules();
+    await import("../src/settings/main");
+    const host = (document as unknown as { getElementById(id: string): FakeElement }).getElementById("app");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(host.children).toHaveLength(0);
+    core.emit("settings-changed", { ...structuredClone(DEFAULT_SETTINGS), launchAtLogin: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(host.children).toHaveLength(2);
+    const root = host.children[1] as FakeElement;
+    const general = root.all("group").find((g) => g.one("group-title").textContent === "General") as FakeElement;
+    expect(general.all("switch").map((s) => s.checked)).toEqual([true, true]);
   });
 });
 

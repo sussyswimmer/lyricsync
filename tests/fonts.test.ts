@@ -10,7 +10,7 @@ const ZH_HANS = "灯笼漂过安静的河面，我们说好再见";
 const ZH_HANT = "燈籠漂過安靜的河面，我們說好再見";
 const KO = "작은 불빛이 창문을 두드려요";
 
-// Regression (cjk-fallback-order): one fixed CJK order for every song set Chinese lyrics' shared Han
+// One fixed CJK order for every song set Chinese lyrics' shared Han
 // characters in Japanese faces (and simplified-only ones in Chinese faces, so a line mixed the two),
 // and Japanese in a Chinese face with the sans fonts.
 describe("cjkLang: one language per song", () => {
