@@ -181,6 +181,14 @@ describe("debug flags in the docs", () => {
     const missing = flags.filter((flag) => !new RegExp(`(?<![\\w-])${flag}(?![\\w-])`).test(text));
     expect(missing).toEqual([]);
   });
+
+  // Contract v4: the forced look for QA (`--look`, any build) is spelled out where people look for it.
+  it("--look is explained in the README with its grammar and how to pass it", () => {
+    expect([...appFlags()]).toContain("--look");
+    const readme = read("README.md");
+    expect(readme).toContain("--look=<style>[,<family>[,<curve>]]");
+    expect(readme).toContain("pnpm tauri dev -- -- --look=lens");
+  });
 });
 
 // Regression (docs-drift): LYRICS.md said "The shared contract is v2" a version after v3 landed. A claim

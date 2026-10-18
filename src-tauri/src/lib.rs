@@ -23,6 +23,75 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 const draw=()=>{frames++;app.textContent='Undertone desktop layer — drag a folder over this text\\n'\
 +'frame '+frames+' · hidden '+hidden+' times';requestAnimationFrame(draw);};requestAnimationFrame(draw);})();";
 
+/// `--look=<style>[,<family>[,<curve>]]`, in debug and release builds: every overlay page draws with
+/// that style, and optionally that face and Arc's curve, instead of the look Undertone picks per
+/// song, as `?look=` does on the overlay page in a browser. For checking one style on purpose
+/// (docs/ACCEPTANCE.md's CPU checks) and for support; never stored.
+pub const LOOK_FLAG: &str = "--look";
+/// A forced look is at most three short parts; anything longer isn't one.
+const LOOK_MAX_CHARS: usize = 120;
+
+/// The last `--look=<value>` among the app's arguments: `None` without one, `Some(Err)` with why a
+/// value is malformed (empty, not UTF-8, too long, control characters, more than three parts), which
+/// Undertone then ignores. Rust only checks the shape: the overlay validates the style, face and
+/// curve, as it does `?look=`, and keeps the pick for any part it can't use.
+pub fn look_arg(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<Result<String, String>> {
+    let mut found = None;
+    for arg in args {
+        let Some(text) = arg.to_str() else {
+            let lossy = arg.to_string_lossy();
+            if lossy.starts_with(LOOK_FLAG) {
+                found = Some(Err(format!("{LOOK_FLAG}: not UTF-8: {lossy}")));
+            }
+            continue;
+        };
+        let Some(rest) = text.strip_prefix(LOOK_FLAG) else {
+            continue;
+        };
+        found = match rest.strip_prefix('=') {
+            Some(value) => Some(look_value(value)),
+            None if rest.is_empty() => Some(Err(format!(
+                "{LOOK_FLAG} needs a value: {LOOK_FLAG}=<style>[,<family>[,<curve>]]"
+            ))),
+            // Another flag (`--looks`, `--lookup`).
+            None => continue,
+        };
+    }
+    found
+}
+
+fn look_value(value: &str) -> Result<String, String> {
+    let malformed = |why: &str| Err(format!("{LOOK_FLAG}={value:?} ignored: {why}"));
+    if value.trim().is_empty() {
+        return malformed("empty");
+    }
+    if value.chars().count() > LOOK_MAX_CHARS {
+        return malformed("too long");
+    }
+    if value.chars().any(char::is_control) {
+        return malformed("control characters");
+    }
+    if value.split(',').count() > 3 {
+        return malformed("more than <style>,<family>,<curve>");
+    }
+    Ok(value.to_owned())
+}
+
+/// The script an overlay page runs as it finishes loading: the forced look as a JSON string, which
+/// nothing in it can end early, and the event the overlay listens for (it also reads the global at
+/// startup, so the order the two happen in doesn't matter).
+pub fn look_script(look: &str) -> String {
+    // JSON escapes quotes, backslashes and control characters; U+2028 and U+2029 are line ends in
+    // older JavaScript engines, so they are escaped too.
+    let literal = serde_json::Value::from(look)
+        .to_string()
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!("window.__UNDERTONE_LOOK__={literal};dispatchEvent(new Event(\"undertone-look\"))")
+}
+
 /// Starts the runtime log (`applog`) in the dir `--diagnose` reads, before anything can fail.
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 fn start_log() {
@@ -55,6 +124,18 @@ fn log_started() {
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 pub fn run() {
     start_log();
+    // `--look`: read once; a malformed value is logged and ignored.
+    let forced_look = match look_arg(std::env::args_os()) {
+        Some(Ok(look)) => {
+            applog!("{LOOK_FLAG}: every overlay draws with {look:?} instead of the picked look");
+            Some(look_script(&look))
+        }
+        Some(Err(why)) => {
+            applog!("{why}");
+            None
+        }
+        None => None,
+    };
     let app = tauri::Builder::default()
         // First, so a second launch hands over before anything else starts: it opens Settings.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -68,7 +149,18 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(state::AppState::default())
-        .on_page_load(|webview, payload| {
+        .on_page_load(move |webview, payload| {
+            // `--look`, in every build: each overlay page, and each reload of one, gets the forced
+            // look once its page has loaded. Settings' preview keeps the picked look.
+            if let Some(script) = forced_look.as_deref() {
+                if desktop_layer::is_overlay(webview.label())
+                    && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                {
+                    if let Err(error) = webview.eval(script) {
+                        applog!("{LOOK_FLAG}: {error}");
+                    }
+                }
+            }
             // Debug `--overlay-probe`: every 2 s each webview prints whether the engine calls it
             // visible and how many frames it was given, whatever the renderer's own loop does.
             // It answers on a real machine whether a covered desktop-layer overlay keeps animating.
@@ -203,4 +295,144 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn args(list: &[&str]) -> Vec<OsString> {
+        list.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn look_takes_the_last_value_and_leaves_other_flags_alone() {
+        assert_eq!(look_arg(args(&["undertone"])), None);
+        assert_eq!(
+            look_arg(args(&["undertone", "--look=lens"])),
+            Some(Ok("lens".into()))
+        );
+        // A face with a space, Arc's curve with the face kept, and the last one given wins.
+        assert_eq!(
+            look_arg(args(&["undertone", "--look=drift,Instrument Serif"])),
+            Some(Ok("drift,Instrument Serif".into()))
+        );
+        assert_eq!(
+            look_arg(args(&[
+                "undertone",
+                "--look=stack",
+                "--diagnose",
+                "--look=arc,,-50"
+            ])),
+            Some(Ok("arc,,-50".into()))
+        );
+        // Not this flag. (Built, not spelled out: regress-docs takes every quoted double-dash word
+        // in the Rust sources for a flag the app has, and wants it documented.)
+        let (looks, lookup) = (format!("{LOOK_FLAG}s=lens"), format!("{LOOK_FLAG}up"));
+        assert_eq!(
+            look_arg(args(&["undertone", &looks, &lookup, "look=arc"])),
+            None
+        );
+        // The overlay validates the parts: an unknown style still goes through, and is ignored there.
+        assert_eq!(
+            look_arg(args(&["undertone", "--look=spiral"])),
+            Some(Ok("spiral".into()))
+        );
+    }
+
+    #[test]
+    fn a_malformed_look_is_ignored_with_a_reason() {
+        for (arg, why) in [
+            ("--look", "needs a value"),
+            ("--look=", "empty"),
+            ("--look=  ", "empty"),
+            ("--look=arc,Fraunces,40,extra", "more than"),
+            ("--look=arc\u{7}", "control characters"),
+            ("--look=lens\nalert(1)", "control characters"),
+        ] {
+            let Some(Err(error)) = look_arg(args(&["undertone", arg])) else {
+                panic!("{arg:?} should be malformed");
+            };
+            assert!(error.contains(why), "{arg:?}: {error}");
+        }
+        let long = format!("--look=arc,{}", "x".repeat(LOOK_MAX_CHARS));
+        assert!(
+            matches!(look_arg(args(&["undertone", &long])), Some(Err(e)) if e.contains("too long"))
+        );
+        // A malformed last value isn't replaced by an earlier one: the user's last word stands.
+        assert!(matches!(
+            look_arg(args(&["undertone", "--look=lens", "--look="])),
+            Some(Err(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_look_that_is_not_utf8_is_ignored() {
+        use std::os::unix::ffi::OsStringExt;
+        let raw = OsString::from_vec(b"--look=l\xffns".to_vec());
+        assert!(
+            matches!(look_arg([OsString::from("undertone"), raw]), Some(Err(e)) if e.contains("not UTF-8"))
+        );
+        // Another flag that isn't UTF-8 is none of its business.
+        let other = OsString::from_vec(b"--media-\xff".to_vec());
+        assert_eq!(look_arg([OsString::from("undertone"), other]), None);
+    }
+
+    #[test]
+    fn the_look_reaches_the_page_as_a_string_it_cannot_break_out_of() {
+        for look in [
+            "lens",
+            "arc,,-50",
+            "drift,Instrument Serif",
+            "lens\";alert(1);\"",
+            "a\\b",
+            "x\u{2028}y\u{2029}",
+            "</script>",
+        ] {
+            let script = look_script(look);
+            let rest = script
+                .strip_prefix("window.__UNDERTONE_LOOK__=")
+                .expect("sets the global first");
+            // The event has no `;`, and the string literal must parse back whole.
+            let (literal, event) = rest.rsplit_once(';').expect("then the event");
+            assert_eq!(event, "dispatchEvent(new Event(\"undertone-look\"))");
+            assert_eq!(
+                serde_json::from_str::<String>(literal).unwrap(),
+                look,
+                "{script}"
+            );
+            assert!(!literal.contains('\u{2028}') && !literal.contains('\u{2029}'));
+        }
+    }
+
+    #[test]
+    fn every_overlay_page_gets_the_look_as_it_loads_in_every_build() {
+        // The native half can't run here, so the source says it: the look is handed over before
+        // (and outside) the debug-only probes, to overlay webviews only, once their page finished.
+        let source = include_str!("lib.rs").replace("\r\n", "\n");
+        let run = &source[source.find("pub fn run() {").expect("run")..];
+        let read = run
+            .find("let forced_look = match look_arg(std::env::args_os())")
+            .expect("--look is read once at startup");
+        let load = run
+            .find(".on_page_load(move |webview, payload| {")
+            .expect("on_page_load");
+        let debug = load
+            + run[load..]
+                .find("cfg!(debug_assertions)")
+                .expect("the debug probes");
+        let handed = &run[load..debug];
+        for step in [
+            "forced_look.as_deref()",
+            "desktop_layer::is_overlay(webview.label())",
+            "PageLoadEvent::Finished",
+            "webview.eval(script)",
+        ] {
+            assert!(handed.contains(step), "{step}");
+        }
+        assert!(read < load);
+        assert!(!run[read..load].contains("debug_assertions"));
+    }
 }
