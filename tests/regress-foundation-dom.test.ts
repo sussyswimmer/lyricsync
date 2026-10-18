@@ -1356,3 +1356,53 @@ describe("the overlay's frame loop on a real stage", () => {
     controller.destroy();
   });
 });
+
+// Regression (prepare-timer-after-teardown): a Drift's next-line prepare timer outlived the mode (and
+// its DOM), and a stage built again when a face finished loading after it was destroyed.
+describe("teardown", () => {
+  it("leaves no timer of a destroyed Drift behind", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode } = drift(0);
+      mode.paint(cue(0, 1200));
+      // the next line's prepare is waiting for its idle slice
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      mode.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does nothing in a prepare step that was already due when the Drift was destroyed", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode } = drift(0);
+      mode.paint(cue(0, 1200));
+      // the step is already on its way: clearing its timer no longer stops it
+      const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+      mode.destroy();
+      clear.mockRestore();
+      const made = vi.fn((tag: string) => new FakeElement(tag));
+      vi.stubGlobal("document", { createElement: made });
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      vi.runAllTimers();
+      expect(made).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("builds nothing in a destroyed stage when its face finishes loading", async () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    const build = vi.spyOn(DriftMode.prototype, "build");
+    // a face of its own to load: the stage builds again once it is in
+    s.setPickedLook(pick("stack", { font: { family: "Syne", weight: 800 } }));
+    const before = build.mock.calls.length;
+    s.destroy();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(build.mock.calls.length).toBe(before);
+  });
+});

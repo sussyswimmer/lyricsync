@@ -307,7 +307,8 @@ export class OverlayController {
     this.artworkTimer = null;
     void this.palettes.get(key, artwork).then((palette) => {
       const current = this.nowPlaying;
-      if (current?.trackKey !== key || current.artwork !== artwork) return;
+      // destroyed meanwhile: nothing more for the stage, and no grace timer left behind
+      if (this.stopped || current?.trackKey !== key || current.artwork !== artwork) return;
       if (palette || artwork !== null) {
         this.stage.setPalette(palette);
         this.kick();

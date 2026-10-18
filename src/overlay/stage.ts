@@ -239,6 +239,7 @@ export class LyricStage {
   private clearAt = 0;
   private fontKey = "";
   private fontTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
@@ -445,12 +446,14 @@ export class LyricStage {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
     this.dprQuery?.removeEventListener("change", this.onDpr);
     this.dprQuery = null;
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     if (this.fontTimer) clearTimeout(this.fontTimer);
+    this.fontTimer = null;
     this.scene?.mode?.destroy();
     this.root.remove();
     this.host.classList.remove("ut-stage", "ut-hidden");
@@ -520,7 +523,8 @@ export class LyricStage {
    */
   private rebuild(force = false): void {
     const scene = this.scene;
-    if (!scene) return;
+    // a face or a font subset that finishes loading after destroy() builds nothing
+    if (!scene || this.destroyed) return;
     const look = this.look(scene);
     const keys = lookKeys(look);
     if (!force && keys.shape === this.shapeKey) {

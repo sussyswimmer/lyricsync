@@ -254,6 +254,8 @@ export class DriftMode implements ModeRenderer {
   private dirty = false;
   /** freeze() stopped everything in place: the next paint sets it going again */
   private frozen = false;
+  /** destroy() ran (and no build since): anything still scheduled does nothing */
+  private destroyed = false;
 
   constructor(depth: number) {
     this.depth = depth;
@@ -283,6 +285,7 @@ export class DriftMode implements ModeRenderer {
 
   build(host: HTMLElement, lines: readonly Line[], look: Look): void {
     this.destroy();
+    this.destroyed = false;
     this.look = look;
     this.params = motionParams(look);
     this.motionKey = paramsKey(this.params);
@@ -438,7 +441,9 @@ export class DriftMode implements ModeRenderer {
     this.frozen = true;
   }
 
+  /** Stops everything and removes the DOM; every timer it set is cleared, and one already due does nothing. */
   destroy(): void {
+    this.destroyed = true;
     this.timeline.cancel();
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.prepareTimer = null;
@@ -767,11 +772,12 @@ export class DriftMode implements ModeRenderer {
     if (this.prepareTimer) clearTimeout(this.prepareTimer);
     this.prepareTimer = null;
     const look = this.look;
-    if (!look || look.unsynced || typeof setTimeout !== "function") return;
+    if (this.destroyed || !look || look.unsynced || typeof setTimeout !== "function") return;
     const box = this.box;
     const step = (): void => {
       this.prepareTimer = null;
-      if (this.box !== box || !box) return;
+      // destroyed or rebuilt since: a step that was already due does nothing
+      if (this.destroyed || this.box !== box || !box) return;
       // the line in focus finishes mounting first
       if (this.karaoke?.line.mounting) {
         this.prepareTimer = setTimeout(step, PREPARE_GAP_MS);

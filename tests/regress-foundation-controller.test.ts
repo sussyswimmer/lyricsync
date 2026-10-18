@@ -914,3 +914,25 @@ describe("the look", () => {
     controller.destroy();
   });
 });
+
+// Regression (palette-after-teardown): a palette worked out after the controller was destroyed still
+// went to the stage, and a track without art still armed its grace timer.
+describe("teardown", () => {
+  it("hands the stage nothing that arrives after destroy", async () => {
+    const { bridge, stage, controller } = setup();
+    await controller.start();
+    bridge.emit("now-playing", np("a", { artwork: "data:cover" }));
+    controller.destroy();
+    await settle();
+    expect(stage.palettes).toHaveLength(0);
+
+    const other = setup();
+    await other.controller.start();
+    other.bridge.emit("now-playing", np("b"));
+    other.controller.destroy();
+    await settle();
+    vi.advanceTimersByTime(5000);
+    await settle();
+    expect(other.stage.palettes).toHaveLength(0);
+  });
+});
