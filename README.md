@@ -4,7 +4,7 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 
 - **Players:** Spotify on macOS 14+ and Windows 10/11, and the Music app (Apple Music) on macOS. On Windows, other players that show up in the Windows media controls work too.
 - **Lyrics:** fetched from [LRCLIB](https://lrclib.net), a free community lyrics database. No account and no API key.
-- **A look for each song:** Arc, Lens, Drift or Stack, in one of eight fonts, picked by Undertone for every song. You set the size, height, effects (how much the words move), glow, opacity and colors. [docs/USER_GUIDE.md](docs/USER_GUIDE.md) explains every setting.
+- **A look for each song:** Arc, Lens, Drift or Stack, in one of eight fonts, picked by Undertone for every song. They always sit in the middle of the screen; you set the size, effects (how much the words move), glow, opacity and colors. [docs/USER_GUIDE.md](docs/USER_GUIDE.md) explains every setting.
 - **Effects mode** (on by default): each song moves its own way. Words rise, bounce, sway, wave, pulse or drop into place. A song's big moments splash: droplets, sparks, confetti, ripples or glints. A word that names something you can draw, such as *iced tea*, *rain*, *roses* or *the moon*, gets a tiny picture beside it as it's sung. The 49 pictures come with the app, so this works offline. Turn the switch off in **Settings › Look** or the tray's **Effects ▸** menu to give every song the same calm rise.
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
@@ -75,7 +75,7 @@ If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Al
 
 ### Settings
 
-The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **Picked for this song** names the style and font Undertone picked for that song, and why: you don't choose them. **General** turns the lyrics on or off and sets **Launch at login**; **Look** has the **Effects mode** switch (each song's own motion, splashes and word pictures) and sets the size, height, **Effects** (from Calm to Lively: how much words rise, swell and ripple), glow and opacity; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
+The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **Picked for this song** names the style and font Undertone picked for that song, and why: you don't choose them. **General** turns the lyrics on or off and sets **Launch at login**; **Look** has the **Effects mode** switch (each song's own motion, splashes and word pictures) and sets the size, **Effects** (from Calm to Lively: how much words rise, swell and ripple), glow and opacity; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
 
 ## Troubleshooting
 
@@ -228,7 +228,7 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v5. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
+[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v6. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.
 

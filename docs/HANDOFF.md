@@ -459,3 +459,22 @@ Decisions you can reverse:
 Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §11 step 3 has the checks.
 Needs from Codex: nothing.
 Contract: unchanged (v5).
+
+
+## 2026-10-19 · Claude Code · Lyrics always in the middle, no Height setting (contract v6)
+Done: Maxwell: "ensure that lyrics are always centered, no option for height, only size".
+- **Contract v6:** nothing added or removed. `Settings.yPos` is still validated and stored (TS, the mock store, Rust) but not read since v6, as `mode`, `font` and `curve` haven't been since v4. Settings saved by older builds keep their value; it moves nothing.
+- **Placement** (`resolveLook`): `look.y` is always the middle of the stage. On the desktop that is the middle of the display's work area (below the menu bar, clear of the Dock and the taskbar); in the settings preview, the middle of the miniature desktop under its menu bar.
+  - Drift and Stack center the focus line on it. The code that moved a tall focus line in from an edge (`EDGE_PAD`) went with the Height: a line is at most 45% of the stage, so it always fits.
+  - Arc centers the song's widest line, its middle as far above the middle as its ends below (`arcGeometry(look, extent)`); shorter lines share its middle, so lines don't move up and down from one to the next. The clamp that moved the curve in from the top or bottom went with the Height; the bend's limit still keeps a deep curve whole.
+  - Lens centers the focus line, and still moves the pair up on a stage too short for the next line below it (`focusCenter`).
+  - The loading pulse, the ♪ and the not-found chip were already drawn at `look.y`.
+- **Settings › Look:** Effects mode, Size, Effects, Glow and Opacity; the Height slider is gone.
+- **Checked** in Chromium with the mock bridge and a stored `yPos` of 10, on a 900 px stage: the focus line's center is at 450.3 px in Drift and Stack, 450.5 in Lens, and 448.7, 453.1 and 447.1 in Arc at curves 38, −60 and 100. In the settings preview (light and dark) it is at 120.6 in a stage whose middle is 122.
+Tests: 1189 vitest in 33 files. Changed or new: placement in the middle whatever `yPos` says, Arc centering the widest line, Lens's next line on a short stage, the Look group without Height, the guide without a Height section, and no stage rebuild for a `yPos` change. Coverage is 98.6% of statements. 276 Rust tests (1 ignored). `pnpm build`, `cargo fmt` and clippy pass.
+Decisions you can reverse:
+- `yPos` stays in the contract, unread, rather than removed (SPEC: add fields, don't remove them).
+- Arc centers the song's widest line rather than each line, so every line keeps the same height.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §13 has the checks.
+Needs from Codex: nothing.
+Contract: v6 (`yPos` no longer read).

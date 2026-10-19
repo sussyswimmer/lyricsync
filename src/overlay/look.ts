@@ -62,7 +62,7 @@ export interface Look {
   weight: number;
   /** font size of the current line, px (Settings.size, scaled to the stage and by the look's scale) */
   size: number;
-  /** vertical center of the current line, px from the top */
+  /** vertical center of the current line, px from the top: always the middle of the stage */
   y: number;
   width: number;
   height: number;
@@ -197,15 +197,14 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
   const face = fontFor(pick.font.family);
   const scale = frame.height / (frame.referenceHeight ?? REFERENCE_HEIGHT);
   const size = Math.max(1, settings.size * scale * pick.scale);
-  // Height runs 0–100, but the focus line always stays whole on screen.
-  const margin = Math.min(size * 0.75, frame.height / 2);
   const look: Omit<Look, "bloom"> = {
     colors: settings.autoColor && palette ? palette : settings.colors,
     font: stackFor(face, frame.lang ?? null),
     family: face.family,
     weight: pick.font.weight || face.weight,
     size,
-    y: Math.min(frame.height - margin, Math.max(margin, (frame.height * settings.yPos) / 100)),
+    // The lyrics always sit in the middle of the display's work area (Settings.yPos is not read).
+    y: frame.height / 2,
     width: frame.width,
     height: frame.height,
     curve: pick.curve / 100,

@@ -4,14 +4,14 @@ Undertone draws the lyrics of the song you're playing on your desktop, above the
 
 To turn them off, change how they look or set up the shortcuts, open **Settings…** from the Undertone icon in the menu bar (macOS) or system tray (Windows), or open Undertone again while it's running. The settings window also opens by itself the first time you start Undertone. Every change applies right away and is saved.
 
-The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop. Height matches what you'll see. Under the preview, **Picked for this song** says which style and font Undertone picked for the song in the preview, and why (see [Look](#look)).
+The top of the settings window is a **live preview**: a small copy of your desktop playing the current song with your settings. When nothing is playing, it plays a short demo song (marked **Demo**). To stay readable, lyrics in the preview are drawn larger, relative to its small screen, than they are on your desktop, and sit in the middle of it, as they do on your desktop. Under the preview, **Picked for this song** says which style and font Undertone picked for the song in the preview, and why (see [Look](#look)).
 
 On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automation permission). If that's turned off for an app that's open, a notice under the preview says so, for example "Undertone can't see what Spotify is playing.", and tells you where to turn it on: **System Settings › Privacy & Security › Automation › Undertone**, then switch on **Spotify** (or **Music**). Within about 10 seconds the notice goes away and the lyrics come back, with no restart. The README's [macOS: Automation](../README.md#macos-automation) section has more, including what to do if Undertone is missing from that list.
 
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Effects mode, Size, Height, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song; Effects mode, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -105,11 +105,7 @@ How big the current line is, from 22 to 140 (default 58). Neighboring lines are 
 
 Size is relative to your screen's height, not a fixed number of pixels. 58 means 58 pixels on a screen 1080 pixels tall (as your system scales it), and the same share of the screen on any other display. The lyrics look the same on a 13-inch laptop and a 27-inch monitor. With [Where: All displays](#where), each screen scales them to its own height. Size counts the whole screen, even though the lyrics keep clear of the menu bar, Dock and taskbar.
 
-### Height
-
-Where the current line sits on the screen, from 0% (top) to 100% (bottom). The lyrics keep clear of the menu bar, the Dock and the taskbar, so on a Mac 0% is just below the menu bar, and 100% is just above a Dock or taskbar at the bottom of the screen. The default, 46%, is just above the middle. The current line is centered on this height; neighboring lines sit around it.
-
-At 0% and 100% the current line still stays whole on screen, a little way in from the edge. In Lens, the current line moves up just enough to keep the next line on screen. In Arc, Drift and Stack, the lines around it can run off the edge there. In Arc, a deep curve moves the current line a little further in.
+The lyrics always sit in the middle of the screen: the current line is centered between the menu bar and the Dock or taskbar, with the lines around it above and below. In Arc, the curve is centered too: the middle of the song's longest line rises as far above the center as its ends dip below it, and shorter lines share its middle. There's no setting for where the lyrics sit; Size is how big they are.
 
 ### Effects
 
@@ -256,7 +252,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts Effects mode, Effects, the colors, the size, height, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts Effects mode, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 

@@ -53,59 +53,54 @@ const FRAMES: [string, Partial<Frame>][] = [
   ["settings preview", { width: 340, height: 191, referenceHeight: 680 }],
 ];
 
-// Regression (arc-height-clamp): resolveLook keeps a flat line on screen, but the curve lifted the
-// middle (or the ends) half a bend further, so at Height 0–10% the active word was off the top at
-// 1080p with the default curve, and near 100% a sag (or a long arched line) ran off the bottom.
-describe("Arc geometry: the focus line stays on screen at any Height and Curve", () => {
+// Regression (arc-height-clamp): the curve lifted the middle (or the ends) half a bend past where the
+// line was placed, so with the line high on screen (Height 0–10%, before contract v6) the active word
+// was off the top at 1080p with the default curve, and with it low a sag (or a long arched line) ran
+// off the bottom. The song's widest line is always centered now, and a bend that would take its middle
+// or its ends closer than EDGE font sizes to an edge gets flatter.
+describe("Arc geometry: the focus line stays on screen at any Curve and Size", () => {
   it.each(FRAMES)("%s", (_, frame) => {
     for (const size of [22, 58, 140])
       for (const curve of [-100, -60, -38, 0, 38, 60, 100])
-        for (const yPos of [0, 5, 10, 25, 46, 75, 90, 95, 100])
-          for (const r of [0, 0.3, 0.6, 0.94, 1]) {
-            const l = look({ size, curve, yPos }, frame);
-            const [top, bottom] = baselineSpan(l, r);
-            const where = `size ${size} curve ${curve} yPos ${yPos} reach ${r}`;
-            expect(top - ABOVE * l.size, where).toBeGreaterThanOrEqual(0);
-            expect(bottom + BELOW * l.size, where).toBeLessThanOrEqual(l.height);
-          }
+        for (const r of [0, 0.3, 0.6, 0.94, 1]) {
+          const l = look({ size, curve }, frame);
+          const [top, bottom] = baselineSpan(l, r);
+          const where = `size ${size} curve ${curve} reach ${r}`;
+          expect(top - ABOVE * l.size, where).toBeGreaterThanOrEqual(0);
+          expect(bottom + BELOW * l.size, where).toBeLessThanOrEqual(l.height);
+        }
   });
 
-  it("puts the arched middle, active word included, on screen at Height 0 (the reported case)", () => {
-    const l = look({ yPos: 0, curve: 38 });
-    const g = arcGeometry(l, 0.6);
-    expect(g.bend).toBeGreaterThan(150);
-    expect(g.mid - ABOVE * l.size).toBeGreaterThanOrEqual(0);
-  });
-
-  it("leaves mid-screen placement exactly as before: the bend split evenly around the Height", () => {
-    const l = look({ yPos: 46, curve: 38 });
-    const g = arcGeometry(l, 1);
+  it("centers the song's widest line on the middle of the stage: its middle as far above it as its ends below", () => {
+    for (const curve of [-100, -38, 38, 100])
+      for (const r of [0, 0.4, 0.75, 1]) {
+        const l = look({ curve });
+        const g = arcGeometry(l, r);
+        expect(l.y).toBe(540);
+        // the glyphs' middle, at the line's middle and where it ends
+        const middle = g.mid - 0.35 * l.size;
+        expect(middle + (middle + g.bend * r * r), `curve ${curve} reach ${r}`).toBeCloseTo(2 * l.y, 6);
+      }
+    const g = arcGeometry(look({ curve: 38 }));
     expect(g.bend).toBeCloseTo(0.38 * 1080 * 0.42, 6);
-    expect(g.mid).toBeCloseTo(l.y + 0.35 * l.size - g.bend / 2, 6);
+    expect(g.mid).toBeCloseTo(540 + 0.35 * 58 - g.bend / 2, 6);
+    // a song of short lines sits its arch lower than one whose lines run the whole path
+    expect(arcGeometry(look({ curve: 38 }), 0.5).mid).toBeGreaterThan(g.mid);
   });
 
-  it("matches a flat line's placement at curve 0, across the whole Height range", () => {
+  it("matches a flat line's placement at curve 0, whatever yPos says", () => {
     for (const yPos of [0, 10, 46, 90, 100]) {
       const l = look({ yPos, curve: 0 });
-      expect(arcGeometry(l, 1)).toMatchObject({ bend: 0, mid: l.y + 0.35 * l.size });
-    }
-  });
-
-  it("still moves the line down as Height rises, and uses more of the range when the lines are short", () => {
-    for (const curve of [-100, 38, 100]) {
-      const mids = [0, 10, 25, 46, 75, 90, 100].map((yPos) => arcGeometry(look({ yPos, curve }), 0.6).mid);
-      for (let i = 1; i < mids.length; i++) expect(mids[i]).toBeGreaterThanOrEqual(mids[i - 1] ?? Infinity);
-      const full = arcGeometry(look({ yPos: 100, curve }), 1).mid;
-      expect(arcGeometry(look({ yPos: 100, curve }), 0.5).mid).toBeGreaterThanOrEqual(full);
+      expect(arcGeometry(l)).toMatchObject({ bend: 0, mid: 540 + 0.35 * l.size });
     }
   });
 
   it("flattens a curve too deep for a tiny stage instead of cutting it off, and never yields NaN", () => {
-    const l = look({ size: 140, curve: 100, yPos: 0 }, { width: 400, height: 120, referenceHeight: 120 });
-    const g = arcGeometry(l, 1);
+    const l = look({ size: 140, curve: 100 }, { width: 400, height: 120, referenceHeight: 120 });
+    const g = arcGeometry(l);
     expect(Math.abs(g.bend)).toBeLessThanOrEqual(l.height);
     expect(Number.isFinite(g.mid)).toBe(true);
-    const empty = arcGeometry(look({}, { width: 0, height: 0 }), 1);
+    const empty = arcGeometry(look({}, { width: 0, height: 0 }));
     expect([empty.bend, empty.mid, empty.minFit].every(Number.isFinite)).toBe(true);
   });
 });
@@ -888,7 +883,7 @@ describe("Arc long lines", () => {
   const SONG: Line[] = parseLrc(`[00:01.00]a short line first\n[00:04.00]${LONG}\n[00:09.00]and a short line after`, 20_000);
   const pathOf = (l: Look): number => {
     const half = (snap(l.width * 0.95, l.dpr) - snap(l.width * 0.05, l.dpr)) / 2;
-    return 2 * arcLength(half, half, arcGeometry(l, 1).bend);
+    return 2 * arcLength(half, half, arcGeometry(l).bend);
   };
   const focusSize = (box: FakeNode): number => Number.parseFloat(String(groupsOf(box)[0]?.style["fontSize"]));
 

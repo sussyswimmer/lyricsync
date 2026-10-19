@@ -9,7 +9,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 - Highlights word by word as the song plays, and the words move as they're sung. Lyrics timed by line only (no word tags) light a whole line as it starts (`core/timing.ts` karaokeWords) instead of sweeping it at a guessed pace.
 - A look picked for each song: the style (Arc / Lens / Drift / Stack), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
 - Default colors come from the album cover: its most vivid color highlights, its overall tone tints the lyrics and the other lines, and gray covers get grays (`core/palette.ts`). The user can override every color.
-- Customizable: size, height, effects (how much the words move), glow, opacity and colors.
+- Always in the middle of the screen, clear of the menu bar, Dock and taskbar. Customizable: size, effects (how much the words move), glow, opacity and colors.
 - Effects mode (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop), its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable get a tiny bundled picture as they're sung (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`).
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
@@ -78,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v5 today: `contract/contract.ts` is authoritative, and v2, v3, v4 and v5 below only add to v1.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v6 today: `contract/contract.ts` is authoritative, v2, v3, v4 and v5 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts
@@ -243,6 +243,15 @@ effectsMode: boolean;    // default true
 ```
 
 Effects mode adds a **flair** to each song's picked look (`SongLook.flair`, chosen in `src/core/songlook.ts` from the same features as the rest of the look, plus what the lyrics mention): a `move` for most lines and an `accent` move for the hooks (lines sung more than once), each one of `rise` (the v4 motion), `bounce`, `sway`, `wave`, `pulse` or `drop` (`overlay/motion/params.ts` moveTuning), and a `splash` of `drops`, `sparks`, `confetti`, `ripple` or `glints`. `core/flair.ts` plans each line's decor: a splash on a held note, a hook's last word or a shouted line's (at most one a line, 5 s apart), and the pictures `core/wordpics.ts` matches (49 pictures, each called by its own list of English words and phrases; one a line at most, 6 s apart, the same one 25 s apart). The pictures are bundled WebP files in `src/overlay/pictures/`, made once with Higgsfield. Extras run on transform and opacity on the song timeline, each on its own window (`overlay/motion/line.ts`); none in the lite tier or for unsynced lyrics; without motion, pictures only fade and nothing splashes. Settings › Look's **Effects mode** switch and the tray's **Effects ▸ Effects mode** write `effectsMode`. For QA, `?flair=move[,accent[,splash]]` on the overlay page forces a flair; it is never stored.
+
+**Contract v6 (2026-10-19).** `CONTRACT_VERSION = 6`. Nothing added or removed; `Settings.version` stays 1. No event or command changed.
+
+```ts
+// Still validated and stored, but not read since v6:
+yPos: number;            // the lyrics always sit in the middle of the display's work area
+```
+
+The current line is centered on the overlay, which covers the display's work area: on macOS the screen below the menu bar and clear of the Dock, on Windows the monitor without the taskbar. In Arc the song's widest line is centered, its middle as far above the middle of the overlay as its ends below (`arcGeometry`'s `extent`), and shorter lines share its middle; in Lens the line coming next hangs below the centered one. Settings has no Height slider; Size sets how large the lyrics are.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

@@ -803,9 +803,11 @@ describe("Lens on the motion engine: reduced motion, lite, plain lyrics, the loo
   });
 });
 
-// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the Height whatever
-// the Height, so at 95% and up it was drawn entirely below the screen and Lens showed one lone line.
-describe("Lens: the next line near the bottom of the stage", () => {
+// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the focus line
+// wherever that was, so with the line low on screen (Height 95% and up, before contract v6) it was
+// drawn entirely below the screen and Lens showed one lone line. The line is always in the middle now,
+// where the next line fits on any display; a stage too short for both still moves the pair up.
+describe("Lens: the next line below the focus line", () => {
   beforeEach(setup);
   afterEach(teardown);
 
@@ -814,50 +816,47 @@ describe("Lens: the next line near the bottom of the stage", () => {
     return [Number(m?.[1]), Number(m?.[2])];
   };
 
-  const FRAMES: Partial<Frame>[] = [
-    { width: 1920, height: 1080 },
-    { width: 1280, height: 720 },
-  ];
+  /** Short for its Size: at 140 the pair moves up from the middle. */
+  const SHORT: Partial<Frame> = { width: 1280, height: 400, referenceHeight: 400 };
+  const FRAMES: Partial<Frame>[] = [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }, SHORT];
 
-  it("moves the focus line up just enough to keep its next line on screen, below the focus line", () => {
+  it("keeps the next line on screen, below the focus line", () => {
     for (const frame of FRAMES)
-      for (const yPos of [95, 100])
-        for (const size of [22, 58, 140]) {
-          const l = look({ size, yPos }, frame);
-          const { mode, row, next } = lens(l);
-          mode.paint(cue(0, 2000, false));
-          const where = `${frame.width}x${frame.height} Height ${yPos} Size ${size}`;
-          expect(next()?.textContent, where).toBe(LINES[1]?.text);
-          const top = translateOf(next()?.style.getPropertyValue("transform"))[1];
-          const below = Number.parseFloat(next()?.style.getPropertyValue("font-size") ?? "");
-          expect(top + below, where).toBeLessThanOrEqual(l.height);
-          // every focus word's box as drawn (scaled around its baseline, 0.8 em down in this DOM) ends above it
-          for (const slot of slotsOf(row())) {
-            const { s } = lensOf(slot);
-            const y = translateOf(slot.getAnimations()[0]?.values()["transform"] ?? slot.style.getPropertyValue("transform"))[1];
-            expect(y + 0.8 * l.size + 0.2 * l.size * s, where).toBeLessThanOrEqual(top);
-          }
-          mode.destroy();
+      for (const size of [22, 58, 140]) {
+        const l = look({ size }, frame);
+        const { mode, row, next } = lens(l);
+        mode.paint(cue(0, 2000, false));
+        const where = `${frame.width}x${frame.height} Size ${size}`;
+        expect(next()?.textContent, where).toBe(LINES[1]?.text);
+        const top = translateOf(next()?.style.getPropertyValue("transform"))[1];
+        const below = Number.parseFloat(next()?.style.getPropertyValue("font-size") ?? "");
+        expect(top + below, where).toBeLessThanOrEqual(l.height);
+        // every focus word's box as drawn (scaled around its baseline, 0.8 em down in this DOM) ends above it
+        for (const slot of slotsOf(row())) {
+          const { s } = lensOf(slot);
+          const y = translateOf(slot.getAnimations()[0]?.values()["transform"] ?? slot.style.getPropertyValue("transform"))[1];
+          expect(y + 0.8 * l.size + 0.2 * l.size * s, where).toBeLessThanOrEqual(top);
         }
+        mode.destroy();
+      }
   });
 
-  it("leaves the Height alone where the next line fits, and on the last line", () => {
-    for (const yPos of [0, 46, 85]) {
-      const l = look({ yPos });
-      expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(l.y);
-    }
-    const bottom = look({ yPos: 100 });
-    expect(focusCenter(bottom, bottom.size, null)).toBe(bottom.y);
-    expect(focusCenter(bottom, bottom.size, nextSize(600, bottom.size, bottom))).toBeLessThan(bottom.y);
+  it("centers the focus line where the next line fits, and on the last line", () => {
+    for (const frame of FRAMES.slice(0, 2))
+      for (const size of [22, 58, 140]) {
+        const l = look({ size }, frame);
+        expect(l.y).toBe(l.height / 2);
+        expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(l.y);
+      }
+    const short = look({ size: 140 }, SHORT);
+    expect(focusCenter(short, short.size, null)).toBe(short.y);
+    expect(focusCenter(short, short.size, nextSize(600, short.size, short))).toBeLessThan(short.y);
   });
 
-  it("never lifts the focus line past resolveLook's top margin on a stage too small for both lines", () => {
-    const l = look({ yPos: 100, size: 140 }, { width: 400, height: 120, referenceHeight: 120 });
+  it("never lifts the focus line closer than 0.75 font sizes to the top, even on a stage too small for both lines", () => {
+    const l = look({ size: 140 }, { width: 400, height: 120, referenceHeight: 120 });
     expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(Math.min(l.size * 0.75, l.height / 2));
-    // the settings preview has the room
-    const preview = look({ yPos: 100, size: 140 }, { width: 340, height: 191, referenceHeight: 680 });
-    const y = focusCenter(preview, preview.size, nextSize(600, preview.size, preview));
-    expect(y).toBeLessThan(preview.y);
-    expect(y).toBeGreaterThan(preview.size * 0.75);
+    const short = look({ size: 140 }, SHORT);
+    expect(focusCenter(short, short.size, nextSize(600, short.size, short))).toBeGreaterThan(short.size * 0.75);
   });
 });

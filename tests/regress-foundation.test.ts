@@ -100,12 +100,17 @@ describe("lookKeys", () => {
   });
 
   it("rebuilds for anything that moves or measures text", () => {
-    for (const over of [{ size: 80 }, { yPos: 20 }, { curve: 10 }, { font: { family: "Syne", weight: 800 } }] as Partial<Settings>[]) {
+    for (const over of [{ size: 80 }, { curve: 10 }, { font: { family: "Syne", weight: 800 } }] as Partial<Settings>[]) {
       expect(lookKeys(look(over), "drift").shape, JSON.stringify(over)).not.toBe(base.shape);
     }
     expect(lookKeys(look({}, { width: 900 }), "drift").shape).not.toBe(base.shape);
+    expect(lookKeys(look({}, { height: 900 }), "drift").shape).not.toBe(base.shape);
     expect(lookKeys(look({}, { motion: false }), "drift").shape).not.toBe(base.shape);
     expect(lookKeys(look(), "stack").shape).not.toBe(base.shape);
+  });
+
+  it("doesn't rebuild for yPos, which moves nothing since contract v6 (the lyrics stay in the middle)", () => {
+    expect(lookKeys(look({ yPos: 20 }), "drift")).toEqual(base);
   });
 
   it("rebuilds when Effects mode or the song's flair changes: the lines' moves, splashes and pictures are built in", () => {

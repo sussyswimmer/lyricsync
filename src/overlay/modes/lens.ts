@@ -146,9 +146,10 @@ export function nextSize(full: number, focusSize: number, look: Look): number {
 }
 
 /**
- * Where the focus line's center goes: at `look.y`, unless the next line (`next` px, null for none)
- * would run off the bottom of the stage there. Then the pair moves up until it fits, but the focus
- * line no higher than resolveLook's top margin.
+ * Where the focus line's center goes: at `look.y`, the middle of the stage, unless the next line
+ * (`next` px, null for none) would run off the bottom there, as on a short stage at a large Size. Then
+ * the pair moves up until it fits, but the focus line keeps 0.75 font sizes from the top, so it stays
+ * whole.
  */
 export function focusCenter(look: Look, focusSize: number, next: number | null): number {
   if (next === null) return look.y;

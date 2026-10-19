@@ -394,11 +394,12 @@ describe("Drift word states", () => {
 
 // Regressions (drift-perspective-overlap, drift-wrapped-offscreen, drift-small-neighbors).
 describe("Drift geometry", () => {
-  it("recedes toward the focus line, wherever Height puts it", () => {
+  it("recedes toward the focus line, in the middle of the stage whatever yPos says", () => {
     for (const yPos of [5, 46, 95]) {
       const look = lookFor({ yPos });
       const { host } = drift(1, look);
-      expect(host.find("drift")[0]?.style["perspectiveOrigin"]).toBe(`50% ${look.y.toFixed(1)}px`);
+      expect(look.y).toBe(360);
+      expect(host.find("drift")[0]?.style["perspectiveOrigin"]).toBe("50% 360.0px");
     }
   });
 
@@ -413,19 +414,18 @@ describe("Drift geometry", () => {
     expect(rows[1]?.style["fontSize"]).toBeUndefined();
   });
 
-  it("keeps a tall focus line whole on screen at the Height extremes", () => {
+  it("centers a tall focus line, whole on screen", () => {
     const text = "a wrapped placeholder line that takes a few rows on this stage ".repeat(3);
     const lines = parseLrc(`[00:01.00]one\n[00:03.00]${text}\n[00:09.00]three`, 12_000);
-    for (const yPos of [0, 100]) {
-      const look = lookFor({ yPos });
-      const { mode, rows } = drift(0, look, lines);
-      mode.paint(cue(1, 4000));
-      const height = rows[1]?.offsetHeight ?? 0;
-      expect(height).toBeGreaterThan(look.size * 1.12 * 2);
-      const center = look.y + yOf(rows[1]);
-      expect(center - height / 2, `yPos ${yPos}`).toBeGreaterThanOrEqual(0);
-      expect(center + height / 2, `yPos ${yPos}`).toBeLessThanOrEqual(720);
-    }
+    const look = lookFor();
+    const { mode, rows } = drift(0, look, lines);
+    mode.paint(cue(1, 4000));
+    const height = rows[1]?.offsetHeight ?? 0;
+    expect(height).toBeGreaterThan(look.size * 1.12 * 2);
+    const center = look.y + yOf(rows[1]);
+    expect(center).toBeCloseTo(360, 6);
+    expect(center - height / 2).toBeGreaterThanOrEqual(0);
+    expect(center + height / 2).toBeLessThanOrEqual(720);
   });
 
   it("keeps neighbor lines at least 11 px tall at a small size", () => {

@@ -194,9 +194,9 @@ html.is-scrolled .top {
     --wp-3 0.9s ease;
 }
 
-/* Below the menu bar, not behind it: the stage's own Height clamp then keeps the focus line whole and
-   in view at Height 0, and lines above it slide out under the bar's edge. Only the wallpaper runs
-   under the bar. */
+/* Below the menu bar, not behind it: the lyrics center in the space under the bar, as they do in a
+   desktop's work area, and lines above the current one slide out under the bar's edge. Only the
+   wallpaper runs under the bar. */
 .pv-stage.ut-stage {
   position: absolute;
   inset: var(--pv-bar-h) 0 0;

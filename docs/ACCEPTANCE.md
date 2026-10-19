@@ -1,6 +1,6 @@
 # Native acceptance
 
-The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), contract v4 (Effects, and the look Undertone picks for each song), contract v5 (Effects mode: each song's own motion, splashes and word pictures), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, the checks the 2026-10-15 fixes need, and the v4 motion on WebKit and WebView2. Log what you find in [HANDOFF.md](HANDOFF.md), and tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
+The checks that only a real Mac and a real Windows PC can do, beyond the lists in [DESKTOP_LAYER.md](DESKTOP_LAYER.md#required-native-acceptance), [NOW_PLAYING.md](NOW_PLAYING.md#native-acceptance-still-required) and [LYRICS.md](LYRICS.md#native-acceptance). This page covers contract v3 (shortcuts, launch at login, lyrics on and off), contract v4 (Effects, and the look Undertone picks for each song), contract v5 (Effects mode: each song's own motion, splashes and word pictures), contract v6 (lyrics always in the middle, no Height setting), the Definition of done's CPU budget, ±150 ms sync and 1 s lyrics latency, the checks the 2026-10-15 fixes need, and the v4 motion on WebKit and WebView2. Log what you find in [HANDOFF.md](HANDOFF.md), and tick a Definition of done box in [SPEC.md](../SPEC.md#definition-of-done-v1) only after its check passes on both OSes.
 
 Run on macOS 14 (the minimum) and the current release, and on Windows 10 and 11.
 
@@ -91,7 +91,7 @@ Both OSes, with the installed app:
 
 1. With **Where: All displays**, switch off **Lyrics on the desktop**: every overlay hides, and the preview says **Off on the desktop**. Restart Undertone: still off.
 2. With lyrics showing, press ⌘H in Settings, then ⌥⌘H (**Hide Others**) in Finder. The lyrics stay up both times; Settings hides.
-3. The lyrics sit below the menu bar and the notch and clear of the Dock. At **Height** 0% the current line sits a little below the menu bar, never under it; at 100%, a little above a bottom Dock. Move the Dock to the left, resize it, and turn its auto-hide on and off: within about a second the overlay re-frames.
+3. The lyrics sit below the menu bar and the notch and clear of the Dock, the current line in the middle of the space between them. Move the Dock to the left, resize it, and turn its auto-hide on and off: within about a second the overlay re-frames, and the current line is back in the middle.
 4. **Size** still counts the whole screen: with **Where: All displays**, a line at the same Size takes the same share of the height on the display with the Dock and on one without it.
 5. The settings window's green button is disabled, so it can't go full screen.
 
@@ -99,7 +99,7 @@ Both OSes, with the installed app:
 
 1. As macOS step 1.
 2. `pnpm tauri dev -- -- --desktop-layer-test` logs `layered yes` for every overlay, there is no `SetLayeredWindowAttributes` error, and the overlay background is fully transparent. This depends on the Windows 8 to 11 entries in `windows.manifest`.
-3. The lyrics stop at the taskbar. Move the taskbar to the top and to a side, make it taller, and turn on auto-hide: within about a second the overlay re-frames.
+3. The lyrics stop at the taskbar, the current line in the middle of the rest of the screen. Move the taskbar to the top and to a side, make it taller, and turn on auto-hide: within about a second the overlay re-frames.
 4. As macOS step 4, with the taskbar.
 5. The settings window has no maximize button and stops widening at 560 px. While it's open it has a taskbar button; once closed, it has none.
 
@@ -174,3 +174,12 @@ Both OSes, with the installed app. Effects mode is on by default (Settings › L
 5. Switch **Effects mode** off in Settings: the lyrics crossfade, and from then on every song's words rise alike, with no splashes or pictures. The menu's **Effects ▸ Effects mode** check follows, and clicking it turns the mode back on. Settings follows the menu the same way.
 6. With **Effects** at 0, words don't move and nothing splashes, but pictures still fade in and out. With the system's reduced-motion setting on, pictures only fade in place and nothing splashes. In the lite tier (section 10, step 7) there are no splashes or pictures at all.
 7. **Reset to defaults** turns Effects mode back on.
+
+## 13. Lyrics in the middle (v6)
+
+Both OSes, with the installed app.
+
+1. Settings › Look has Effects mode, Size, Effects, Glow and Opacity, and no Height.
+2. In each style the current line sits in the middle of the screen, between the menu bar (or the top of the screen) and the Dock or taskbar. In Arc the song's longest line is centered as a whole, its middle as far above the center as its ends below, and shorter lines share its middle. In Lens the next line hangs just below the current one. In Drift and Stack the sung lines sit above and the coming ones below. The loading pulse, the ♪ of an instrumental and the "No lyrics for this song" note are in the middle too.
+3. Quit Undertone, set `"yPos": 10` in `settings.json` ([Before you start](#before-you-start) says where it is), and start it again: the lyrics are still in the middle, and the file keeps the value.
+4. At Size 140 on a laptop screen, a long line that wraps stays whole and centered, and Lens still shows the next line.

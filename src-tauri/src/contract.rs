@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 5;
-/// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`, and
-/// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults.
+pub const CONTRACT_VERSION: u8 = 6;
+/// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
+/// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
+/// v6 only stopped reading `yPos`.
 pub const SETTINGS_VERSION: u8 = 1;
 pub static DEFAULT_SETTINGS: std::sync::LazyLock<Settings> =
     std::sync::LazyLock::new(Settings::default);
@@ -161,7 +162,8 @@ pub struct Settings {
     pub size: f64,
     /// Not read since v4: Arc's curve is picked per song. Still validated and stored.
     pub curve: f64,
-    /// 0..100, % of the display's work area, without menu bar, Dock or taskbar
+    /// Not read since v6: the lyrics always sit in the middle of the display's work area (without
+    /// menu bar, Dock or taskbar). Still validated and stored, 0..100.
     pub y_pos: f64,
     /// 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest)
     /// and softens the dark shadow.
@@ -648,7 +650,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 5);
+        assert_eq!(CONTRACT_VERSION, 6);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

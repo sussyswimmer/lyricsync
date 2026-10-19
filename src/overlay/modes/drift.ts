@@ -51,12 +51,6 @@ const NEIGHBOR_MAX_SCALE = 0.85;
 const MIN_GAP = 0.265;
 /** A wrapped line taller than this share of the stage is set smaller so it fits. */
 const MAX_ROW_SHARE = 0.45;
-/**
- * Room kept between the focus line's box and the stage edges, in font sizes. resolveLook keeps a
- * one-row line's center 0.75 sizes from the edges: half its box plus this. A taller wrapped line
- * moves the whole stack inward to keep the same room.
- */
-const EDGE_PAD = 0.75 - LINE_HEIGHT / 2;
 /** An instrumental break's slot (the dots) is this tall, in font sizes. */
 const BREAK_EM = 1.05;
 /** A jump of the song further than this while playing is a seek: the focus line's words are put straight. */
@@ -378,8 +372,8 @@ export class DriftMode implements ModeRenderer {
     box.style.fontSize = `${look.size}px`;
     if (look.letterSpacing !== 0) box.style.letterSpacing = `${num(look.letterSpacing, 3)}em`;
     box.style.perspective = `${look.size * DRIFT_PERSPECTIVE_EM}px`;
-    // Recede toward the focus line, not the middle of the stage: with the vanishing point elsewhere,
-    // lines on the far side of it would fold back over the focus line at a high or low Height.
+    // Recede toward the focus line, in the middle of the stage: with the vanishing point elsewhere,
+    // lines on the far side of it would fold back over the focus line.
     box.style.perspectiveOrigin = `50% ${look.y.toFixed(1)}px`;
     if (look.unsynced) box.classList.add("is-calm");
     const sung = casedLines(lines, look.textCase);
@@ -636,21 +630,13 @@ export class DriftMode implements ModeRenderer {
   }
 
   /**
-   * Every slot's style with the list scrolled to `shown`, for the slots within reach. A tall focus
-   * line moves the whole list away from the edge it would run off.
+   * Every slot's style with the list scrolled to `shown`, for the slots within reach. The focus line
+   * is centered on look.y, the middle of the stage, so even the tallest one (MAX_ROW_SHARE) fits.
    */
   private layout(shown: number, look: Look): Map<number, SlotStyle> {
     const depth = this.depth;
     const low = this.low(look);
     const placed = placeSlots(this.specs, shown, depth, slotPerPx(low));
-    const n = this.slots.length;
-    const lo = Math.max(0, Math.min(n - 1, Math.floor(shown)));
-    const hLo = this.specs[lo]?.height ?? 0;
-    const hHi = this.specs[lo + 1]?.height ?? hLo;
-    const half = (hLo + (hHi - hLo) * (shown - lo)) / 2;
-    const room = half + look.size * EDGE_PAD;
-    const center = room * 2 > look.height ? look.height / 2 : Math.min(look.height - room, Math.max(room, look.y));
-    const shift = center - look.y;
     const zUnit = look.size * DRIFT_RECEDE_EM * depth;
     const out = new Map<number, SlotStyle>();
     for (const [i, p] of placed) {
@@ -661,7 +647,7 @@ export class DriftMode implements ModeRenderer {
       const box = slot.kind === "line" ? slot.row.box || slot.row.height : BREAK_EM * look.size;
       // `at` is where the slot should appear; the perspective (its origin on look.y) pulls a slot
       // `dist` lines back toward look.y by projection(dist), so place it that much further out.
-      const y = snap(shift + p.at, look.dpr) / projection(dist, depth) - box / 2;
+      const y = snap(p.at, look.dpr) / projection(dist, depth) - box / 2;
       out.set(i, {
         opacity: slot.kind === "line" ? lineLevel(p.off, look.unsynced) : 1,
         off: p.off,

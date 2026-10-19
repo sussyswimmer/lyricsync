@@ -222,12 +222,18 @@ describe("user guide", () => {
   it("quotes the contract's defaults", () => {
     const guide = read("docs/USER_GUIDE.md");
     expect(guide).toContain(`from 22 to 140 (default ${d.size})`);
-    expect(guide).toContain(`The default, ${d.yPos}%`);
     expect(guide).toContain(`How much the words move as they're sung, from 0 to 100 (default ${d.effects})`);
     expect(guide).toContain(`How much the word being sung glows, from 0 to 100 (default ${d.glow})`);
     expect(guide).toContain(`from 20% to 100% (default ${d.opacity}%)`);
     for (const hex of Object.values(d.colors)) expect(guide).toContain(`\`${hex.toUpperCase()}\``);
     expect(guide).toContain("from −2000 to +2000 ms");
+  });
+
+  it("has no Height setting since contract v6, and says the lyrics sit in the middle", () => {
+    const guide = read("docs/USER_GUIDE.md");
+    expect(guide).not.toMatch(/^### Height$/mu);
+    expect(guide).not.toMatch(/\bHeight\b/u);
+    expect(guide).toContain("The lyrics always sit in the middle of the screen");
   });
 });
 

@@ -183,8 +183,8 @@ impl DesktopLayer for MacDesktop {
                 | NSWindowCollectionBehavior::Stationary
                 | NSWindowCollectionBehavior::IgnoresCycle,
         );
-        // Below the menu bar and clear of the Dock, so Height 0% and 100% stay readable; the page
-        // keeps Size relative to the whole screen.
+        // Below the menu bar and clear of the Dock, so the lyrics center in the space apps use; the
+        // page keeps Size relative to the whole screen.
         ns_window.setFrame_display(frame, true);
         Ok(())
     }

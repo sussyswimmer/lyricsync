@@ -291,8 +291,8 @@ impl DesktopLayer for WindowsDesktop {
 }
 
 /// Where an attached overlay sits: its monitor's work area (the monitor without the taskbar and
-/// other app bars), so Height 0% and 100% stay readable; the page keeps Size relative to the whole
-/// screen. Physical desktop pixels, like `area`, which stays the whole monitor for matching.
+/// other app bars), so the lyrics center in the space apps use; the page keeps Size relative to the
+/// whole screen. Physical desktop pixels, like `area`, which stays the whole monitor for matching.
 /// `attach` puts the overlay here and `attachment` compares against it, so a placed one stays put.
 fn frame(monitor: &Monitor) -> Bounds {
     let work = monitor.work_area();

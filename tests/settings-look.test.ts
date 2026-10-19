@@ -12,8 +12,8 @@ import { resetDom, stubDom, type FakeElement } from "./fake-dom";
 /*
  * Contract v4 in the settings window: Undertone picks the style and the face for each song, so the
  * window shows the pick (the "Picked for this song" card under the preview) instead of choosing it,
- * and its Look group scales it: Size, Height, Effects, Glow and Opacity. No Style or Font group, no
- * Curve slider.
+ * and its Look group scales it: Size, Effects, Glow and Opacity. No Style or Font group, no Curve
+ * slider, and since contract v6 no Height slider: the lyrics always sit in the middle of the screen.
  */
 
 // The preview's stage and controller draw and animate; what the card shows needs neither.
@@ -415,9 +415,9 @@ describe("the settings panel since contract v4", () => {
     expect(card.one("picked-face").textContent).toBe("Syne");
   });
 
-  it("the Look group holds Size, Height, Effects, Glow and Opacity", () => {
+  it("the Look group holds Size, Effects, Glow and Opacity: no Height, the lyrics stay in the middle", () => {
     const p = mountPanel();
-    expect(p.group("Look").all("slider").map((r) => r.one("row-label").textContent)).toEqual(["Size", "Height", "Effects", "Glow", "Opacity"]);
+    expect(p.group("Look").all("slider").map((r) => r.one("row-label").textContent)).toEqual(["Size", "Effects", "Glow", "Opacity"]);
     expect(p.root.all("group").map((g) => g.one("group-title").textContent)).not.toContain("Layout");
   });
 
@@ -489,7 +489,7 @@ describe("the settings panel since contract v4", () => {
     expect(input.checked).toBe(false);
     expect(caption?.textContent).toBe(EFFECTS_MODE_OFF);
     // the sliders come after it, in the same order as before
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Size", "Height", "Effects", "Glow", "Opacity"]);
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Size", "Effects", "Glow", "Opacity"]);
   });
 
   it("Effects mode: shows the saved state, and an older core's settings as on", () => {

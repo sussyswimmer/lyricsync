@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 5;
+export const CONTRACT_VERSION = 6;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -72,7 +72,7 @@ export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
   /** the settings schema, still 1: contracts v3, v4 and v5 only added fields, and stored settings
-   *  without them get the defaults */
+   *  without them get the defaults; v6 only stopped reading `yPos` */
   version: 1;
   /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
   mode: Mode;
@@ -83,7 +83,9 @@ export interface Settings {
   size: number;        // 22–140 px at 1x scale
   /** Not read since v4: Arc's curve is picked per song. Still validated and stored. */
   curve: number;       // -100..100
-  yPos: number;        // 0..100, % of the display's work area, without menu bar, Dock or taskbar
+  /** Not read since v6: the lyrics always sit in the middle of the display's work area (without
+   *  menu bar, Dock or taskbar). Still validated and stored. */
+  yPos: number;        // 0..100
   /** 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest) and
    *  softens the dark shadow. */
   glow: number;

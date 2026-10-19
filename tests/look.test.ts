@@ -95,27 +95,24 @@ describe("resolveLook: colors", () => {
 });
 
 describe("resolveLook: placement and scaled settings", () => {
-  // Mid-range values only: at the extremes the line is kept on screen (next tests).
-  it("places the line at yPos percent of the stage height", () => {
-    expect(look({ yPos: 46 }).y).toBeCloseTo(496.8, 6);
-    expect(look({ yPos: 25 }, { height: 900 }).y).toBe(225);
-    expect(look({ yPos: 75 }, { height: 900 }).y).toBe(675);
-    expect(look({ yPos: 50 }, { height: 300 }).y).toBe(150);
+  // Contract v6: the lyrics always sit in the middle of the display's work area; yPos, still stored
+  // (and still in settings saved before v6), moves nothing.
+  it("centers the line on the stage, whatever yPos says", () => {
+    for (const yPos of [0, 10, 25, 46, 50, 75, 90, 100]) {
+      expect(look({ yPos }).y, `yPos ${yPos}`).toBe(540);
+      expect(look({ yPos }, { height: 900 }).y, `yPos ${yPos}`).toBe(450);
+    }
+    expect(look({}, { height: 300 }).y).toBe(150);
+    expect(look({}, { height: 1415, referenceHeight: workAreaReference(1415, 1440) }).y).toBe(707.5);
   });
 
-  it("moves the line down as yPos rises, across the whole range", () => {
-    const ys = [0, 10, 25, 46, 75, 90, 100].map((yPos) => look({ yPos }, { height: 720 }).y);
-    for (let i = 1; i < ys.length; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1] ?? Infinity);
-    expect(ys[ys.length - 1]).toBeGreaterThan(ys[0] ?? Infinity);
-  });
-
-  // Regression: Height 0 and 100 used to center the focus line on the screen edge, half off screen.
-  // The contract allows 0..100, so resolveLook keeps the line whole rather than the slider limiting it.
-  it("keeps the whole focus line on the stage at the Height extremes", () => {
-    for (const yPos of [0, 100]) {
-      const l = look({ yPos }, { height: 720 });
-      expect(l.y - l.size / 2).toBeGreaterThanOrEqual(0);
-      expect(l.y + l.size / 2).toBeLessThanOrEqual(l.height);
+  it("keeps the whole focus line on the stage at any Size, on any stage", () => {
+    for (const size of [22, 58, 140]) {
+      for (const height of [200, 720, 1415]) {
+        const l = look({ size }, { height });
+        expect(l.y - l.size / 2).toBeGreaterThanOrEqual(0);
+        expect(l.y + l.size / 2).toBeLessThanOrEqual(l.height);
+      }
     }
   });
 

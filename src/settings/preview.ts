@@ -66,9 +66,9 @@ type SourceKind = "main" | "demo";
 /**
  * A miniature desktop at the top of the settings window: the real overlay stage and controller on
  * a wallpaper, with a slim menu bar naming the song. The stage starts below the bar (settings.css),
- * so its Height clamp never tucks the focus line under it. It plays the current track, or a private
- * demo player when nothing is playing (the mock too, under `?media=` or `setMedia`). Settings come
- * from the window, not the bridge, so unsaved edits show at once.
+ * so the lyrics center in the space under it, as they do in a desktop's work area. It plays the
+ * current track, or a private demo player when nothing is playing (the mock too, under `?media=` or
+ * `setMedia`). Settings come from the window, not the bridge, so unsaved edits show at once.
  */
 export class SettingsPreview {
   readonly el: HTMLElement;

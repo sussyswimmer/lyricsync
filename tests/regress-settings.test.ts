@@ -590,14 +590,14 @@ describe("settings-preview-bar: the preview's lyric stage starts below its menu 
     expect(resolve(bar().get("height"))).toBe("22px");
   });
 
-  it("the stage fills the wallpaper from the bar's bottom edge down, so its Height clamp counts the bar as off-stage", () => {
+  it("the stage fills the wallpaper from the bar's bottom edge down, so the lyrics center in the space under the bar", () => {
     expect(stage().get("position")).toBe("absolute");
     const [top, right, bottom, left] = edges(stage());
     expect(top).toBe(resolve(bar().get("height")));
     expect([right, bottom, left]).toEqual(["0", "0", "0"]);
   });
 
-  it("no mask fades the top of the stage, where Height 0 puts the focus line", () => {
+  it("no mask fades the top of the stage: the lines above the focus line slide out under the bar unfaded", () => {
     for (const prop of stage().keys()) expect(prop).not.toMatch(/mask/);
     const masked = rules(settingsCss).filter(([sel, body]) => /\.pv-stage/.test(sel) && /mask/.test(body));
     expect(masked).toEqual([]);

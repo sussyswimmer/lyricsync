@@ -38,15 +38,16 @@ const NEXT_DROP = 1.25 + 0.15;
  */
 const BEND = 0.42;
 /**
- * The focus baseline sits this many font sizes below `look.y`, so the glyphs (not the baseline) are
- * centered on the chosen height, the way Drift and Stack center their line box. The bend is split
- * evenly around it: raising the curve lifts the middle and lowers the ends by the same amount.
+ * The focus baseline sits this many font sizes below `look.y` (the middle of the stage), so the
+ * glyphs (not the baseline) are centered there, the way Drift and Stack center their line box. The
+ * bend is split evenly around it: raising the curve lifts the middle of the song's widest line and
+ * lowers its ends by the same amount, so a curved line is centered as a whole.
  */
 const BASELINE = 0.35;
 /**
- * resolveLook keeps `look.y` this many font sizes from the top and bottom of the stage, which keeps
- * a flat line whole on screen. Arc keeps both extremes of its curve (the middle and the ends) inside
- * that same range, moving the line in from the edge, so a strong curve stays on screen at any Height.
+ * Both extremes of the focus line's curve (its middle and its ends) stay at least this many font
+ * sizes from the top and bottom of the stage, as a flat line's middle does: a curve too deep for
+ * that gets flatter, so a strong curve stays whole on screen.
  */
 const EDGE = 0.75;
 /** Each path runs from this fraction of the width to 1 minus it. */
@@ -205,12 +206,11 @@ export interface Run {
 
 /**
  * The shared curve for a look. The bend scales with the smaller of the stage height and 9/16 of its
- * width, so every aspect ratio gets the same shape. The focus line's middle sits where the Height
- * puts it, the bend split evenly around it, unless that takes the line off screen: `look.y` keeps a
- * flat line whole on screen, and a curved one moves in from the top or bottom until both its middle
- * and its ends (as far as `extent`, a share of the half-width, the widest focus line of the song
- * reaches) are inside the same range. A curve too deep for the stage at this size gets flatter rather
- * than cut off.
+ * width, so every aspect ratio gets the same shape. The focus line is centered on `look.y`, the middle
+ * of the stage: its middle sits as far above it as its ends sit below it, as far out as `extent` (a
+ * share of the half-width: the song's widest focus line, so lines don't move up and down from one to
+ * the next). A bend that would take the middle or the ends closer than EDGE font sizes to the top or
+ * bottom gets flatter rather than cut off.
  */
 export function arcGeometry(look: Look, extent = 1): ArcGeometry {
   const span = Math.min(look.height, (look.width * 9) / 16);
@@ -218,15 +218,12 @@ export function arcGeometry(look: Look, extent = 1): ArcGeometry {
   const edge = Math.min(look.size * EDGE, look.height / 2);
   const room = Math.max(0, look.height - 2 * edge);
   const bend = Math.sign(wanted) * Math.min(Math.abs(wanted), room);
-  // the range resolveLook allows a flat line's baseline, and how far the text's ends sink below its middle
-  const top = edge + BASELINE * look.size;
-  const bottom = look.height - edge + BASELINE * look.size;
+  // how far below its middle the widest line's ends sink (a parabola: by the square of its reach)
   const sink = bend * Math.min(1, Math.max(0, extent)) ** 2;
-  const mid = look.y + BASELINE * look.size - bend / 2;
   const aspect = look.height > 0 ? (look.width * 9) / (look.height * 16) : 1;
   return {
     bend,
-    mid: Math.min(Math.max(mid, top - Math.min(0, sink)), bottom - Math.max(0, sink)),
+    mid: look.y + BASELINE * look.size - sink / 2,
     minFit: MIN_FIT * Math.min(1, Math.max(0, aspect)),
   };
 }
@@ -497,7 +494,7 @@ export class ArcMode implements ModeRenderer {
       this.slotOfLine[i] = this.views.length;
       this.views.push({ kind: "line", i });
     });
-    // the bend, for measuring the path; measure() then places the focus line
+    // the bend, for measuring the path; measure() then centers the focus line
     this.geo = arcGeometry(look);
     this.measure(look, box);
     this.refitWhenFontsLoad(look, box);
@@ -663,8 +660,18 @@ export class ArcMode implements ModeRenderer {
     this.pathLength = 2 * arcLength(halfWidth, halfWidth, this.geo.bend);
     this.lengths = this.lines.map((_, i) => this.shapeOf(i, look.size, look).total);
     this.baseline = this.probeBaseline(box);
-    // the bend stays; the focus line's place depends on how far the song's widest line reaches
+    // the bend stays; centering the focus line depends on how far the song's widest line reaches
     this.geo = arcGeometry(look, this.widest(look));
+  }
+
+  /** How far the song's widest focus line reaches along the path, a share of its half-width. */
+  private widest(look: Look): number {
+    const halfWidth = this.halfWidth(look);
+    let most = 0;
+    for (let i = 0; i < this.lines.length; i++) {
+      most = Math.max(most, reach(this.natural(i, this.fitted(i, look.size, look), look), halfWidth, this.geo.bend));
+    }
+    return most;
   }
 
   /**
@@ -685,16 +692,6 @@ export class ArcMode implements ModeRenderer {
     const height = Number(kw.offsetHeight);
     group.remove();
     return Number.isFinite(at) && at > 0 && height > 0 ? at / 100 : FALLBACK_BASELINE;
-  }
-
-  /** How far the song's widest focus line reaches along the path, a share of its half-width. */
-  private widest(look: Look): number {
-    const halfWidth = this.halfWidth(look);
-    let most = 0;
-    for (let i = 0; i < this.lines.length; i++) {
-      most = Math.max(most, reach(this.natural(i, this.fitted(i, look.size, look), look), halfWidth, this.geo.bend));
-    }
-    return most;
   }
 
   /**
