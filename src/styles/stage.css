@@ -223,6 +223,42 @@
   transform-origin: 50% 15%;
 }
 
+/* A living picture's light (motion/decor.ts planPictureLife): placed and moving like its picture, but
+   under the word's copies, so it never covers the text. A soft glow in the picture's own color
+   (--aura, inline), flickering or breathing, and a big flame's embers rising through it. */
+.kw-aura {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 50% 85%;
+}
+
+.kw-aura.is-below {
+  bottom: auto;
+  top: 100%;
+  transform-origin: 50% 15%;
+}
+
+.kw-aura-glow {
+  position: absolute;
+  inset: -30%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--aura) 0%, transparent 100%);
+  opacity: 0;
+}
+
+/* an ember: a hot white core in an orange glow, starting from near the top of the flame */
+.kw-ember {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3c4 0 30%, #ffa23a 55%, transparent 72%);
+  opacity: 0;
+}
+
 /* A splash: every piece starts from the middle of the word box, under every copy of the text. */
 .kw-splash {
   position: absolute;

@@ -27,9 +27,13 @@ describe("which words call a picture", () => {
   it("lets the longest phrase win: a broken heart is not a heart", () => {
     expect(calls("You left me with a broken heart")).toEqual(["heart→broken-heart"]);
     expect(calls("Please don't break my heart")).toEqual(["heart→broken-heart"]);
-    expect(calls("Heart of gold")).toEqual(["Heart→heart"]);
+    expect(calls("Heart of glass")).toEqual(["Heart→heart"]);
+    expect(calls("Heart of gold")).toEqual(["Heart→heart", "gold→gold"]);
     expect(calls("rose wine at midnight")).toEqual(["wine→wine"]);
-    expect(calls("roses in the garden")).toEqual(["roses→rose", "garden→rose"]);
+    expect(calls("roses in the garden")).toEqual(["roses→rose", "garden→bouquet"]);
+    expect(calls("head over heels")).toEqual(["heels→heart"]);
+    expect(calls("high heels on the dance floor")).toEqual(["heels→heels", "floor→disco"]);
+    expect(calls("a drive-in movie")).toEqual(["drive-in→popcorn", "movie→popcorn"]);
   });
 
   it("reads case, punctuation, plurals, possessives and a dropped g", () => {
@@ -40,7 +44,7 @@ describe("which words call a picture", () => {
     expect(calls("my heart's on fire")).toEqual(["heart's→heart", "fire→fire"]);
     expect(calls("burnin' up")).toEqual(["burnin'→fire"]);
     expect(calls("it's five o'clock")).toEqual(["o'clock→clock"]);
-    expect(calls("café au lait coffee")).toEqual(["coffee→coffee"]);
+    expect(calls("café au lait coffee")).toEqual(["café→coffee", "coffee→coffee"]);
   });
 
   it("splits hyphenated words, and still names the word that was sung", () => {
@@ -51,9 +55,10 @@ describe("which words call a picture", () => {
   });
 
   it("leaves out words that mean too many things", () => {
-    for (const text of ["give me a ring", "wave goodbye", "tear it down", "in the present", "cold as ice", "a single tear"]) {
+    for (const text of ["give me a ring", "wave goodbye", "tear it down", "in the present", "a single tear", "jet black", "shades of gray", "a pickup line", "I pine for you"]) {
       expect(calls(text), text).toEqual([]);
     }
+    expect(calls("cold as ice")).toEqual(["ice→ice"]);
     // ...unless a phrase says which: a diamond ring, ocean waves, tears
     expect(calls("a diamond ring")).toEqual(["ring→ring"]);
     expect(calls("crashing waves")).toEqual(["waves→wave"]);
@@ -108,7 +113,7 @@ describe("which matches show a picture", () => {
       line("the rain came down", 0),
       line("then fire", PICTURE_GAP_MS - 1000),
       line("and fire again", PICTURE_GAP_MS + 2000),
-      line("more rain", 20_000),
+      line("more rain", SAME_PICTURE_GAP_MS - 5000),
       line("rain once more", SAME_PICTURE_GAP_MS + 1000),
     ];
     const plans = planPictures(lines);

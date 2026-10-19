@@ -4,7 +4,7 @@ import { parseLrc, type Line, type Word } from "../src/core/lrc";
 import { CALM_NEAR_LEVEL, lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
 import { bloomLayers, bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
 import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overlay/motion/curve";
-import { PICTURE_EM, PICTURE_MS } from "../src/overlay/motion/decor";
+import { PICTURE_EM, PICTURE_LIFE, PICTURE_MS, planPictureLife } from "../src/overlay/motion/decor";
 import { InterludeDots } from "../src/overlay/motion/dots";
 import { findInterludes, interludeAt, INTERLUDE_AFTER_MS, planDots } from "../src/overlay/motion/interlude";
 import {
@@ -1868,6 +1868,52 @@ describe("a karaoke line", () => {
     expect(flat[2]?.find("kw-pic")[0]?.classList.contains("is-below")).toBe(false);
   });
 
+  it("lets a flame flicker in its own light and throw embers, under the word's copies, all on the picture's window", () => {
+    const FIRE: ReadonlyMap<number, WordDecor> = new Map([[2, { picture: "fire" }]]);
+    const ws = words(["set", "the", "fire"], 10_000, 300);
+    const { line: k, boxes } = line(ws, BL, { decor: FIRE });
+    mountAll(k, 10_000);
+    const fx = boxes[2]?.find("kw-fx")[0] as Node;
+    // the picture: its pop and float, and its flicker on `scale`
+    const pic = fx.kids("kw-pic")[0] as Node;
+    const [pose, flicker] = pic.getAnimations();
+    expect(pose?.keyframes[0]).toMatchObject({ opacity: 0 });
+    expect(flicker?.options.duration).toBe(PICTURE_MS);
+    expect(flicker?.keyframes.every((f) => /^[\d.]+ [\d.]+$/u.test(String(f.scale)))).toBe(true);
+    // its light: first in the overlay (under every copy), placed like the picture, moving with it
+    const aura = fx.children[0] as Node;
+    expect(aura.className).toBe("kw-aura");
+    expect(aura.style.width).toBe(pic.style.width);
+    expect(aura.style.getPropertyValue("translate")).toBe(pic.style.getPropertyValue("translate"));
+    expect(aura.style.getPropertyValue("--aura")).toMatch(/^rgba\(255, /u);
+    expect(aura.getAnimations()[0]?.keyframes).toEqual(pose?.keyframes);
+    const glow = aura.kids("kw-aura-glow")[0] as Node;
+    expect(glow.getAnimations()[0]?.keyframes.every((f) => Number(f.opacity) >= 0.6 && Number(f.opacity) <= 1)).toBe(true);
+    // embers, each rising on its own window after the picture shows
+    const embers = aura.kids("kw-ember");
+    expect(embers.length).toBe(3);
+    for (const e of embers) {
+      const [rise] = e.getAnimations();
+      expect(rise?.keyframes[0]).toMatchObject({ opacity: 0 });
+      expect(String(e.style.width)).toMatch(/px$/u);
+    }
+    // a sung line leaving stops all of it where it is
+    k.finish();
+    expect([pic, aura, glow, ...embers].flatMap((e) => e.getAnimations())).toEqual([]);
+  });
+
+  it("beats a heart on its scale, with no light; and gives a picture no life without motion", () => {
+    const HEART: ReadonlyMap<number, WordDecor> = new Map([[1, { picture: "heart" }]]);
+    const { line: k, boxes } = line(words(["my", "heart"], 10_000, 300), BL, { decor: HEART });
+    mountAll(k, 10_000);
+    const fx = boxes[1]?.find("kw-fx")[0] as Node;
+    expect(fx.kids("kw-aura")).toEqual([]);
+    expect(fx.kids("kw-pic")[0]?.getAnimations()).toHaveLength(2);
+    const { line: still, boxes: flat } = line(words(["my", "heart"], 10_000, 300), params({ motion: false }), { decor: HEART });
+    mountAll(still, 10_000);
+    expect(flat[1]?.find("kw-fx")[0]?.kids("kw-pic")[0]?.getAnimations()).toHaveLength(1);
+  });
+
   it("tilts a swaying line's words to alternate sides and rests them in the same transform list", () => {
     const sway = params({ move: "sway" });
     const { line: k, boxes } = line(words(["sway", "with", "me"], 10_000, 300), sway);
@@ -2081,5 +2127,53 @@ describe("the list's layout", () => {
     expect(lineLevel(3, true)).toBeLessThan(lineLevel(2, true));
     expect(lineLevel(3.49, true)).toBeLessThan(0.02);
     expect(lineLevel(3.5, true)).toBe(0);
+  });
+});
+
+describe("living pictures (decor.ts planPictureLife)", () => {
+  const offsets = (frames: readonly Keyframe[]): number[] => frames.map((f) => Number(f.offset));
+  const ends = (frames: readonly Keyframe[] | undefined): [number, number] => [Number(frames?.[0]?.offset), Number(frames?.[frames.length - 1]?.offset)];
+
+  it("gives each kind of living picture its motion, every track covering the picture's window", () => {
+    for (const [id, kind] of Object.entries(PICTURE_LIFE)) {
+      const life = planPictureLife(id as keyof typeof PICTURE_LIFE, 5000, 35, 1, 7);
+      const tracks = [life.pic, life.aura?.track].filter((t) => t !== null && t !== undefined);
+      expect(tracks.length, id).toBeGreaterThan(0);
+      for (const t of tracks) {
+        expect(t.t0, id).toBe(5000);
+        expect(t.duration, id).toBe(PICTURE_MS);
+        expect(ends(t.frames), id).toEqual([0, 1]);
+        const o = offsets(t.frames);
+        for (let i = 1; i < o.length; i++) expect(o[i], id).toBeGreaterThanOrEqual(o[i - 1] ?? 1);
+      }
+      // a picture that glows has light and no motion of its own; the others move on their scale
+      expect(life.pic === null, id).toBe(kind === "glow");
+      expect(life.aura !== null, id).toBe(kind === "flicker" || kind === "glow");
+    }
+  });
+
+  it("is the same every time for a seed, and none for a still picture or without motion", () => {
+    expect(planPictureLife("fire", 0, 35, 1, 3)).toEqual(planPictureLife("fire", 0, 35, 1, 3));
+    expect(planPictureLife("fire", 0, 35, 1, 3)).not.toEqual(planPictureLife("fire", 0, 35, 1, 4));
+    expect(planPictureLife("rain", 0, 35, 1, 3)).toEqual({ pic: null, aura: null, embers: [] });
+    expect(planPictureLife("fire", 0, 35, 0, 3)).toEqual({ pic: null, aura: null, embers: [] });
+  });
+
+  it("throws embers from big flames only, each starting after the picture does and rising", () => {
+    expect(planPictureLife("candle", 0, 35, 1, 3).embers).toEqual([]);
+    const { embers } = planPictureLife("campfire", 1000, 40, 1, 3);
+    expect(embers).toHaveLength(4);
+    for (const e of embers) {
+      expect(e.track.t0).toBeGreaterThan(1000);
+      expect(e.track.t0 + e.track.duration).toBeLessThan(1000 + PICTURE_MS);
+      expect(String(e.track.frames[e.track.frames.length - 1]?.transform)).toMatch(/translate\(-?[\d.]+px, -[\d.]+px\) scale\(0\.35\)/u);
+    }
+  });
+
+  it("flaps a butterfly's wings about five times a second and beats a heart three times", () => {
+    const wings = planPictureLife("butterfly", 0, 35, 1, 1).pic?.frames ?? [];
+    expect(wings.filter((f) => String(f.scale).startsWith("0.45")).length).toBe(Math.round(PICTURE_MS / 200));
+    const heart = planPictureLife("heart", 0, 35, 1, 1).pic?.frames ?? [];
+    expect(heart.filter((f) => f.scale === "1.1 1.1")).toHaveLength(3);
   });
 });

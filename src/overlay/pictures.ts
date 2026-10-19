@@ -1,7 +1,7 @@
 /**
  * The word pictures Effects mode shows beside sung words (core/wordpics.ts says which words call which).
- * Tiny transparent WebP stickers in `pictures/`, made once for Undertone with Higgsfield and bundled, so
- * they work offline and cost nothing per song.
+ * Tiny realistic pictures on transparent backgrounds in `pictures/` (160 px WebP), made once for
+ * Undertone with Higgsfield and bundled, so they work offline and cost nothing per song.
  */
 import type { PictureId } from "../core/wordpics";
 

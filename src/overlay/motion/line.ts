@@ -34,14 +34,16 @@
  * first. Words not mounted yet hold their pose inline.
  *
  * Effects mode adds a word's extras (decor.ts) to its overlay, each on its own song-time window: a
- * splash under the copies (`.kw-splash`, its pieces `.kw-sp`) and a picture above the word (`.kw-pic`).
- * They rest invisible; a line leaving focus once sung stops them where they are, to fade out with it.
+ * splash under the copies (`.kw-splash`, its pieces `.kw-sp`), a picture above the word (`.kw-pic`)
+ * and, for a picture that lives, its light under the copies (`.kw-aura`, with `.kw-aura-glow` and a
+ * flame's `.kw-ember`s). They rest invisible; a line leaving focus once sung stops them where they are,
+ * to fade out with it.
  */
 import type { WordDecor } from "../../core/flair";
 import type { Word } from "../../core/lrc";
 import { h, put } from "../dom";
 import { pictureUrl } from "../pictures";
-import { PICTURE_EM, picturePose, planPicture, planSplash, seedOf, type Particle } from "./decor";
+import { PICTURE_EM, picturePose, planPicture, planPictureLife, planSplash, seedOf, type Particle } from "./decor";
 import {
   closedWindow,
   FEATHER,
@@ -163,6 +165,12 @@ interface Overlay {
 interface Extras {
   pic: HTMLElement | null;
   picTrack: Track | null;
+  /** a living picture's own motion (decor.ts planPictureLife) */
+  picLife: Track | null;
+  /** its light, moving with it; the light's flicker or breath; the embers rising through it */
+  aura: HTMLElement | null;
+  glow: { el: HTMLElement; track: Track } | null;
+  embers: { el: HTMLElement; track: Track }[];
   pieces: HTMLElement[];
   particles: Particle[];
 }
@@ -524,9 +532,14 @@ export class KaraokeLine {
     const start = (el: HTMLElement, track: Track): void => {
       put(el, "opacity", "");
       put(el, "transform", "");
+      put(el, "scale", "");
       if (track.t0 + track.duration > this.mountedAt) this.timeline.play(el, track.frames, track.t0, track.duration, this.extrasGroup);
     };
     if (x.pic && x.picTrack) start(x.pic, x.picTrack);
+    if (x.pic && x.picLife) start(x.pic, x.picLife);
+    if (x.aura && x.picTrack) start(x.aura, x.picTrack);
+    if (x.glow) start(x.glow.el, x.glow.track);
+    for (const e of x.embers) start(e.el, e.track);
     x.pieces.forEach((el, i) => {
       const p = x.particles[i];
       if (p) start(el, p.track);
@@ -666,9 +679,9 @@ export class KaraokeLine {
     const base = (held && moves) || placed ? letterSpans(baseBox) : whole(baseBox);
     const lit = moves || placed ? letterSpans(litBox) : whole(litBox);
     track.append(bwin, win);
-    // a splash goes under every copy (a burst never covers the word), a picture over them
-    const { splash, pic } = this.extrasOf(v, shape);
-    fx.append(...(splash ? [splash] : []), dark, ...letterGlows, glow, track, ...(pic ? [pic] : []));
+    // a splash and a picture's light go under every copy (neither ever covers the word), a picture over them
+    const { splash, aura, pic } = this.extrasOf(v, shape);
+    fx.append(...(splash ? [splash] : []), ...(aura ? [aura] : []), dark, ...letterGlows, glow, track, ...(pic ? [pic] : []));
     v.el.append(fx);
     v.el.classList.add("kw-on");
     const ov: Overlay = {
@@ -695,9 +708,9 @@ export class KaraokeLine {
    * and its picture above the word. Each rests invisible (stage.css). Placed letters (Arc) carry them
    * along with the word's middle letter.
    */
-  private extrasOf(v: WordView, shape: WordShape): { splash: HTMLElement | null; pic: HTMLElement | null } {
+  private extrasOf(v: WordView, shape: WordShape): { splash: HTMLElement | null; aura: HTMLElement | null; pic: HTMLElement | null } {
     const decor = v.decor;
-    if (!decor || (!decor.picture && !decor.splash)) return { splash: null, pic: null };
+    if (!decor || (!decor.picture && !decor.splash)) return { splash: null, aura: null, pic: null };
     const { size, params, place } = this.look;
     const seed = seedOf(`${v.index}|${v.text}|${Math.round(v.word.start)}`);
     const mid = shape.letters[Math.floor(shape.letters.length / 2)];
@@ -706,7 +719,7 @@ export class KaraokeLine {
       if (dx !== 0 || dy !== 0) el.style.setProperty("translate", `${px(dx)} ${px(dy)}`);
       if (rotate !== 0) el.style.setProperty("rotate", `${rotate.toFixed(2)}deg`);
     };
-    const x: Extras = { pic: null, picTrack: null, pieces: [], particles: [] };
+    const x: Extras = { pic: null, picTrack: null, picLife: null, aura: null, glow: null, embers: [], pieces: [], particles: [] };
     let splash: HTMLElement | null = null;
     if (decor.splash && params.karaoke === "full") {
       x.particles = planSplash(decor.splash, v.word.start, size, shape.width, params.amp, seed);
@@ -727,7 +740,7 @@ export class KaraokeLine {
       }
     }
     const url = decor.picture ? pictureUrl(decor.picture) : null;
-    if (url) {
+    if (url && decor.picture) {
       // Above the word, unless the line wraps and the word is on a later row: the row above is the
       // line's own text then, so the picture goes under the word instead.
       const below = this.onLaterRow(v);
@@ -737,16 +750,41 @@ export class KaraokeLine {
       pic.decoding = "async";
       pic.draggable = false;
       const side = PICTURE_EM * size;
-      pic.style.width = px(side);
-      pic.style.height = px(side);
-      pic.style.marginLeft = px(-side / 2);
       const pose = picturePose(size, seed, below);
-      at(pic, pose.dx + (anchor?.dx ?? 0), pose.dy + (anchor?.dy ?? 0), pose.tilt + (anchor?.rotate ?? 0));
+      const box = (el: HTMLElement): void => {
+        el.style.width = px(side);
+        el.style.height = px(side);
+        el.style.marginLeft = px(-side / 2);
+        at(el, pose.dx + (anchor?.dx ?? 0), pose.dy + (anchor?.dy ?? 0), pose.tilt + (anchor?.rotate ?? 0));
+      };
+      box(pic);
+      const amp = params.karaoke === "full" ? params.amp : 0;
       x.pic = pic;
-      x.picTrack = planPicture(v.word.start, size, params.karaoke === "full" ? params.amp : 0, below);
+      x.picTrack = planPicture(v.word.start, size, amp, below);
+      const life = planPictureLife(decor.picture, v.word.start, side, amp, seed);
+      x.picLife = life.pic;
+      if (life.aura) {
+        // the picture's light: placed and moving like the picture, glowing in its color
+        const aura = h("span", below ? "kw-aura is-below" : "kw-aura");
+        aura.setAttribute("aria-hidden", "true");
+        aura.style.setProperty("--aura", life.aura.color);
+        box(aura);
+        const glow = h("span", "kw-aura-glow");
+        aura.append(glow);
+        x.glow = { el: glow, track: life.aura.track };
+        for (const e of life.embers) {
+          const ember = h("span", e.cls);
+          ember.style.width = px(e.w);
+          ember.style.height = px(e.h);
+          ember.style.marginLeft = px(-e.w / 2);
+          aura.append(ember);
+          x.embers.push({ el: ember, track: e.track });
+        }
+        x.aura = aura;
+      }
     }
     v.extras = x.pic || x.pieces.length > 0 ? x : null;
-    return { splash, pic: x.pic };
+    return { splash, aura: x.aura, pic: x.pic };
   }
 
   /**

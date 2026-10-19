@@ -2,8 +2,9 @@
  * Effects mode's extras on a sung word, planned ahead as keyframes like the karaoke (pure, no DOM):
  *
  * - picture: a tiny picture of what the word names (core/wordpics.ts) pops in above the word as it's
- *   sung, floats up a little and fades. Without motion (reduced motion, Effects 0) it only fades in and
- *   out where it stands.
+ *   sung, floats up a little and fades. Some live while they show (planPictureLife): a flame flickers in
+ *   its own glow, a lamp glows, a star twinkles, a heart beats. Without motion (reduced motion,
+ *   Effects 0) a picture only fades in and out where it stands.
  * - splash: a burst from the word at one of the song's big moments (core/flair.ts), in the song's
  *   highlight and lyric colors: droplets that arc up and fall, streaks, tumbling confetti, rings
  *   spreading out, or a few twinkling glints. Only with motion.
@@ -115,6 +116,162 @@ export function planPicture(at: number, size: number, amp: number, below = false
       { transform: pose(y(-0.22), -3 * k, 0.86), opacity: 0, offset: 1 },
     ],
   };
+}
+
+// ──────────────────────────────────────── living pictures ────────────────────────────────────────
+
+/**
+ * How a picture lives while it shows, besides popping in and floating up (only with motion, on the
+ * picture's own window): a flame flickers in its own glow and a big one throws embers; a lamp, the sun
+ * or the moon glows; a star, a sparkler, fireworks or a diamond twinkles; a heart beats; a butterfly
+ * beats its wings. The picture's motion is on its `scale` (its pose keeps `translate` and `rotate`).
+ */
+export type PictureLife = "flicker" | "glow" | "twinkle" | "beat" | "flutter";
+
+export const PICTURE_LIFE: Readonly<Partial<Record<PictureId, PictureLife>>> = {
+  fire: "flicker",
+  campfire: "flicker",
+  candle: "flicker",
+  lighter: "flicker",
+  match: "flicker",
+  "light-bulb": "glow",
+  lantern: "glow",
+  "street-lamp": "glow",
+  moon: "glow",
+  sun: "glow",
+  star: "twinkle",
+  sparkler: "twinkle",
+  fireworks: "twinkle",
+  diamond: "twinkle",
+  heart: "beat",
+  butterfly: "flutter",
+};
+
+/** The light a glowing picture gives off, behind it. */
+const AURA: Readonly<Partial<Record<PictureId, string>>> = {
+  fire: "rgba(255, 128, 32, 0.55)",
+  campfire: "rgba(255, 120, 28, 0.55)",
+  candle: "rgba(255, 176, 72, 0.5)",
+  lighter: "rgba(255, 160, 56, 0.45)",
+  match: "rgba(255, 160, 56, 0.45)",
+  "light-bulb": "rgba(255, 196, 110, 0.5)",
+  lantern: "rgba(255, 96, 56, 0.45)",
+  "street-lamp": "rgba(255, 206, 128, 0.45)",
+  moon: "rgba(200, 220, 255, 0.35)",
+  sun: "rgba(255, 196, 72, 0.5)",
+};
+
+/** How many embers a big flame throws. */
+const EMBERS: Readonly<Partial<Record<PictureId, number>>> = { fire: 3, campfire: 4 };
+
+/** A flicker is sampled this often, and a glow's breath, ms (both divide PICTURE_MS); the compositor eases in between. */
+const FLICKER_MS = 80;
+const BREATH_MS = 300;
+
+/** What a living picture adds to a picture shown at `at`: each track on the song's clock. */
+export interface PictureLifePlan {
+  /** the picture's own motion, on its `scale` */
+  pic: Track | null;
+  /** the light behind it (moving with the picture, planPicture) and how it flickers or breathes */
+  aura: { color: string; track: Track } | null;
+  /** embers rising from a flame, inside its light */
+  embers: Particle[];
+}
+
+const LIFELESS: PictureLifePlan = { pic: null, aura: null, embers: [] };
+
+/**
+ * Picture `id`'s life, shown at `at` and `side` px across: none without motion (amp 0) or for a
+ * picture that doesn't live. Seeded, so a song looks the same every time it plays.
+ */
+export function planPictureLife(id: PictureId, at: number, side: number, amp: number, seed: number): PictureLifePlan {
+  const kind = PICTURE_LIFE[id];
+  if (!kind || reachOf(amp) === 0) return LIFELESS;
+  const rand = randomOf(seed ^ 0x9e3779b9);
+  const D = PICTURE_MS;
+  const track = (frames: Keyframe[]): Track => ({ t0: at, duration: D, frames });
+  const color = AURA[id];
+  const aura = (frames: Keyframe[]): PictureLifePlan["aura"] => (color ? { color, track: track(frames) } : null);
+  const scale = (x: number, y = x): string => `${num(x, 3)} ${num(y, 3)}`;
+  switch (kind) {
+    case "flicker": {
+      // a big flame dances; a candle's, a lighter's or a match's only trembles
+      const big = EMBERS[id] !== undefined ? 1 : 0.6;
+      const pic: Keyframe[] = [];
+      const glow: Keyframe[] = [];
+      for (let t = 0; t <= D; t += FLICKER_MS) {
+        const offset = t / D;
+        pic.push({ scale: scale(1 + 0.02 * big * (2 * rand() - 1), 1 + 0.07 * big * (2 * rand() - 1)), offset });
+        glow.push({ opacity: num(0.6 + 0.4 * rand(), 3), offset });
+      }
+      return { pic: track(pic), aura: aura(glow), embers: embers(EMBERS[id] ?? 0, at, side, rand) };
+    }
+    case "glow": {
+      // a slow breath, out of step from one picture to the next
+      const glow: Keyframe[] = [];
+      const phase = rand() * Math.PI * 2;
+      for (let t = 0; t <= D; t += BREATH_MS) {
+        glow.push({ opacity: num(0.78 + 0.22 * Math.sin(phase + (t / 1300) * Math.PI * 2), 3), offset: t / D });
+      }
+      return { pic: null, aura: aura(glow), embers: [] };
+    }
+    case "twinkle":
+      return {
+        pic: track([
+          { scale: scale(1), offset: 0 },
+          { scale: scale(1.08), offset: 0.22 },
+          { scale: scale(0.96), offset: 0.42 },
+          { scale: scale(1.06), offset: 0.64 },
+          { scale: scale(0.98), offset: 0.84 },
+          { scale: scale(1), offset: 1 },
+        ]),
+        aura: null,
+        embers: [],
+      };
+    case "beat": {
+      // lub-dub, three times
+      const pic: Keyframe[] = [];
+      const beat = D / 3;
+      for (let i = 0; i < 3; i++) {
+        const o = (ms: number): number => (i * beat + ms) / D;
+        pic.push(
+          { scale: scale(1), offset: o(0) },
+          { scale: scale(1.1), offset: o(110) },
+          { scale: scale(1), offset: o(220) },
+          { scale: scale(1.06), offset: o(330) },
+          { scale: scale(1), offset: o(480) },
+        );
+      }
+      pic.push({ scale: scale(1), offset: 1 });
+      return { pic: track(pic), aura: null, embers: [] };
+    }
+    case "flutter": {
+      // wings closing and opening, about five times a second
+      const pic: Keyframe[] = [];
+      const beat = 200;
+      for (let t = 0; t <= D; t += beat / 2) pic.push({ scale: scale((t / (beat / 2)) % 2 === 1 ? 0.45 : 1, 1), offset: t / D });
+      return { pic: track(pic), aura: null, embers: [] };
+    }
+  }
+}
+
+/** `n` embers rising from near the top of a flame `side` px across, each on its own window. */
+function embers(n: number, at: number, side: number, rand: () => number): Particle[] {
+  const out: Particle[] = [];
+  for (let i = 0; i < n; i++) {
+    const delay = 250 + (i / n) * 1300 + rand() * 250;
+    const duration = 650 + rand() * 450;
+    const w = Math.max(2, side * (0.07 + 0.04 * rand()));
+    const rise = side * (0.45 + 0.35 * rand());
+    const drift = side * (0.3 * rand() - 0.15);
+    const frames: Keyframe[] = [
+      { transform: "translate(0px, 0px) scale(1)", opacity: 0, offset: 0 },
+      { transform: `translate(${num(0.3 * drift, 2)}px, ${num(-0.25 * rise, 2)}px) scale(1)`, opacity: 1, offset: 0.15 },
+      { transform: `translate(${num(drift, 2)}px, ${num(-rise, 2)}px) scale(0.35)`, opacity: 0, offset: 1 },
+    ];
+    out.push({ cls: "kw-ember", w, h: w, track: { t0: at + delay, duration, frames } });
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────── splashes ───────────────────────────────────────────

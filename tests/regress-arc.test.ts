@@ -835,9 +835,11 @@ describe("Arc transport", () => {
   it("freezes what is on screen for the stage's copy, and draws the view afresh after", () => {
     const { mode, box } = arcOn(stageLook());
     stepToLine1(mode);
+    // a word's picture that has already played draws nothing more ("lanterns", in line 0)
     const flying = box()
       .all()
-      .flatMap((n) => n.getAnimations());
+      .flatMap((n) => n.getAnimations())
+      .filter((a) => a.playState !== "finished");
     mode.freeze();
     expect(flying.every((a) => a.cancelled)).toBe(true);
     expect(flying.some((a) => a.commits > 0)).toBe(true);

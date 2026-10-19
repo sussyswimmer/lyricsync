@@ -495,3 +495,26 @@ Decisions you can reverse:
 Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 step 9 has the check.
 Needs from Codex: nothing.
 Contract: unchanged (v6).
+
+
+## 2026-10-19 · Claude Code · Realistic word pictures, nearly three times as many, some alive
+Done: Maxwell: "the graphics … are too basic and too cartoony, they should be more mature and more common; maybe the flame can have a little effect, and there should be more of them."
+- **A new library** (`src/overlay/pictures/`): 140 photorealistic pictures on transparent backgrounds, as 160 px WebP files (884 KB together). They were generated with Higgsfield (GPT Image 2.5, medium quality, transparent background) after a style test of photorealistic, cinematic and painted versions of a flame, iced tea, a rose and the moon; the photorealistic ones won because they read as real things at 30 px.
+  - The set: 47 of the 49 before, redone (sparkles became a sparkler, and sunset's words now call the sun), and 93 new subjects, the things songs mention most. Drinks and food (whiskey, tequila, a milkshake, a burger, popcorn, ice cubes), love (a bouquet, a sunflower, perfume, a teddy bear), the sky (clouds, an umbrella, a galaxy, the Earth, a rocket, fireworks), fire and light (a campfire, a lighter, a match, a light bulb, a lantern, a street lamp, smoke), places (a city, a house, a castle, a lighthouse, a bridge, a mountain, trees, a cactus, a sailboat, an anchor), travel (a truck, a motorcycle, a paper plane, a train, a suitcase, a map, a compass), home (an hourglass, a key, a door, a window, a bed, a mirror, a polaroid, a book, a pen), clothes and jewelry (sunglasses, heels, sneakers, boots, a cowboy hat, a dress, a leather jacket, a watch, pearls, gold bars), games and things (dice, cards, a clover, a trophy, a balloon, a bottle, a laptop, a TV), music (a microphone, headphones, a radio, a cassette, a piano, a drum, a saxophone) and animals (a bird, a dove, a raven, a wolf, a snake, a horse, a dog, a cat, a lion, a tiger, a bee).
+  - 68 credits, plus 6 for the style test. The generator left a faint pale halo around four (the dice, compass, lemon and ring); processing fades out their wide, faint alpha, and only theirs.
+- **More of them** (`core/wordpics.ts`): 678 words and phrases instead of about 370, written out from the same list as the prompts. Pictures may show 4 s apart (was 6), and the same one again after 20 s (was 25). Words that often mean something else in lyrics are left out or count only in a phrase: "shades" (of gray), "jet" (black), "kicks", "pine" (for you), "pickup" (line). "Head over heels" calls the heart, not the heels.
+- **Living pictures** (`overlay/motion/decor.ts` planPictureLife, KaraokeLine's extras). With motion, on the picture's own window:
+  - A flame (fire, a campfire, a candle, a lighter, a match) flickers on its `scale`, sampled every 80 ms and seeded, in its own glow (`.kw-aura`, under the word's copies, moving with the picture). Fire and a campfire throw 3 and 4 embers.
+  - A light bulb, a lantern, a street lamp, the sun and the moon glow, with a slow breath.
+  - A star, a sparkler, fireworks and a diamond twinkle; a heart beats three times; a butterfly beats its wings.
+  - Transform and opacity only, as everything else. None without motion, in the lite tier or with Effects mode off. The pose keeps `translate` and `rotate` inline, so a picture's own motion is on `scale` only: no sway or bob.
+- **Checked** in Chromium with the mock bridge, with a demo song's lyrics swapped in the page for original test lines: the lighter flickers in a warm glow, a campfire's embers rise, the heart beats, and the rain cloud and the others pop in as before.
+Tests: 1198 vitest in 33 files. New: living pictures in a line (a flame's flicker, light and embers, all stopped as the line leaves; a heart's beat with no light; nothing without motion) and planPictureLife (every kind, tracks over the picture's window, seeded, embers only from big flames, wing and heart beats). Changed: the word tests for the new vocabulary and gaps, and two transport tests whose fixture line ("Paper lanterns…") now shows a picture on its own window. Coverage is 98.6% of statements. `pnpm build` passes.
+Decisions you can reverse:
+- The photorealistic style.
+- The 4 s and 20 s gaps.
+- Which pictures live.
+- The size is unchanged (0.6 of the line's size).
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §12 step 3 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v6).

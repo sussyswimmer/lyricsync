@@ -649,13 +649,22 @@ describe("Lens on the motion engine: line changes", () => {
     frames();
     clock += 100;
     mode.paint(cue(0, 2100, false));
-    const all = everything(row()).flatMap((e) => e.getAnimations());
+    const els = everything(row());
+    const all = els.flatMap((e) => e.getAnimations());
     expect(all.length).toBeGreaterThan(20);
+    // the line's animations share its window, from its first word; a word's picture ("lanterns") and
+    // its light have their own, from that word (motion/decor.ts)
     const origin = LINES[0]?.words[0]?.start ?? 0;
-    for (const a of all) {
-      expect(a.paused).toBe(true);
-      expect(a.currentTime).toBeCloseTo(2100 - origin, 6);
+    const pictured = LINES[0]?.words.find((w) => w.text.startsWith("lanterns"))?.start ?? NaN;
+    const ownWindow = (e: FakeElement): boolean => ["kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
+    for (const e of els) {
+      for (const a of e.getAnimations()) {
+        expect(a.paused).toBe(true);
+        expect(a.currentTime).toBeCloseTo(2100 - (ownWindow(e) ? pictured : origin), 6);
+      }
     }
+    expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(true);
+    expect(els.some((e) => e.classList.contains("kw-aura"))).toBe(true);
     clock += 5000;
     mode.paint(cue(0, 2100, true));
     for (const a of all) expect(a.paused).toBe(false);
