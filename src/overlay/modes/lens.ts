@@ -976,6 +976,14 @@ export class LensMode implements ModeRenderer {
         params: this.moves.paramsFor(look, this.params ?? motionParams(look), decor?.move === "pulse" ? "bounce" : (decor?.move ?? "rise")),
         steps: this.steps,
         ...(decor ? { decor: decor.words } : {}),
+        // a word's top middle where the lens draws it at that moment (its slot: transform-origin 0 baseline)
+        host: row.el,
+        spot: (j, t) => {
+          const pose = row.plan ? row.plan.at(t) : poseOf(row.shape, row.fit, look.width, look.dpr, 0, 0);
+          const s = pose.scale[j] ?? 1;
+          const w = (row.shape.widths[j] ?? 0) * s;
+          return { x: (pose.x[j] ?? 0) + w / 2, y: row.slotY + this.baseline * (1 - s), w };
+        },
       },
       this.timeline,
       `lens${++this.serial}`,

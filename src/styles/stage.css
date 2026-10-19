@@ -198,47 +198,57 @@
   color: var(--ut-hl);
 }
 
-/* ---------- Effects mode's extras (overlay/motion/decor.ts) ----------
-   Inside a word's overlay, so they show only while its line is in focus and fade out with it. Each
-   rests invisible: its animation (transform and opacity, on the compositor) shows it. */
+/* ---------- Effects mode's extras (overlay/motion/decor.ts, routes.ts) ----------
+   Each rests invisible: its animation (transform and opacity, on the compositor) shows it. A splash is
+   inside its word's overlay; a picture travels the line, in the line's own layers. */
 
-/* A word's picture: centered above the word box (its size and centering margin are inline, its tilt and
-   offset in `translate` and `rotate`); a soft shadow keeps it apart from a busy or light wallpaper. */
+/* A line's picture layers (motion/line.ts): a point at the top left of the line's box that takes no
+   room. The one over the words holds the pictures, the one under them (first in the box) their light. */
+.kw-pics {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.kw-host:not(.has-fx) > .kw-pics {
+  opacity: 0;
+}
+
+/* A picture's route: a point, the picture's bottom middle, moved by its track (routes.ts). */
+.kw-route {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+/* A picture: standing on its route's point (its size and centering margin are inline); its own life
+   (flicker, beat, wings) on its `scale`. A soft shadow keeps it apart from a busy or light wallpaper. */
 .kw-pic {
   position: absolute;
-  left: 50%;
-  bottom: 100%;
-  opacity: 0;
+  left: 0;
+  bottom: 0;
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-  transform-origin: 50% 85%;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  transform-origin: 50% 70%;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) saturate(1.12);
 }
 
-/* On a wrapped line's later row the row above is the line's own text: the picture goes under the word. */
-.kw-pic.is-below {
-  bottom: auto;
-  top: 100%;
-  transform-origin: 50% 15%;
-}
-
-/* A living picture's light (motion/decor.ts planPictureLife): placed and moving like its picture, but
-   under the word's copies, so it never covers the text. A soft glow in the picture's own color
-   (--aura, inline), flickering or breathing, and a big flame's embers rising through it. */
+/* A living picture's light (motion/decor.ts planPictureLife): on its picture's route, but under the
+   words, so it never covers the text. A soft glow in the picture's own color (--aura, inline),
+   flickering or breathing, and a big flame's embers rising through it. */
 .kw-aura {
   position: absolute;
-  left: 50%;
-  bottom: 100%;
-  opacity: 0;
+  left: 0;
+  bottom: 0;
   pointer-events: none;
   transform-origin: 50% 85%;
-}
-
-.kw-aura.is-below {
-  bottom: auto;
-  top: 100%;
-  transform-origin: 50% 15%;
 }
 
 .kw-aura-glow {

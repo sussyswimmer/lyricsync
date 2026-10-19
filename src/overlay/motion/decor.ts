@@ -1,10 +1,9 @@
 /**
  * Effects mode's extras on a sung word, planned ahead as keyframes like the karaoke (pure, no DOM):
  *
- * - picture: a tiny picture of what the word names (core/wordpics.ts) pops in above the word as it's
- *   sung, floats up a little and fades. Some live while they show (planPictureLife): a flame flickers in
- *   its own glow, a lamp glows, a star twinkles, a heart beats. Without motion (reduced motion,
- *   Effects 0) a picture only fades in and out where it stands.
+ * - picture: a picture of what the word names (core/wordpics.ts) takes part in the line while it's
+ *   sung: where it goes is routes.ts. Some also live while they show (planPictureLife): a flame flickers
+ *   in its own glow, a lamp glows, a star twinkles, a heart beats, wings flap.
  * - splash: a burst from the word at one of the song's big moments (core/flair.ts), in the song's
  *   highlight and lyric colors: droplets that arc up and fall, streaks, tumbling confetti, rings
  *   spreading out, or a few twinkling glints. Only with motion.
@@ -22,8 +21,8 @@ import { framesOf, keyPoints, num, sampleTimes, thin } from "./keyframes";
 import type { Power } from "./power";
 
 /** A picture is this many font sizes across... */
-export const PICTURE_EM = 0.6;
-/** ...and shows for this long from its word's start, ms. */
+export const PICTURE_EM = 1;
+/** ...and lives this long from its word's start unless its route says otherwise, ms. */
 export const PICTURE_MS = 2400;
 /** A splash starts this long after its word does, as the word's own motion gets going, ms. */
 export const SPLASH_DELAY_MS = 60;
@@ -61,63 +60,6 @@ export function reachOf(amp: number): number {
 
 // ─────────────────────────────────────────── pictures ───────────────────────────────────────────
 
-/** Where a picture sits, beside where its word box would draw it: px right and down, and a tilt in degrees. */
-export interface PicturePose {
-  dx: number;
-  dy: number;
-  tilt: number;
-}
-
-/**
- * A picture's resting place above its word (or `below` it): a little off center and tilted, its own
- * way for each seed.
- */
-export function picturePose(size: number, seed: number, below = false): PicturePose {
-  const rand = randomOf(seed);
-  const side = rand() < 0.5 ? -1 : 1;
-  return { dx: side * (0.08 + 0.14 * rand()) * size, dy: (below ? 0.02 : -0.04) * size, tilt: side * (5 + 7 * rand()) };
-}
-
-const pose = (y: number, deg: number, s: number): string => `translate(0px, ${num(y, 2)}px) rotate(${num(deg, 2)}deg) scale(${num(s, 3)})`;
-
-/**
- * A picture's motion from song time `at` (its word's start): with motion it pops in from small and low
- * past its size and settles, rises slowly while it shows, and shrinks a little as it fades; without,
- * it fades in, holds and fades out. A picture `below` its word (one on a wrapped line's later row)
- * moves the other way: in from just under the word, drifting down.
- */
-export function planPicture(at: number, size: number, amp: number, below = false): Track {
-  const reach = reachOf(amp);
-  const D = PICTURE_MS;
-  if (reach === 0) {
-    const still = pose(0, 0, 1);
-    return {
-      t0: at,
-      duration: D,
-      frames: [
-        { transform: still, opacity: 0, offset: 0 },
-        { transform: still, opacity: 1, offset: 220 / D },
-        { transform: still, opacity: 1, offset: 1900 / D },
-        { transform: still, opacity: 0, offset: 1 },
-      ],
-    };
-  }
-  const k = reach;
-  const y = (em: number): number => (below ? -em : em) * size * k;
-  return {
-    t0: at,
-    duration: D,
-    frames: [
-      { transform: pose(y(0.28), -14 * k, 0.35), opacity: 0, offset: 0, easing: "ease-out" },
-      { transform: pose(y(0.06), -6 * k, 0.8), opacity: 1, offset: 120 / D, easing: "ease-out" },
-      { transform: pose(y(-0.05), 4 * k, 1.12), opacity: 1, offset: 210 / D, easing: "ease-in-out" },
-      { transform: pose(0, 0, 1), opacity: 1, offset: 360 / D, easing: "ease-in-out" },
-      { transform: pose(y(-0.13), -2 * k, 1), opacity: 1, offset: 1900 / D, easing: "ease-in" },
-      { transform: pose(y(-0.22), -3 * k, 0.86), opacity: 0, offset: 1 },
-    ],
-  };
-}
-
 // ──────────────────────────────────────── living pictures ────────────────────────────────────────
 
 /**
@@ -126,7 +68,7 @@ export function planPicture(at: number, size: number, amp: number, below = false
  * or the moon glows; a star, a sparkler, fireworks or a diamond twinkles; a heart beats; a butterfly
  * beats its wings. The picture's motion is on its `scale` (its pose keeps `translate` and `rotate`).
  */
-export type PictureLife = "flicker" | "glow" | "twinkle" | "beat" | "flutter";
+export type PictureLife = "flicker" | "glow" | "twinkle" | "beat" | "flutter" | "flap";
 
 export const PICTURE_LIFE: Readonly<Partial<Record<PictureId, PictureLife>>> = {
   fire: "flicker",
@@ -145,6 +87,11 @@ export const PICTURE_LIFE: Readonly<Partial<Record<PictureId, PictureLife>>> = {
   diamond: "twinkle",
   heart: "beat",
   butterfly: "flutter",
+  angel: "flap",
+  bee: "flutter",
+  bird: "flap",
+  dove: "flap",
+  raven: "flap",
 };
 
 /** The light a glowing picture gives off, behind it. */
@@ -184,11 +131,11 @@ const LIFELESS: PictureLifePlan = { pic: null, aura: null, embers: [] };
  * Picture `id`'s life, shown at `at` and `side` px across: none without motion (amp 0) or for a
  * picture that doesn't live. Seeded, so a song looks the same every time it plays.
  */
-export function planPictureLife(id: PictureId, at: number, side: number, amp: number, seed: number): PictureLifePlan {
+export function planPictureLife(id: PictureId, at: number, side: number, amp: number, seed: number, duration = PICTURE_MS): PictureLifePlan {
   const kind = PICTURE_LIFE[id];
   if (!kind || reachOf(amp) === 0) return LIFELESS;
   const rand = randomOf(seed ^ 0x9e3779b9);
-  const D = PICTURE_MS;
+  const D = Math.max(FLICKER_MS, duration);
   const track = (frames: Keyframe[]): Track => ({ t0: at, duration: D, frames });
   const color = AURA[id];
   const aura = (frames: Keyframe[]): PictureLifePlan["aura"] => (color ? { color, track: track(frames) } : null);
@@ -229,10 +176,11 @@ export function planPictureLife(id: PictureId, at: number, side: number, amp: nu
         embers: [],
       };
     case "beat": {
-      // lub-dub, three times
+      // lub-dub, about once every 0.8 s
       const pic: Keyframe[] = [];
-      const beat = D / 3;
-      for (let i = 0; i < 3; i++) {
+      const beats = Math.max(1, Math.round(D / 800));
+      const beat = D / beats;
+      for (let i = 0; i < beats; i++) {
         const o = (ms: number): number => (i * beat + ms) / D;
         pic.push(
           { scale: scale(1), offset: o(0) },
@@ -250,6 +198,15 @@ export function planPictureLife(id: PictureId, at: number, side: number, amp: nu
       const pic: Keyframe[] = [];
       const beat = 200;
       for (let t = 0; t <= D; t += beat / 2) pic.push({ scale: scale((t / (beat / 2)) % 2 === 1 ? 0.45 : 1, 1), offset: t / D });
+      if (Number(pic[pic.length - 1]?.offset) < 1) pic.push({ scale: scale(1), offset: 1 });
+      return { pic: track(pic), aura: null, embers: [] };
+    }
+    case "flap": {
+      // a bird's wings: a downstroke squashes it a little, about four times a second
+      const pic: Keyframe[] = [];
+      const beat = 250;
+      for (let t = 0; t <= D; t += beat / 2) pic.push({ scale: scale(1, (t / (beat / 2)) % 2 === 1 ? 0.84 : 1), offset: t / D });
+      if (Number(pic[pic.length - 1]?.offset) < 1) pic.push({ scale: scale(1), offset: 1 });
       return { pic: track(pic), aura: null, embers: [] };
     }
   }

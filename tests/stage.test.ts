@@ -350,6 +350,19 @@ class FakeElement extends FakeAnimationHost {
     node.parent = p;
     p.children.splice(p.children.indexOf(this) + 1, 0, node);
   }
+  prepend(...nodes: FakeElement[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeElement | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeElement | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
+  }
   remove(): void {
     const p = this.parent;
     if (!p) return;

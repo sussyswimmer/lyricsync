@@ -334,6 +334,19 @@ class FakeElement extends FakeAnimationHost {
     node.parent = p;
     p.children.splice(p.children.indexOf(this) + 1, 0, node);
   }
+  prepend(...nodes: FakeElement[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeElement | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeElement | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
+  }
   remove(): void {
     const p = this.parent;
     if (!p) return;
@@ -652,11 +665,11 @@ describe("Lens on the motion engine: line changes", () => {
     const els = everything(row());
     const all = els.flatMap((e) => e.getAnimations());
     expect(all.length).toBeGreaterThan(20);
-    // the line's animations share its window, from its first word; a word's picture ("lanterns") and
-    // its light have their own, from that word (motion/decor.ts)
+    // the line's animations share its window, from its first word; a word's picture ("lanterns"), its
+    // route and its light have their own, from that word (a lantern dances on its word: routes.ts)
     const origin = LINES[0]?.words[0]?.start ?? 0;
     const pictured = LINES[0]?.words.find((w) => w.text.startsWith("lanterns"))?.start ?? NaN;
-    const ownWindow = (e: FakeElement): boolean => ["kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
+    const ownWindow = (e: FakeElement): boolean => ["kw-route", "kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
     for (const e of els) {
       for (const a of e.getAnimations()) {
         expect(a.paused).toBe(true);
@@ -664,6 +677,7 @@ describe("Lens on the motion engine: line changes", () => {
       }
     }
     expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(true);
+    expect(els.some((e) => e.classList.contains("kw-route"))).toBe(true);
     expect(els.some((e) => e.classList.contains("kw-aura"))).toBe(true);
     clock += 5000;
     mode.paint(cue(0, 2100, true));

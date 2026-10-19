@@ -386,6 +386,19 @@ class FakeNode extends FakeAnimationHost {
       this.children.push(n);
     }
   }
+  prepend(...nodes: FakeNode[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeNode | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeNode | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
+  }
   remove(): void {
     const p = this.parent;
     if (!p) return;

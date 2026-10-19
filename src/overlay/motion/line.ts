@@ -33,17 +33,20 @@
  * a first slice (the words sung by now or within 400 ms) and the rest on the next frames, earliest
  * first. Words not mounted yet hold their pose inline.
  *
- * Effects mode adds a word's extras (decor.ts) to its overlay, each on its own song-time window: a
- * splash under the copies (`.kw-splash`, its pieces `.kw-sp`), a picture above the word (`.kw-pic`)
- * and, for a picture that lives, its light under the copies (`.kw-aura`, with `.kw-aura-glow` and a
- * flame's `.kw-ember`s). They rest invisible; a line leaving focus once sung stops them where they are,
- * to fade out with it.
+ * Effects mode adds a word's extras (decor.ts) on their own song-time windows: a splash under the
+ * word's copies (`.kw-splash`, its pieces `.kw-sp`), and a picture that takes part in the line
+ * (routes.ts): it hops from word to word, flies or drives across, floats up, falls, bursts, orbits,
+ * rolls or dances. A picture travels the whole line, so it lives in the line's own layers rather than
+ * its word's overlay: `.kw-pics` over the words holds its `.kw-route` (the route) around the `.kw-pic`
+ * (its own life) and any copies, and `.kw-pics.is-under` holds its light (`.kw-aura`, with
+ * `.kw-aura-glow` and a flame's `.kw-ember`s) on the same route, under the words. They rest
+ * invisible; a line leaving focus once sung stops them where they are, to fade out with it.
  */
 import type { WordDecor } from "../../core/flair";
 import type { Word } from "../../core/lrc";
 import { h, put } from "../dom";
 import { pictureUrl } from "../pictures";
-import { PICTURE_EM, picturePose, planPicture, planPictureLife, planSplash, seedOf, type Particle } from "./decor";
+import { PICTURE_EM, planPictureLife, planSplash, seedOf, type Particle } from "./decor";
 import {
   closedWindow,
   FEATHER,
@@ -67,6 +70,7 @@ import {
 import { compositorSteps } from "./keyframes";
 import { canvasInk, canvasMeasure, isRtl, measureLetters, roughMeasure, type InkMeasure, type Measure } from "./letters";
 import { LEAD_MS, LEAVE_MS, SETTLE_IN_MS, type MotionParams } from "./params";
+import { planPictureRoute, type Spot, type Stop } from "./routes";
 import { commit, type SongTimeline } from "./timeline";
 
 export { LEAVE_MS, SETTLE_IN_MS };
@@ -89,6 +93,14 @@ export interface KaraokeLook {
   steps?: boolean;
   /** Effects mode: the words with a picture or a splash, by word index (core/flair.ts LineDecor.words) */
   decor?: ReadonlyMap<number, WordDecor>;
+  /**
+   * The line's own box, where its pictures travel (`.kw-host`, the word boxes' nearest by default),
+   * and where word `word` is in it at song time `t`: the middle of its top and its width, px. Modes
+   * that place word boxes with transforms (Arc's frames, Lens's slots) say; without it the word boxes'
+   * layout in the host is used (Drift and Stack).
+   */
+  host?: HTMLElement;
+  spot?: (word: number, t: number) => Spot | null;
 }
 
 /**
@@ -163,12 +175,15 @@ interface Overlay {
 
 /** A word's extras (Effects mode): its picture and splash pieces, and their motion. */
 interface Extras {
+  /** the picture, inside its route in the line's layer over the words, and its copies' routes */
   pic: HTMLElement | null;
-  picTrack: Track | null;
+  route: HTMLElement | null;
+  copies: HTMLElement[];
   /** a living picture's own motion (decor.ts planPictureLife) */
   picLife: Track | null;
-  /** its light, moving with it; the light's flicker or breath; the embers rising through it */
+  /** its light, on the same route in the layer under the words; the light's flicker or breath; the embers rising through it */
   aura: HTMLElement | null;
+  auraRoute: HTMLElement | null;
   glow: { el: HTMLElement; track: Track } | null;
   embers: { el: HTMLElement; track: Track }[];
   pieces: HTMLElement[];
@@ -241,6 +256,8 @@ export class KaraokeLine {
   private destroyed = false;
   /** the overlays' fade-out (fadeOut), on the document timeline */
   private fades: { el: HTMLElement; anim: Animation }[] = [];
+  /** the line's picture layers in its host, made with its first picture */
+  private layers: { over: HTMLElement; under: HTMLElement } | null = null;
 
   /** `els[i]` is the `.kw` box of `words[i]`. Nothing is built or measured until prepare or mount asks. */
   constructor(words: readonly Word[], els: readonly HTMLElement[], look: KaraokeLook, timeline: SongTimeline, group: string) {
@@ -386,10 +403,10 @@ export class KaraokeLine {
   fadeOut(ms: number, steps = 0): void {
     if (this.destroyed || !(ms > 0)) return;
     const easing = steps > 0 ? `steps(${Math.round(steps)}, start)` : "ease-out";
-    for (const v of this.views) {
-      const fx = v.ov?.fx;
-      if (!fx || typeof fx.animate !== "function") continue;
-      this.fades.push({ el: fx, anim: fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing }) });
+    const fading = [...this.views.map((v) => v.ov?.fx), this.layers?.over, this.layers?.under];
+    for (const el of fading) {
+      if (!el || typeof el.animate !== "function") continue;
+      this.fades.push({ el, anim: el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing }) });
     }
   }
 
@@ -429,6 +446,9 @@ export class KaraokeLine {
       v.extras = null;
     }
     this.views.length = 0;
+    this.layers?.over.remove();
+    this.layers?.under.remove();
+    this.layers = null;
   }
 
   // ---------- slices ----------
@@ -535,9 +555,18 @@ export class KaraokeLine {
       put(el, "scale", "");
       if (track.t0 + track.duration > this.mountedAt) this.timeline.play(el, track.frames, track.t0, track.duration, this.extrasGroup);
     };
-    if (x.pic && x.picTrack) start(x.pic, x.picTrack);
+    if (x.route) {
+      const plan = this.routeOf(v);
+      if (plan) {
+        start(x.route, plan.track);
+        if (x.auraRoute) start(x.auraRoute, plan.track);
+        x.copies.forEach((el, i) => {
+          const copy = plan.copies[i];
+          if (copy) start(el, copy.track);
+        });
+      }
+    }
     if (x.pic && x.picLife) start(x.pic, x.picLife);
-    if (x.aura && x.picTrack) start(x.aura, x.picTrack);
     if (x.glow) start(x.glow.el, x.glow.track);
     for (const e of x.embers) start(e.el, e.track);
     x.pieces.forEach((el, i) => {
@@ -679,9 +708,9 @@ export class KaraokeLine {
     const base = (held && moves) || placed ? letterSpans(baseBox) : whole(baseBox);
     const lit = moves || placed ? letterSpans(litBox) : whole(litBox);
     track.append(bwin, win);
-    // a splash and a picture's light go under every copy (neither ever covers the word), a picture over them
-    const { splash, aura, pic } = this.extrasOf(v, shape);
-    fx.append(...(splash ? [splash] : []), ...(aura ? [aura] : []), dark, ...letterGlows, glow, track, ...(pic ? [pic] : []));
+    // a splash goes under every copy (it never covers the word); a picture and its light travel the line, in its layers
+    const splash = this.extrasOf(v, shape);
+    fx.append(...(splash ? [splash] : []), dark, ...letterGlows, glow, track);
     v.el.append(fx);
     v.el.classList.add("kw-on");
     const ov: Overlay = {
@@ -704,29 +733,27 @@ export class KaraokeLine {
   }
 
   /**
-   * Effects mode's extras for a word that has any (WordView.extras): the box of its splash's pieces,
-   * and its picture above the word. Each rests invisible (stage.css). Placed letters (Arc) carry them
-   * along with the word's middle letter.
+   * Effects mode's extras for a word that has any (WordView.extras): its splash's pieces, in a box
+   * returned for the word's overlay, and its picture, built in the line's layers (layersOf) with its
+   * light and copies. The picture's route is planned when it starts (playExtras), where the words are.
+   * Placed letters (Arc) carry the splash along with the word's middle letter.
    */
-  private extrasOf(v: WordView, shape: WordShape): { splash: HTMLElement | null; aura: HTMLElement | null; pic: HTMLElement | null } {
+  private extrasOf(v: WordView, shape: WordShape): HTMLElement | null {
     const decor = v.decor;
-    if (!decor || (!decor.picture && !decor.splash)) return { splash: null, aura: null, pic: null };
+    if (!decor || (!decor.picture && !decor.splash)) return null;
     const { size, params, place } = this.look;
     const seed = seedOf(`${v.index}|${v.text}|${Math.round(v.word.start)}`);
     const mid = shape.letters[Math.floor(shape.letters.length / 2)];
     const anchor = place && mid ? place(v.index, shape.letters.indexOf(mid), mid) : null;
-    const at = (el: HTMLElement, dx: number, dy: number, rotate: number): void => {
-      if (dx !== 0 || dy !== 0) el.style.setProperty("translate", `${px(dx)} ${px(dy)}`);
-      if (rotate !== 0) el.style.setProperty("rotate", `${rotate.toFixed(2)}deg`);
-    };
-    const x: Extras = { pic: null, picTrack: null, picLife: null, aura: null, glow: null, embers: [], pieces: [], particles: [] };
+    const x: Extras = { pic: null, route: null, copies: [], picLife: null, aura: null, auraRoute: null, glow: null, embers: [], pieces: [], particles: [] };
     let splash: HTMLElement | null = null;
     if (decor.splash && params.karaoke === "full") {
       x.particles = planSplash(decor.splash, v.word.start, size, shape.width, params.amp, seed);
       if (x.particles.length > 0) {
         const box = h("span", "kw-splash");
         box.setAttribute("aria-hidden", "true");
-        at(box, anchor?.dx ?? 0, anchor?.dy ?? 0, anchor?.rotate ?? 0);
+        if (anchor && (anchor.dx !== 0 || anchor.dy !== 0)) box.style.setProperty("translate", `${px(anchor.dx)} ${px(anchor.dy)}`);
+        if (anchor && anchor.rotate !== 0) box.style.setProperty("rotate", `${anchor.rotate.toFixed(2)}deg`);
         for (const p of x.particles) {
           const piece = h("span", `kw-sp ${p.cls}`);
           piece.style.width = px(p.w);
@@ -740,35 +767,44 @@ export class KaraokeLine {
       }
     }
     const url = decor.picture ? pictureUrl(decor.picture) : null;
-    if (url && decor.picture) {
-      // Above the word, unless the line wraps and the word is on a later row: the row above is the
-      // line's own text then, so the picture goes under the word instead.
-      const below = this.onLaterRow(v);
-      const pic = h("img", below ? "kw-pic is-below" : "kw-pic");
-      pic.src = url;
-      pic.alt = "";
-      pic.decoding = "async";
-      pic.draggable = false;
+    const layers = url ? this.layersOf() : null;
+    if (url && decor.picture && layers) {
       const side = PICTURE_EM * size;
-      const pose = picturePose(size, seed, below);
-      const box = (el: HTMLElement): void => {
-        el.style.width = px(side);
-        el.style.height = px(side);
-        el.style.marginLeft = px(-side / 2);
-        at(el, pose.dx + (anchor?.dx ?? 0), pose.dy + (anchor?.dy ?? 0), pose.tilt + (anchor?.rotate ?? 0));
+      const picture = (scale = 1): { route: HTMLElement; img: HTMLImageElement } => {
+        const route = h("span", "kw-route");
+        route.setAttribute("aria-hidden", "true");
+        const img = h("img", "kw-pic");
+        img.src = url;
+        img.alt = "";
+        img.decoding = "async";
+        img.draggable = false;
+        const w = side * scale;
+        img.style.width = px(w);
+        img.style.height = px(w);
+        img.style.marginLeft = px(-w / 2);
+        route.append(img);
+        layers.over.append(route);
+        return { route, img };
       };
-      box(pic);
       const amp = params.karaoke === "full" ? params.amp : 0;
-      x.pic = pic;
-      x.picTrack = planPicture(v.word.start, size, amp, below);
-      const life = planPictureLife(decor.picture, v.word.start, side, amp, seed);
+      const main = picture();
+      x.pic = main.img;
+      x.route = main.route;
+      const plan = this.routeOf(v, true);
+      for (const copy of plan?.copies ?? []) x.copies.push(picture(copy.scale).route);
+      const life = planPictureLife(decor.picture, v.word.start, side, amp, seed, plan ? plan.track.t0 + plan.track.duration - v.word.start : undefined);
       x.picLife = life.pic;
       if (life.aura) {
-        // the picture's light: placed and moving like the picture, glowing in its color
-        const aura = h("span", below ? "kw-aura is-below" : "kw-aura");
-        aura.setAttribute("aria-hidden", "true");
+        // the picture's light: on its route, under the words, glowing in its color
+        const auraRoute = h("span", "kw-route");
+        auraRoute.setAttribute("aria-hidden", "true");
+        const aura = h("span", "kw-aura");
         aura.style.setProperty("--aura", life.aura.color);
-        box(aura);
+        aura.style.width = px(side);
+        aura.style.height = px(side);
+        aura.style.marginLeft = px(-side / 2);
+        auraRoute.append(aura);
+        layers.under.append(auraRoute);
         const glow = h("span", "kw-aura-glow");
         aura.append(glow);
         x.glow = { el: glow, track: life.aura.track };
@@ -781,22 +817,97 @@ export class KaraokeLine {
           x.embers.push({ el: ember, track: e.track });
         }
         x.aura = aura;
+        x.auraRoute = auraRoute;
       }
     }
     v.extras = x.pic || x.pieces.length > 0 ? x : null;
-    return { splash, aura: x.aura, pic: x.pic };
+    return splash;
+  }
+
+  /** The line's picture layers in its host: under the words (lights) and over them (pictures). Null without a host. */
+  private layersOf(): { over: HTMLElement; under: HTMLElement } | null {
+    if (this.layers) return this.layers;
+    const host = this.hostOf();
+    if (!host) return null;
+    const over = h("div", "kw-pics");
+    const under = h("div", "kw-pics is-under");
+    over.setAttribute("aria-hidden", "true");
+    under.setAttribute("aria-hidden", "true");
+    host.prepend(under);
+    host.append(over);
+    this.layers = { over, under };
+    return this.layers;
+  }
+
+  private hostOf(): HTMLElement | null {
+    if (this.look.host) return this.look.host;
+    const first = this.views[0]?.el;
+    return (first?.closest(".kw-host") as HTMLElement | null) ?? null;
   }
 
   /**
-   * Whether the word sits on a later row than the line's first word (the line wraps): one layout read,
-   * made only for a word that shows a picture. Unknown (no layout) counts as the first row.
+   * Where word `i` is at song time `t`, in the host (KaraokeLook.spot), or from the word box's layout:
+   * its offsets up to the host, plus the placement of its middle letter where letters are placed.
    */
-  private onLaterRow(v: WordView): boolean {
-    const first = this.views[0]?.el;
-    const top = v.el.offsetTop;
-    const firstTop = first?.offsetTop;
-    return typeof top === "number" && typeof firstTop === "number" && top - firstTop > 0.5 * this.look.size;
+  private spotOf(i: number, t: number): Spot | null {
+    if (this.look.spot) return this.look.spot(i, t);
+    const v = this.views[i];
+    const host = this.hostOf();
+    if (!v || !host) return null;
+    let x = 0;
+    let y = 0;
+    let el: HTMLElement | null = v.el;
+    while (el && el !== host) {
+      x += el.offsetLeft;
+      y += el.offsetTop;
+      const parent: Element | null = el.offsetParent;
+      if (!parent) return null;
+      el = parent as HTMLElement;
+    }
+    if (el !== host) return null;
+    const w = v.el.offsetWidth;
+    return { x: x + w / 2, y, w };
   }
+
+  /**
+   * The route of word `v`'s picture (routes.ts), from where the line's words are: as it starts and,
+   * for each word after it, as that one starts. `layoutless` (while building, before the line has
+   * a layout to read) plans it from where its own word is only, for the copies it brings.
+   */
+  private routeOf(v: WordView, layoutless = false): ReturnType<typeof planPictureRoute> | null {
+    const id = v.decor?.picture;
+    if (!id) return null;
+    const { size, params } = this.look;
+    const at = v.word.start;
+    const home = layoutless ? { x: 0, y: 0, w: 0 } : this.spotOf(v.index, at);
+    if (!home) return null;
+    const stops: Stop[] = [];
+    let left = home.x - home.w / 2;
+    let right = home.x + home.w / 2;
+    if (!layoutless) {
+      for (const other of this.views) {
+        const spot = this.spotOf(other.index, Math.max(at, other.word.start));
+        if (!spot) continue;
+        left = Math.min(left, spot.x - spot.w / 2);
+        right = Math.max(right, spot.x + spot.w / 2);
+        if (other.index > v.index) stops.push({ ...spot, t: other.word.start });
+      }
+    }
+    return planPictureRoute({
+      id,
+      at,
+      until: this.sungBy,
+      side: PICTURE_EM * size,
+      size,
+      amp: params.karaoke === "full" ? params.amp : 0,
+      seed: seedOf(`${v.index}|${v.text}|${Math.round(at)}`),
+      home,
+      stops,
+      left,
+      right,
+    });
+  }
+
 
   private restOf(v: WordView, shape: WordShape): string[] {
     return letterRest(v.word, v.text, shape, this.look.params, v.index === this.views.length - 1);

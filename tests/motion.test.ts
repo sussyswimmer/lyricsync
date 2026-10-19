@@ -4,7 +4,7 @@ import { parseLrc, type Line, type Word } from "../src/core/lrc";
 import { CALM_NEAR_LEVEL, lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
 import { bloomLayers, bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
 import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overlay/motion/curve";
-import { PICTURE_EM, PICTURE_LIFE, PICTURE_MS, planPictureLife } from "../src/overlay/motion/decor";
+import { PICTURE_EM, PICTURE_LIFE, PICTURE_MS, planPictureLife, seedOf } from "../src/overlay/motion/decor";
 import { InterludeDots } from "../src/overlay/motion/dots";
 import { findInterludes, interludeAt, INTERLUDE_AFTER_MS, planDots } from "../src/overlay/motion/interlude";
 import {
@@ -74,6 +74,7 @@ import {
   type MotionInput,
 } from "../src/overlay/motion/params";
 import { detectPower, forcedPower, isSoftwareRenderer, probePower, resetPower } from "../src/overlay/motion/power";
+import { planPictureRoute } from "../src/overlay/motion/routes";
 import { focusAt, leadTimes, untilNext } from "../src/overlay/motion/schedule";
 import { playWall, springFrames, WallGlide } from "../src/overlay/motion/scroll";
 import { chase, Glide, settleMs, springStep, type SpringSpec } from "../src/overlay/motion/spring";
@@ -1462,6 +1463,26 @@ class Node extends FakeAnimationHost {
       this.children.push(n);
     }
   }
+  prepend(...nodes: Node[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this node or its nearest ancestor with the class. */
+  closest(selector: string): Node | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let n: Node | null = this; n; n = n.parent) if (n.classList.contains(cls)) return n;
+    return null;
+  }
+  /** layout: set by a test; every node is laid out in its parent */
+  offsetLeft = 0;
+  offsetTop = 0;
+  offsetWidth = 0;
+  get offsetParent(): Node | null {
+    return this.parent;
+  }
   remove(): void {
     const p = this.parent;
     if (!p) return;
@@ -1785,108 +1806,143 @@ describe("a karaoke line", () => {
     while (k.mounting) runFrames();
   };
 
-  it("draws a word's splash under every copy and its picture over them, both resting unseen", () => {
+  /** The line's picture layers: under its words (first in the row) and over them (last). */
+  const layers = (box: Node | undefined): { under: Node; over: Node } => {
+    const r = box?.parent as Node;
+    return { under: r.children[0] as Node, over: r.children[r.children.length - 1] as Node };
+  };
+  /** Lays the words out in their row: each `w` px wide, `gap` px apart. */
+  const layOut = (boxes: Node[], w = 80, gap = 20): void =>
+    boxes.forEach((b, i) => Object.assign(b, { offsetLeft: i * (w + gap), offsetTop: 0, offsetWidth: w }));
+
+  it("draws a word's splash under every copy, and its picture with its copies in the line's layer over the words, all resting unseen", () => {
     const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
+    layOut(boxes);
     mountAll(k, 10_000);
     const fx = boxes[2]?.find("kw-fx")[0] as Node;
     expect(fx.children[0]?.className).toBe("kw-splash");
-    expect(fx.children[fx.children.length - 1]?.className).toBe("kw-pic");
-    const pic = fx.children[fx.children.length - 1] as Node & { src?: string; alt?: string };
+    expect(fx.find("kw-pic")).toEqual([]);
+    const { under, over } = layers(boxes[2]);
+    expect(under.className).toBe("kw-pics is-under");
+    expect(over.className).toBe("kw-pics");
+    // the picture and the rain's copies, each a route around a picture
+    const routes = over.kids("kw-route");
+    expect(routes.length).toBe(1 + 7);
+    const pic = routes[0]?.kids("kw-pic")[0] as Node & { src?: string; alt?: string };
     expect(pic.tagName).toBe("IMG");
     expect(pic.src).toMatch(/rain\.webp/);
     expect(pic.alt).toBe("");
     expect(pic.style.width).toBe(`${(PICTURE_EM * 58).toFixed(2)}px`);
-    expect(pic.style.getPropertyValue("translate")).not.toBe("");
-    // the other words have none
+    expect(Number.parseFloat(String(routes[1]?.kids("kw-pic")[0]?.style.width))).toBeLessThan(PICTURE_EM * 58);
+    // the other words have none, and a picture without light leaves the layer under the words empty
     for (const b of [boxes[0], boxes[1]]) expect([...(b?.find("kw-pic") ?? []), ...(b?.find("kw-splash") ?? [])]).toEqual([]);
+    expect(under.children).toEqual([]);
   });
 
-  it("plays a word's extras on their own windows: the picture for PICTURE_MS from the word, each piece of the splash just after it", () => {
-    const ws = words(["here", "comes", "rain"], 10_000, 300);
-    const { line: k, boxes } = line(ws, BL, { decor: RAIN });
+  it("plays a picture's route on its own window, from where its line's words are laid out", () => {
+    const WINE: ReadonlyMap<number, WordDecor> = new Map([[0, { picture: "wine" }]]);
+    const ws = words(["wine", "for", "me"], 10_000, 400);
+    const { line: k, boxes } = line(ws, BL, { decor: WINE });
+    layOut(boxes);
     mountAll(k, 10_000);
-    const fx = boxes[2]?.find("kw-fx")[0] as Node;
-    const pic = fx.kids("kw-pic")[0] as Node;
-    const [anim] = pic.getAnimations();
-    expect(anim?.options.duration).toBe(PICTURE_MS);
-    expect(anim?.keyframes[0]).toMatchObject({ opacity: 0 });
-    // its window is its own, not the line's shared one
+    const route = layers(boxes[0]).over.kids("kw-route")[0] as Node;
+    const [anim] = route.getAnimations();
+    const plan = planPictureRoute({
+      id: "wine",
+      at: 10_000,
+      until: k.sungBy,
+      side: PICTURE_EM * 58,
+      size: 58,
+      amp: BL.amp,
+      seed: seedOf(`0|wine|10000`),
+      home: { x: 40, y: 0, w: 80 },
+      stops: [
+        { x: 140, y: 0, w: 80, t: 10_400 },
+        { x: 240, y: 0, w: 80, t: 10_800 },
+      ],
+      left: 0,
+      right: 280,
+    });
+    expect(anim?.keyframes).toEqual(plan.track.frames);
+    expect(anim?.options.duration).toBe(plan.track.duration);
+    // its window is its own, not the line's shared one, and doesn't stretch the line's
     expect(anim?.options.duration).not.toBe(k.span.end - k.span.origin);
-    const pieces = fx.find("kw-sp");
+    expect(k.span.end).toBe(Math.max(...ws.map((w) => wordUntil(w, BL))));
+  });
+
+  it("plays each piece of a splash just after its word", () => {
+    const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
+    mountAll(k, 10_000);
+    const pieces = (boxes[2]?.find("kw-fx")[0] as Node).find("kw-sp");
     expect(pieces.length).toBeGreaterThan(5);
     for (const piece of pieces) {
       expect(piece.getAnimations()).toHaveLength(1);
       expect(String(piece.style.width)).toMatch(/px$/);
     }
-    // the line's own window doesn't stretch to cover them
-    expect(k.span.end).toBe(Math.max(...ws.map((w) => wordUntil(w, BL))));
   });
 
   it("stops the extras where they are as a sung line leaves (they fade out with it), and takes them down with it", () => {
     const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
     mountAll(k, 10_000);
-    const pic = boxes[2]?.find("kw-pic")[0] as Node;
-    const anim = pic.getAnimations()[0] as FakeAnimation;
+    const { over, under } = layers(boxes[2]);
+    const route = over.kids("kw-route")[0] as Node;
+    const anim = route.getAnimations()[0] as FakeAnimation;
     k.finish();
     expect(anim.cancelled).toBe(true);
     expect(anim.commits).toBe(1);
     // mounted again (a seek back), it starts over from a clean style
     mountAll(k, 10_000);
-    expect(pic.getAnimations()).toHaveLength(1);
-    expect(pic.style.getPropertyValue("opacity")).toBe("");
+    expect(route.getAnimations()).toHaveLength(1);
+    expect(route.style.getPropertyValue("opacity")).toBe("");
+    // the layers fade with the overlays
+    k.fadeOut(300);
+    expect(over.getAnimations().length + under.getAnimations().length).toBe(2);
     k.destroy();
-    expect(boxes[2]?.find("kw-pic")).toEqual([]);
-    expect(pic.getAnimations()).toEqual([]);
+    expect(over.parent).toBeNull();
+    expect(under.parent).toBeNull();
+    expect(route.getAnimations()).toEqual([]);
   });
 
   it("starts no extras that are over by the time the line mounts", () => {
     const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
-    mountAll(k, 10_600 + PICTURE_MS + 3000);
+    mountAll(k, 10_600 + 9000 + 3000);
     const fx = boxes[2]?.find("kw-fx")[0] as Node;
-    expect([...fx.kids("kw-pic"), ...fx.find("kw-sp")].flatMap((e) => e.getAnimations())).toEqual([]);
+    expect([...layers(boxes[2]).over.find("kw-route"), ...fx.find("kw-sp")].flatMap((e) => e.getAnimations())).toEqual([]);
   });
 
-  it("only fades a picture in and out without motion, and splashes nothing", () => {
+  it("only fades a picture in and out on its word without motion, and splashes nothing", () => {
     const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), params({ motion: false }), { decor: RAIN });
+    layOut(boxes);
     mountAll(k, 10_000);
-    const fx = boxes[2]?.find("kw-fx")[0] as Node;
-    expect(fx.kids("kw-splash")).toEqual([]);
-    const anim = fx.kids("kw-pic")[0]?.getAnimations()[0];
-    expect(new Set(anim?.keyframes.map((f) => f.transform))).toEqual(new Set(["translate(0px, 0px) rotate(0deg) scale(1)"]));
+    expect(boxes[2]?.find("kw-fx")[0]?.kids("kw-splash")).toEqual([]);
+    const routes = layers(boxes[2]).over.kids("kw-route");
+    expect(routes).toHaveLength(1);
+    const anim = routes[0]?.getAnimations()[0];
+    expect(new Set(anim?.keyframes.map((f) => f.transform)).size).toBe(1);
+    expect(Number(anim?.keyframes[0]?.opacity)).toBe(0);
   });
 
-  it("puts the picture under a word on a later row of a wrapped line", () => {
-    const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
-    Object.assign(boxes[0] as Node, { offsetTop: 0 });
-    Object.assign(boxes[2] as Node, { offsetTop: 65 });
-    mountAll(k, 10_000);
-    expect(boxes[2]?.find("kw-pic")[0]?.classList.contains("is-below")).toBe(true);
-    const { line: one, boxes: flat } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN });
-    Object.assign(flat[0] as Node, { offsetTop: 0 });
-    Object.assign(flat[2] as Node, { offsetTop: 0 });
-    mountAll(one, 10_000);
-    expect(flat[2]?.find("kw-pic")[0]?.classList.contains("is-below")).toBe(false);
-  });
-
-  it("lets a flame flicker in its own light and throw embers, under the word's copies, all on the picture's window", () => {
+  it("lets a flame flicker in its own light and throw embers, the light on the picture's route under the words", () => {
     const FIRE: ReadonlyMap<number, WordDecor> = new Map([[2, { picture: "fire" }]]);
     const ws = words(["set", "the", "fire"], 10_000, 300);
     const { line: k, boxes } = line(ws, BL, { decor: FIRE });
+    layOut(boxes);
     mountAll(k, 10_000);
-    const fx = boxes[2]?.find("kw-fx")[0] as Node;
-    // the picture: its pop and float, and its flicker on `scale`
-    const pic = fx.kids("kw-pic")[0] as Node;
-    const [pose, flicker] = pic.getAnimations();
-    expect(pose?.keyframes[0]).toMatchObject({ opacity: 0 });
-    expect(flicker?.options.duration).toBe(PICTURE_MS);
+    const { under, over } = layers(boxes[2]);
+    const route = over.kids("kw-route")[0] as Node;
+    const pic = route.kids("kw-pic")[0] as Node;
+    // the picture's flicker on `scale`, for as long as its route
+    const [path] = route.getAnimations();
+    const [flicker] = pic.getAnimations();
+    expect(Number(path?.keyframes[0]?.opacity)).toBe(0);
+    expect(flicker?.options.duration).toBe(path?.options.duration);
     expect(flicker?.keyframes.every((f) => /^[\d.]+ [\d.]+$/u.test(String(f.scale)))).toBe(true);
-    // its light: first in the overlay (under every copy), placed like the picture, moving with it
-    const aura = fx.children[0] as Node;
-    expect(aura.className).toBe("kw-aura");
+    // its light: in the layer under the words, on the same route, glowing in its color
+    const lit = under.kids("kw-route")[0] as Node;
+    expect(lit.getAnimations()[0]?.keyframes).toEqual(path?.keyframes);
+    const aura = lit.kids("kw-aura")[0] as Node;
     expect(aura.style.width).toBe(pic.style.width);
-    expect(aura.style.getPropertyValue("translate")).toBe(pic.style.getPropertyValue("translate"));
     expect(aura.style.getPropertyValue("--aura")).toMatch(/^rgba\(255, /u);
-    expect(aura.getAnimations()[0]?.keyframes).toEqual(pose?.keyframes);
     const glow = aura.kids("kw-aura-glow")[0] as Node;
     expect(glow.getAnimations()[0]?.keyframes.every((f) => Number(f.opacity) >= 0.6 && Number(f.opacity) <= 1)).toBe(true);
     // embers, each rising on its own window after the picture shows
@@ -1899,19 +1955,52 @@ describe("a karaoke line", () => {
     }
     // a sung line leaving stops all of it where it is
     k.finish();
-    expect([pic, aura, glow, ...embers].flatMap((e) => e.getAnimations())).toEqual([]);
+    expect([route, pic, lit, glow, ...embers].flatMap((e) => e.getAnimations())).toEqual([]);
   });
 
   it("beats a heart on its scale, with no light; and gives a picture no life without motion", () => {
     const HEART: ReadonlyMap<number, WordDecor> = new Map([[1, { picture: "heart" }]]);
     const { line: k, boxes } = line(words(["my", "heart"], 10_000, 300), BL, { decor: HEART });
     mountAll(k, 10_000);
-    const fx = boxes[1]?.find("kw-fx")[0] as Node;
-    expect(fx.kids("kw-aura")).toEqual([]);
-    expect(fx.kids("kw-pic")[0]?.getAnimations()).toHaveLength(2);
+    const { under, over } = layers(boxes[1]);
+    expect(under.children).toEqual([]);
+    expect(over.kids("kw-route")[0]?.kids("kw-pic")[0]?.getAnimations()).toHaveLength(1);
     const { line: still, boxes: flat } = line(words(["my", "heart"], 10_000, 300), params({ motion: false }), { decor: HEART });
     mountAll(still, 10_000);
-    expect(flat[1]?.find("kw-fx")[0]?.kids("kw-pic")[0]?.getAnimations()).toHaveLength(1);
+    expect(layers(flat[1]).over.kids("kw-route")[0]?.kids("kw-pic")[0]?.getAnimations()).toEqual([]);
+  });
+
+  it("asks the mode where its words are when it says (spot), in the host it names", () => {
+    const WINE: ReadonlyMap<number, WordDecor> = new Map([[0, { picture: "wine" }]]);
+    const ws = words(["wine", "for", "me"], 10_000, 400);
+    const { boxes } = row(ws);
+    const host = new Node("div");
+    const asked: [number, number][] = [];
+    const tl = new SongTimeline();
+    tl.sync({ t: 10_000, running: true });
+    const k = new KaraokeLine(
+      ws,
+      boxes.map(asEl),
+      {
+        size: 58,
+        font: "700 58px Test",
+        letterSpacingPx: 0,
+        params: BL,
+        steps: false,
+        decor: WINE,
+        host: asEl(host),
+        spot: (j, t) => {
+          asked.push([j, t]);
+          return { x: 100 * j, y: 10, w: 60 };
+        },
+      },
+      tl,
+      "kw1",
+    );
+    mountAll(k, 10_000);
+    expect(host.kids("kw-pics")).toHaveLength(2);
+    expect(asked).toEqual(expect.arrayContaining([[0, 10_000], [1, 10_400], [2, 10_800]]));
+    expect(host.kids("kw-pics")[1]?.kids("kw-route")[0]?.getAnimations()).toHaveLength(1);
   });
 
   it("tilts a swaying line's words to alternate sides and rests them in the same transform list", () => {
@@ -2137,6 +2226,7 @@ describe("living pictures (decor.ts planPictureLife)", () => {
   it("gives each kind of living picture its motion, every track covering the picture's window", () => {
     for (const [id, kind] of Object.entries(PICTURE_LIFE)) {
       const life = planPictureLife(id as keyof typeof PICTURE_LIFE, 5000, 35, 1, 7);
+      expect(planPictureLife(id as keyof typeof PICTURE_LIFE, 5000, 35, 1, 7, 6000).pic?.duration ?? 6000, id).toBe(6000);
       const tracks = [life.pic, life.aura?.track].filter((t) => t !== null && t !== undefined);
       expect(tracks.length, id).toBeGreaterThan(0);
       for (const t of tracks) {

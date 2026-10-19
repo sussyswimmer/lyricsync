@@ -1278,6 +1278,15 @@ export class ArcMode implements ModeRenderer {
         place: arcPlacer(curve, g.shape.words, g.frames, g.shape.total, metrics),
         steps: this.steps,
         ...(decor ? { decor: decor.words } : {}),
+        // a word's top middle: up from the middle of its baseline (its frame), across the curve
+        host: g.el,
+        spot: (j) => {
+          const f = g.frames[j];
+          if (!f) return null;
+          const a = (f.angle * Math.PI) / 180;
+          const up = 0.78 * g.size;
+          return { x: f.x + Math.sin(a) * up, y: f.y - Math.cos(a) * up, w: g.shape.words[j]?.width ?? 0 };
+        },
       },
       this.timeline,
       `kw${g.i}.${++this.serial}`,

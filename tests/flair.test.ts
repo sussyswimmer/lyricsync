@@ -4,7 +4,7 @@ import { hookLines, HELD_SPLASH_MS, MOVES, PLAIN_FLAIR, planDecor, saneFlair, SP
 import { parseLrc, type Line, type Word } from "../src/core/lrc";
 import { pickLook, songFeatures, type SongInput } from "../src/core/songlook";
 import { cleanOverride, DEFAULT_PICK, mergeOverrides, parseFlairOverride, resolveLook, withOverride } from "../src/overlay/look";
-import { picturePose, PICTURE_MS, picturesOf, planPicture, planSplash, reachOf, seedOf, songDecor, splashUntil } from "../src/overlay/motion/decor";
+import { picturesOf, planSplash, reachOf, songDecor, splashUntil } from "../src/overlay/motion/decor";
 import { fullTransform, planWord, restTransform, FULL_TRANSFORM, type WordShape } from "../src/overlay/motion/karaoke";
 import { LineMoves, motionParams, moveTuning, paramsKey, BL_INPUT, BL_REFERENCE, type MotionInput } from "../src/overlay/motion/params";
 import glacier from "./fixtures/demo-glacier-nocturne.lrc?raw";
@@ -205,35 +205,6 @@ describe("each move's motion", () => {
     const lens = new LineMoves({ riseSwell: true }).paramsFor(look, base, "pulse");
     expect(lens.scaleKeys).toEqual(base.scaleKeys);
     expect(lens.liftKeys).toEqual(motionParams({ ...look, move: "pulse" }).liftKeys);
-  });
-});
-
-describe("a word's picture", () => {
-  it("pops in from nothing, settles, rises and fades out over PICTURE_MS", () => {
-    const track = planPicture(5000, 58, 1.5);
-    expect([track.t0, track.duration]).toEqual([5000, PICTURE_MS]);
-    expect(track.frames[0]).toMatchObject({ opacity: 0, offset: 0 });
-    expect(last(track.frames)).toMatchObject({ opacity: 0, offset: 1 });
-    expect(track.frames.some((f) => f.transform === "translate(0px, 0px) rotate(0deg) scale(1)")).toBe(true);
-    // it rises: the last frame is above the settled one
-    expect(String(last(track.frames)?.transform)).toMatch(/translate\(0px, -/);
-    // under its word it moves the other way
-    expect(String(last(planPicture(5000, 58, 1.5, true).frames)?.transform)).toMatch(/translate\(0px, \d/);
-  });
-
-  it("only fades in and out without motion", () => {
-    const still = planPicture(0, 58, 0);
-    expect(new Set(still.frames.map((f) => f.transform))).toEqual(new Set(["translate(0px, 0px) rotate(0deg) scale(1)"]));
-    expect(still.frames.map((f) => f.opacity)).toEqual([0, 1, 1, 0]);
-  });
-
-  it("sits a little off center and tilted, its own way per word", () => {
-    const a = picturePose(58, seedOf("0|rain|1000"));
-    expect(Math.abs(a.dx)).toBeGreaterThan(0);
-    expect(Math.abs(a.dx)).toBeLessThanOrEqual(0.22 * 58 + 1e-9);
-    expect(Math.abs(a.tilt)).toBeGreaterThanOrEqual(5);
-    expect(picturePose(58, seedOf("0|rain|1000"))).toEqual(a);
-    expect(picturePose(58, 7, true).dy).toBeGreaterThan(0);
   });
 });
 
