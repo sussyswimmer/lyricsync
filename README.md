@@ -26,7 +26,7 @@ The first time Undertone reads Spotify or Music, macOS asks whether **Undertone*
 
 - **Why it's needed:** macOS has no public way for an app to see what another app is playing. Undertone asks Spotify and Music directly, through Apple Events, for the title, artist, album, length, position, play state and cover art. It only reads. It never starts, pauses or skips anything, and it checks that the player is already running before asking, so it never launches Spotify or Music by itself.
 - **If you click Don't Allow:** Undertone can't see what that app is playing, so you get no lyrics for it. While that app is open, the settings window says so at the top ("Undertone can't see what Spotify is playing.") and names the switch to turn on. Nothing else breaks.
-- **To turn it back on:** open **System Settings → Privacy & Security → Automation**, find **Undertone**, and switch on **Spotify** and/or **Music**. Undertone notices within about 5 seconds, without a restart, and the notice in Settings goes away. If Undertone or the player is missing from that list, or switching it on doesn't help, reset Undertone's Automation permission in Terminal with `tccutil reset AppleEvents com.undertone.desktop`, quit and reopen Undertone, and play a song to get the prompt again.
+- **To turn it back on:** open **System Settings → Privacy & Security → Automation**, find **Undertone**, and switch on **Spotify** and/or **Music**. Undertone notices within about 10 seconds, without a restart, and the notice in Settings goes away. If Undertone or the player is missing from that list, or switching it on doesn't help, reset Undertone's Automation permission in Terminal with `tccutil reset AppleEvents com.undertone.desktop`, quit and reopen Undertone, and play a song to get the prompt again.
 
 macOS asks once per player, so you may see the prompt a second time when you first use the other app.
 
@@ -100,7 +100,8 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 3. **Is a window covering them?** The lyrics sit under every window, so a maximized or full-screen window hides them. Move windows aside or show the desktop.
 4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls. When Undertone finds no such player open, **This song** in Settings → Sync says **No music app open**.
 5. **On macOS, was Automation denied?** Then the settings window shows a notice at the top, such as "Undertone can't see what Spotify is playing.", with the switch to turn on. See [Permissions](#macos-automation).
-6. **Are they faint?** Check **Opacity** and your colors in Settings, or turn on **Match album colors**.
+6. **On macOS, does Settings play the demo song while Spotify or Music plays, with no notice at the top?** Then macOS hasn't given Undertone an answer yet. It should ask whether Undertone may control the player a few seconds after you open Undertone; click **OK**. If no prompt appears and Undertone isn't listed under System Settings → Privacy & Security → Automation, quit Undertone from the menu, run `tccutil reset AppleEvents com.undertone.desktop` in Terminal, open Undertone again and play a song.
+7. **Are they faint?** Check **Opacity** and your colors in Settings, or turn on **Match album colors**.
 
 ### Lyrics on the wrong monitor
 

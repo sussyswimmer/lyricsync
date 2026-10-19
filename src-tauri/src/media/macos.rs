@@ -1,7 +1,8 @@
-//! macOS: Spotify and Music over AppleScript, run in-process by NSAppleScript (never `osascript`).
-//! NSAppleScript is main-thread only, so each read is one short hop there: a script compiled
-//! once, a handful of Apple events. Finding the running players, asking for Automation consent,
-//! parsing, picking the source and artwork all stay off the main thread.
+//! macOS: Spotify and Music over AppleScript, read in-process by NSAppleScript (`osascript` only
+//! asks the Automation question, `consent_status`). NSAppleScript is main-thread only, so each
+//! read is one short hop there: a script compiled once, a handful of Apple events. Finding the
+//! running players, asking for Automation consent, parsing, picking the source and artwork all
+//! stay off the main thread.
 use super::{
     applescript::{
         self, Consent, Failure, FailureKind, Instance, Launches, Player, Reading, Script, Verdict,
@@ -27,7 +28,9 @@ use objc2_foundation::{
 };
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    io::Read,
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, Once, OnceLock,
@@ -263,8 +266,8 @@ impl MacSource {
         Ok(reading.map(|reading| (reading, sampled_at)))
     }
     /// Scripts run only once macOS has answered the Automation question for this player. The
-    /// question is asked on a blocking thread, where its prompt may wait for the user as long
-    /// as it likes; meanwhile the player is simply not read.
+    /// question is asked on a blocking thread (`consent_status`), where its prompt may wait for
+    /// the user; meanwhile the player is simply not read.
     fn consent(&self, player: Player) -> Result<(), Failure> {
         let (gate, ask) = lock(&self.consent)
             .entry(player)
@@ -273,7 +276,7 @@ impl MacSource {
         if ask {
             let (consent, wake) = (self.consent.clone(), self.notify.clone());
             drop(tauri::async_runtime::spawn_blocking(move || {
-                let status = automation_permission(player.bundle_id());
+                let status = consent_status(player);
                 lock(&consent)
                     .entry(player)
                     .or_default()
@@ -623,9 +626,133 @@ fn observe_players(wake: Arc<Notify>) {
     });
 }
 
-/// Asks macOS whether Undertone may send Apple events to `bundle_id`, showing the Automation
-/// prompt if the user has not decided yet. It blocks until they answer, so it runs on a blocking
-/// thread, never the main one. A player that is not running answers procNotFound (-600) and is
+/// macOS's Automation answer for `player`, asking the user if they haven't decided. First a
+/// quick AEDeterminePermissionToAutomateTarget that doesn't prompt, with a timeout; when it
+/// can't settle the question, one real Apple event from `osascript` asks it. Asking with
+/// AEDeterminePermissionToAutomateTarget itself can block forever on macOS 26 without ever
+/// showing the prompt, so nothing would read the player. Runs on a blocking thread.
+fn consent_status(player: Player) -> i32 {
+    match quiet_permission(player) {
+        Some(status @ (0 | -1743)) => status,
+        Some(status) if applescript::classify(Some(status.into())) == FailureKind::NotRunning => {
+            status
+        }
+        // Not decided yet (-1744), unexpected, or no answer: the probe event asks for real.
+        _ => probe_permission(player),
+    }
+}
+
+/// AEDeterminePermissionToAutomateTarget without prompting, on its own thread, or `None` when it
+/// doesn't answer within `QUIET_CHECK_WAIT`. After one such hang this run never calls it again,
+/// so blocked threads don't pile up.
+fn quiet_permission(player: Player) -> Option<i32> {
+    static HUNG: AtomicBool = AtomicBool::new(false);
+    if HUNG.load(Ordering::Acquire) {
+        return None;
+    }
+    let (answer, answered) = std::sync::mpsc::channel();
+    let bundle_id = player.bundle_id();
+    std::thread::Builder::new()
+        .name("automation-check".into())
+        .spawn(move || {
+            let _ = answer.send(automation_permission(bundle_id));
+        })
+        .ok()?;
+    match answered.recv_timeout(applescript::QUIET_CHECK_WAIT) {
+        Ok(status) => Some(status),
+        Err(_) => {
+            if !HUNG.swap(true, Ordering::AcqRel) {
+                applog!(
+                    "macOS did not answer Undertone's Automation check for {} within {} s; \
+                     asking with an Apple event instead",
+                    player.name(),
+                    applescript::QUIET_CHECK_WAIT.as_secs()
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Sends `player` one Apple event from `osascript` (`applescript::consent_probe`) and returns the
+/// Automation answer. macOS attributes the event to Undertone, which started `osascript`, so it
+/// shows Undertone's Automation prompt and keeps the answer for Undertone. Waits up to
+/// `PROBE_WAIT` for the user, then gives up with errAETimeout (-1712) and the next poll asks again.
+fn probe_permission(player: Player) -> i32 {
+    let mut command = Command::new("/usr/bin/osascript");
+    for line in applescript::consent_probe(player) {
+        command.arg("-e").arg(line);
+    }
+    let spawned = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn();
+    let name = player.name();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            log_once(player, "spawn", || {
+                format!("{name}: could not start osascript ({error}); the read script asks instead")
+            });
+            // An unexpected answer: the read script then runs, and asks in-process.
+            return -1;
+        }
+    };
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                let answer = applescript::osascript_status(status.success(), &stderr);
+                // Once per answer: what the next bug report needs to tell how the question went.
+                log_once(player, &answer.to_string(), || {
+                    let waited = started.elapsed().as_secs_f32();
+                    if answer == 0 {
+                        return format!(
+                            "{name}: Automation allowed (asked with an Apple event, {waited:.1} s)"
+                        );
+                    }
+                    let said: String = stderr.trim().chars().take(200).collect();
+                    format!("{name}: Automation answered {answer} after {waited:.1} s: {said}")
+                });
+                return answer;
+            }
+            Ok(None) if started.elapsed() < applescript::PROBE_WAIT => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                log_once(player, "no answer", || {
+                    format!(
+                        "{name}: no answer to Undertone's Automation request within {} s; still \
+                         asking. If macOS never shows the prompt, quit Undertone, run `tccutil \
+                         reset AppleEvents com.undertone.desktop` and open Undertone again.",
+                        applescript::PROBE_WAIT.as_secs()
+                    )
+                });
+                return -1712;
+            }
+        }
+    }
+}
+
+/// Logs `line()` once per player, `key` and run: a lasting problem would otherwise repeat every
+/// poll.
+fn log_once(player: Player, key: &str, line: impl FnOnce() -> String) {
+    static LOGGED: OnceLock<Mutex<HashSet<(Player, String)>>> = OnceLock::new();
+    if lock(LOGGED.get_or_init(Default::default)).insert((player, key.to_owned())) {
+        applog!("{}", line());
+    }
+}
+
+/// AEDeterminePermissionToAutomateTarget for `bundle_id`, without prompting: 0 granted, -1743
+/// denied, -1744 not decided yet. On macOS 26 it can still block forever, so it runs on its own
+/// thread (`quiet_permission`). A player that is not running answers procNotFound (-600) and is
 /// never launched.
 fn automation_permission(bundle_id: &str) -> i32 {
     const TYPE_APPLICATION_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
@@ -664,7 +791,7 @@ fn automation_permission(bundle_id: &str) -> i32 {
             return created.into();
         }
         let status =
-            AEDeterminePermissionToAutomateTarget(&target, TYPE_WILD_CARD, TYPE_WILD_CARD, 1);
+            AEDeterminePermissionToAutomateTarget(&target, TYPE_WILD_CARD, TYPE_WILD_CARD, 0);
         AEDisposeDesc(&mut target);
         status
     }

@@ -417,8 +417,9 @@ pub struct Consent {
 }
 impl Consent {
     /// How often a denied player is asked again. Once the user has decided the answer is
-    /// instant and shows no prompt; turning Automation on in System Settings then works at once.
-    pub const RECHECK: Duration = Duration::from_secs(5);
+    /// instant and shows no prompt; turning Automation on in System Settings then works within
+    /// this long. A check may start `osascript` (`consent_probe`), so not more often.
+    pub const RECHECK: Duration = Duration::from_secs(10);
     pub fn verdict(&self) -> Verdict {
         self.verdict
     }
@@ -440,7 +441,8 @@ impl Consent {
         };
         (Err(failure), ask)
     }
-    /// `status` is AEDeterminePermissionToAutomateTarget's answer.
+    /// `status` is macOS's Automation answer: AEDeterminePermissionToAutomateTarget's, or the
+    /// probe event's (`osascript_status`).
     pub fn answered(&mut self, status: i32, now: Instant) {
         self.asking = false;
         self.checked_at = Some(now);
@@ -449,6 +451,9 @@ impl Consent {
             (_, FailureKind::NotPermitted) => Verdict::Denied,
             // The player quit before answering: ask again when it runs.
             (_, FailureKind::NotRunning) => Verdict::Unknown,
+            // No answer in time (the prompt is still open, or macOS never showed it): ask again.
+            // A script now would put the prompt's wait on the main thread.
+            (_, FailureKind::Timeout) => Verdict::Unknown,
             // Anything unexpected: let the script run and report the real error.
             _ => Verdict::Granted,
         };
@@ -458,6 +463,46 @@ impl Consent {
         self.verdict = Verdict::Denied;
         self.checked_at = Some(now);
     }
+}
+
+/// How long AEDeterminePermissionToAutomateTarget gets to answer without prompting. On macOS 26 it
+/// can block forever without showing anything; past this, Undertone asks with a real Apple event
+/// (`consent_probe`) instead.
+pub const QUIET_CHECK_WAIT: Duration = Duration::from_secs(2);
+/// How long the probe event waits for the user to answer the Automation prompt.
+pub const PROBE_WAIT: Duration = Duration::from_secs(120);
+
+/// The script `osascript` runs to ask macOS the Automation question with a real Apple event.
+/// macOS attributes the event to Undertone, the process that started `osascript`: it shows
+/// "Undertone wants access to control …" if the user hasn't decided, and keeps the answer for
+/// Undertone. A player that isn't running is never launched: the script answers procNotFound.
+pub fn consent_probe(player: Player) -> [String; 5] {
+    let id = player.bundle_id();
+    [
+        format!("if application id \"{id}\" is running then"),
+        format!("tell application id \"{id}\" to get player state"),
+        "else".into(),
+        "error \"not running\" number -600".into(),
+        "end if".into(),
+    ]
+}
+
+/// The Automation answer in `osascript`'s exit: 0 when the event went through, otherwise the last
+/// error number it printed, as in "execution error: Not authorized to send Apple events to
+/// Spotify. (-1743)". A failure without a number is -1, an unexpected answer: the read script
+/// then runs and reports the real error.
+pub fn osascript_status(success: bool, stderr: &str) -> i32 {
+    if success {
+        return 0;
+    }
+    stderr
+        .rfind("(-")
+        .and_then(|start| {
+            let number = &stderr[start + 1..];
+            let end = number.find(')')?;
+            number[..end].trim().parse().ok()
+        })
+        .unwrap_or(-1)
 }
 
 /// How long a running player that has not reported finishing its launch is left unread. Until it
@@ -909,6 +954,13 @@ mod tests {
         consent.answered(-600, now);
         assert_eq!(consent.verdict(), Verdict::Unknown);
         assert!(consent.gate(now).1);
+        // No answer in time (macOS 26 can hang the check, or the prompt is still open): ask
+        // again, and run no script meanwhile.
+        consent.answered(-1712, now);
+        assert_eq!(consent.verdict(), Verdict::Unknown);
+        let (gate, ask) = consent.gate(now);
+        assert!(ask);
+        assert_eq!(gate.unwrap_err().kind, FailureKind::AwaitingConsent);
         // Unexpected status (e.g. paramErr): let the script run and report what is wrong.
         consent.answered(-50, now);
         assert_eq!(consent.verdict(), Verdict::Granted);
@@ -918,6 +970,49 @@ mod tests {
         assert!(!ask);
         assert_eq!(gate.unwrap_err().kind, FailureKind::NotPermitted);
         assert!(consent.gate(now + Consent::RECHECK).1);
+    }
+    #[test]
+    fn the_consent_probe_sends_one_event_and_never_launches_the_player() {
+        for player in Player::ALL {
+            let id = player.bundle_id();
+            let probe = consent_probe(player);
+            assert_eq!(
+                probe[0],
+                format!("if application id \"{id}\" is running then")
+            );
+            assert_eq!(
+                probe[1],
+                format!("tell application id \"{id}\" to get player state")
+            );
+            assert!(probe[3].ends_with("number -600"));
+            assert_eq!(classify(Some(-600)), FailureKind::NotRunning);
+        }
+        assert!(QUIET_CHECK_WAIT < PROBE_WAIT);
+    }
+    #[test]
+    fn osascript_answers_become_automation_statuses() {
+        assert_eq!(osascript_status(true, ""), 0);
+        assert_eq!(
+            osascript_status(
+                false,
+                "0:52: execution error: Not authorized to send Apple events to Spotify. (-1743)\n"
+            ),
+            -1743
+        );
+        assert_eq!(
+            osascript_status(false, "execution error: not running (-600)"),
+            -600
+        );
+        // The last number wins; a message without one is an unexpected answer.
+        assert_eq!(
+            osascript_status(
+                false,
+                "Spotify (-1) got an error: AppleEvent timed out. (-1712)"
+            ),
+            -1712
+        );
+        assert_eq!(osascript_status(false, "killed"), -1);
+        assert_eq!(osascript_status(false, "odd (-12x)"), -1);
     }
     #[test]
     fn presence_names_a_denied_running_player_spotify_first() {

@@ -49,6 +49,7 @@ The first time Undertone reads Spotify or Music, macOS asks whether **Undertone*
 - macOS asks once for each player, so you may see the prompt again when you first use the other app.
 - Because these builds aren't signed with a developer certificate, macOS may ask again after you install a new version.
 - If you clicked **Don't Allow**, see [Permissions](../README.md#macos-automation) in the README to switch it back on.
+- If no prompt appears and no lyrics show, see [Nothing shows up](../README.md#nothing-shows-up) in the README.
 
 ### Finding Undertone
 
