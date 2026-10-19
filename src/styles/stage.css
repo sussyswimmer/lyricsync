@@ -65,6 +65,14 @@
   opacity: 0;
 }
 
+/* While its word has an overlay, the plain text takes the word's bleed too (see `.kl` below), pulled
+   back so the line lays out exactly as before: as a line hands back to it, the word box is still a
+   layer of its own, and WebKit would cut the text's overhangs at its edges. */
+.kw-txt {
+  padding: var(--kb-y, 0px) var(--kb-x, 0px);
+  margin: 0 calc(-1 * var(--kb-x, 0px));
+}
+
 /* With letters placed (Arc): the word's own run keeps the box its size, unseen; the letters draw it. */
 .kw-hold {
   visibility: hidden;
@@ -109,6 +117,7 @@
 }
 
 .kl,
+.kw-run,
 .kw-glow,
 .kw-dark {
   position: absolute;
@@ -118,10 +127,23 @@
   transform-origin: 50% 64%;
 }
 
+/* Every run of text (a letter, or a whole word in the dark and bloom copies) is padded out by its
+   word's bleed (motion/line.ts: --kb-x, --kb-y) and pulled back by as much, so its text stays put and
+   its box takes in what its glyphs draw past it: WebKit sizes a moving letter's layer by its box, not
+   its ink, and cut a script face's crossbar or a tone mark beside its circumflex off with a hard
+   edge. The origin is the same point of the glyph as 50% 64% of the unpadded box. */
+.kl,
+.kw-run {
+  padding: var(--kb-y, 0px) var(--kb-x, 0px);
+  margin: calc(-1 * var(--kb-y, 0px)) calc(-1 * var(--kb-x, 0px));
+  transform-origin: 50% calc(64% - 0.28 * var(--kb-y, 0px));
+}
+
 /* The dark copy: transparent text whose text-shadow is the row's legibility shadow (--ut-dark). Its
    letters move with their lit twins wherever letters move. */
 .kw-fx .kw-dark,
-.kw-fx .kw-dark .kl {
+.kw-fx .kw-dark .kl,
+.kw-fx .kw-dark .kw-run {
   color: transparent;
   text-shadow: var(--ut-dark);
 }
@@ -135,7 +157,8 @@
 }
 
 .kw-fx .kw-glow,
-.kw-fx .kw-glow .kl {
+.kw-fx .kw-glow .kl,
+.kw-fx .kw-glow .kw-run {
   color: transparent;
   text-shadow: var(--ut-bloom);
 }

@@ -59,6 +59,27 @@ export interface WordShape {
   letters: readonly LetterBox[];
   /** right-to-left text: the wipe runs from the right */
   rtl: boolean;
+  /** where its glyphs draw past their boxes, when measured (letters.ts measureLetters) */
+  ink?: WordInk;
+}
+
+/**
+ * How far a word's ink reaches past its boxes, px: a script face's crossbars and tails, a Vietnamese
+ * tone mark set beside its circumflex. Glyphs may draw outside their advance; the wipe and every
+ * copy's box have to reach them.
+ */
+export interface WordInk {
+  /** past the word's left and right edges (each >= 0) */
+  left: number;
+  right: number;
+  /** sideways past the box of any one letter drawn alone, or of the whole word (>= 0) */
+  side: number;
+  /** above the font's ascent and below its descent, for the tallest and deepest glyph (< 0: room to spare) */
+  above: number;
+  below: number;
+  /** the font's ascent and descent, px (the layout box around the baseline, before line-height) */
+  ascent: number;
+  descent: number;
 }
 
 export interface PlanOptions {
@@ -112,8 +133,22 @@ export interface WordMotion {
 
 /** Soft edge of the wipe, as a share of the word's width. */
 export const FEATHER = 0.2;
-/** The wipe ends this many font sizes past the word's advance, so overhanging glyphs light fully. */
+/** The wipe ends at least this many font sizes past the word's advance, so overhanging glyphs light fully. */
 export const OVERHANG = 0.06;
+/** Ink is reached with this much to spare, px (antialiased edges). */
+const INK_MARGIN = 1;
+
+/** How far past its trailing edge the word's wipe runs: past every glyph there, and at least OVERHANG. */
+export function trailOf(shape: WordShape): number {
+  const ink = shape.rtl ? shape.ink?.left : shape.ink?.right;
+  return Math.max(OVERHANG * shape.size, ink && ink > 0 ? ink + INK_MARGIN : 0);
+}
+
+/** How far before its leading edge the word's ink starts, px: the wipe starts there. */
+export function leadOf(shape: WordShape): number {
+  const ink = shape.rtl ? shape.ink?.right : shape.ink?.left;
+  return ink && ink > 0 ? ink + INK_MARGIN : 0;
+}
 /** Springs stop once they are this close to rest: px for lifts, scale units, opacity. */
 const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005 };
 /** Keyframes are kept where straight lines between them would miss by more than this (all sub-pixel). */
@@ -171,13 +206,13 @@ export function emphasized(word: WordTiming, text: string, rule: EmphasisRule | 
 
 /**
  * Where the wipe's edge (the end of the fully lit part) is `ms` after the word starts, in px from the
- * word's leading edge, by the word's parts: from -feather at the start to the far edge (plus the
- * overhang) at the end, linearly over each part, or eased out over a held one (`eased[j]`).
+ * word's leading edge, by the word's parts: from a feather before its ink at the start to its far edge
+ * (plus the overhang) at the end, linearly over each part, or eased out over a held one (`eased[j]`).
  */
 export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordShape, eased: readonly boolean[] = []): (ms: number) => number {
   const W = shape.width;
-  const feather = FEATHER * W;
-  const over = OVERHANG * shape.size;
+  const start = -(FEATHER * W + leadOf(shape));
+  const over = trailOf(shape);
   // each part's span along the word, in reading order from the leading edge
   const lead = (l: LetterBox): number => (shape.rtl ? W - l.x - l.w : l.x);
   const ends = parts.map((_, j) => {
@@ -185,14 +220,14 @@ export function wipeEdge(word: WordTiming, parts: readonly Part[], shape: WordSh
     return mine.length === 0 ? null : Math.max(...mine.map((l) => lead(l) + l.w));
   });
   const segments: { t0: number; t1: number; x0: number; x1: number; ease: boolean }[] = [];
-  let x = -feather;
+  let x = start;
   parts.forEach((p, j) => {
     const to = j === parts.length - 1 ? W + over : (ends[j] ?? x);
     segments.push({ t0: p.start - word.start, t1: p.end - word.start, x0: x, x1: Math.max(x, to), ease: eased[j] === true });
     x = Math.max(x, to);
   });
   return (ms: number): number => {
-    let at = -feather;
+    let at = start;
     for (const s of segments) {
       if (ms <= s.t0) return at;
       const k = s.t1 > s.t0 ? clamp01((ms - s.t0) / (s.t1 - s.t0)) : 1;
@@ -329,7 +364,7 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, param
   const sign = shape.rtl ? -1 : 1;
   const bounds = [...new Set([0, ...parts.map((p) => Math.min(span, Math.max(0, p.end - word.start))), span])].sort((a, b) => a - b);
   const wipeTimes = emphasis ? sampleTimes(span, PLAN_MS) : bounds;
-  const xs = wipeTimes.map((ms) => sign * (edge(ms) - (shape.width + OVERHANG * size)));
+  const xs = wipeTimes.map((ms) => sign * (edge(ms) - (shape.width + trailOf(shape))));
   const keepX = thin(wipeTimes, [xs], [THIN.x]);
   // the windows and their contents step together: one set of points for both
   const wipe = keyPoints(wipeTimes, keepX, [xs], steps ? { t0: word.start, quantum: [STEP_QUANTUM.x] } : null);
@@ -344,7 +379,7 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, param
   // how long the wipe takes to cross an average letter and the feather: the hop's hold
   const plain = shape.letters.filter((l) => held[l.part] !== true);
   const avg = plain.length > 0 ? plain.reduce((n, l) => n + l.w, 0) / plain.length : 0;
-  const crossing = (span * (avg + FEATHER * shape.width)) / Math.max(1, shape.width * (1 + FEATHER) + OVERHANG * size);
+  const crossing = (span * (avg + FEATHER * shape.width)) / Math.max(1, shape.width * (1 + FEATHER) + trailOf(shape) + leadOf(shape));
   const [holdMin, holdMax] = params.rippleHoldMs;
   const hold = Math.min(holdMax, Math.max(holdMin, crossing));
   const height = params.rippleHeight * size;
@@ -424,10 +459,10 @@ export function restTransform(size: number, params: MotionParams): string {
 /** The same transform function list at full size, no lift. */
 export const FULL_TRANSFORM = liftScale(0, 0, 1);
 
-/** Where the lit window rests before its word is sung: translated so nothing is lit. */
+/** Where the lit window rests before its word is sung: translated so nothing is lit, overhangs included. */
 export function closedWindow(shape: WordShape): number {
   const sign = shape.rtl ? -1 : 1;
-  return -sign * (shape.width + OVERHANG * shape.size + FEATHER * shape.width);
+  return -sign * (shape.width + trailOf(shape) + FEATHER * shape.width + leadOf(shape));
 }
 
 /**

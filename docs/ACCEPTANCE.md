@@ -149,6 +149,7 @@ The new motion was checked in Chromium with software compositing only. These nee
 5. Turn **Effects** to Calm (0) and to Lively (100): at 0 words only light up, with no rising or hopping; at 100 they move about twice as much as at 50. Turn on the system's reduced-motion setting (macOS: **Accessibility › Display › Reduce motion**; Windows: **Accessibility › Visual effects › Animation effects** off): words fade in instead of moving, and line changes crossfade.
 6. On a light wallpaper and a dark one, every style stays readable, with no hard-edged dark boxes around words.
 7. **The lite tier.** In a dev build, open the overlay's developer tools (section 5) and evaluate `document.documentElement.dataset.power`: it reads `full` on a machine with a working GPU. In a virtual machine or over Remote Desktop it reads `lite`, and words fade in without moving while the line changes still glide.
+8. **Letters that draw past their box.** Play an English song with `--look=stack,Caveat`, then with `--look=arc,Caveat` and `--look=lens,Caveat`. While each word lights and after it's lit, every stroke stays whole: the crossbars of t and f, the tops of d and l, and the end of each word's last letter, with no straight cut edge and no white sliver beside a letter. A sung word is lit to the tip of its last letter. Then play a Vietnamese song: its tone marks stay whole in whatever face Undertone picks.
 
 ## 11. The look picked for each song (v4)
 

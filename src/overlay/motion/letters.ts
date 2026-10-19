@@ -4,7 +4,7 @@
  * read.
  */
 import type { Line, Word } from "../../core/lrc";
-import type { LetterBox, Part } from "./karaoke";
+import type { LetterBox, Part, WordInk } from "./karaoke";
 
 /**
  * Scripts whose letters stand alone: splitting them changes no shapes. Arabic, Syriac, N'Ko and
@@ -35,8 +35,8 @@ export type Measure = (text: string) => number;
 
 let context: CanvasRenderingContext2D | null | undefined;
 
-/** A canvas measurer for `font` (CSS font shorthand), or null without a canvas. */
-export function canvasMeasure(font: string): Measure | null {
+/** The shared 2D context every measurer uses, made once; null without a canvas. */
+function canvasContext(): CanvasRenderingContext2D | null {
   if (context === undefined) {
     try {
       const canvas = typeof document !== "undefined" ? (document.createElement("canvas") as HTMLCanvasElement) : null;
@@ -45,7 +45,12 @@ export function canvasMeasure(font: string): Measure | null {
       context = null;
     }
   }
-  const ctx = context;
+  return context;
+}
+
+/** A canvas measurer for `font` (CSS font shorthand), or null without a canvas. */
+export function canvasMeasure(font: string): Measure | null {
+  const ctx = canvasContext();
   if (!ctx) return null;
   const cache = new Map<string, number>();
   return (text: string): number => {
@@ -56,6 +61,73 @@ export function canvasMeasure(font: string): Measure | null {
     cache.set(text, w);
     return w;
   };
+}
+
+/** Where a run of text draws past its box, px: as WordInk, for one run measured alone. */
+export interface Ink {
+  /** past its start (left) and past its advance (right) */
+  left: number;
+  right: number;
+  /** above the font's ascent and below its descent */
+  above: number;
+  below: number;
+  /** the font's ascent and descent */
+  ascent: number;
+  descent: number;
+}
+
+export type InkMeasure = (text: string) => Ink;
+
+/** A canvas ink measurer for `font` (CSS font shorthand), or null without a canvas. */
+export function canvasInk(font: string): InkMeasure | null {
+  const ctx = canvasContext();
+  if (!ctx) return null;
+  const finite = (v: number | undefined): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const cache = new Map<string, Ink>();
+  return (text: string): Ink => {
+    const hit = cache.get(text);
+    if (hit) return hit;
+    if (ctx.font !== font) ctx.font = font;
+    const m = ctx.measureText(text);
+    // fontBoundingBox* is missing from older engines: no font box, so no vertical overhang either
+    const ascent = finite(m.fontBoundingBoxAscent);
+    const descent = finite(m.fontBoundingBoxDescent);
+    const known = ascent + descent > 0;
+    const ink: Ink = {
+      left: finite(m.actualBoundingBoxLeft),
+      right: typeof m.actualBoundingBoxRight === "number" ? finite(m.actualBoundingBoxRight) - finite(m.width) : 0,
+      above: known ? finite(m.actualBoundingBoxAscent) - ascent : 0,
+      below: known ? finite(m.actualBoundingBoxDescent) - descent : 0,
+      ascent,
+      descent,
+    };
+    cache.set(text, ink);
+    return ink;
+  };
+}
+
+/**
+ * Where a word's glyphs draw past its boxes: the whole word's ink as one run, and each letter's where
+ * it sits in the word (`letters`), since a lit letter is drawn alone in a box of its own.
+ */
+export function wordInk(text: string, letters: readonly LetterBox[], width: number, ink: InkMeasure): WordInk {
+  const whole = ink(text);
+  let left = whole.left;
+  let right = whole.right;
+  let side = Math.max(whole.left, whole.right);
+  let above = whole.above;
+  let below = whole.below;
+  if (letters.length > 1) {
+    for (const l of letters) {
+      const m = ink(l.text);
+      left = Math.max(left, m.left - l.x);
+      right = Math.max(right, l.x + l.w + m.right - width);
+      side = Math.max(side, m.left, m.right);
+      above = Math.max(above, m.above);
+      below = Math.max(below, m.below);
+    }
+  }
+  return { left: Math.max(0, left), right: Math.max(0, right), side: Math.max(0, side), above, below, ascent: whole.ascent, descent: whole.descent };
 }
 
 /** Forgets the canvas context (tests that stub one in, or take it away). */
@@ -74,13 +146,21 @@ export function roughMeasure(size: number): Measure {
  * advance, which keeps kerning pairs in place; `spacingPx` (CSS letter-spacing) follows every
  * grapheme, so the n-th letter moves n spacings right and the word grows by one per gap. A word that
  * can't be split is one letter. `parts` (the word's syllables) tell each letter which syllable it
- * belongs to.
+ * belongs to. With `ink`, it also measures where the glyphs draw past their boxes.
  */
-export function measureLetters(text: string, parts: readonly Pick<Part, "text">[], measure: Measure, spacingPx = 0): { width: number; letters: LetterBox[] } {
+export function measureLetters(
+  text: string,
+  parts: readonly Pick<Part, "text">[],
+  measure: Measure,
+  spacingPx = 0,
+  ink?: InkMeasure,
+): { width: number; letters: LetterBox[]; ink?: WordInk } {
   const all = graphemes(text);
   const gaps = Math.max(0, all.length - 1);
   const width = measure(text) + spacingPx * gaps;
-  if (!splittable(text) || all.length < 2) return { width, letters: [{ text, x: 0, w: width, part: 0 }] };
+  const withInk = (letters: LetterBox[]): { width: number; letters: LetterBox[]; ink?: WordInk } =>
+    ink ? { width, letters, ink: wordInk(text, letters, width, ink) } : { width, letters };
+  if (!splittable(text) || all.length < 2) return withInk([{ text, x: 0, w: width, part: 0 }]);
   // character offset where each part ends, in the word's text
   const ends: number[] = [];
   let at = 0;
@@ -99,7 +179,7 @@ export function measureLetters(text: string, parts: readonly Pick<Part, "text">[
     if (g.trim() !== "") letters.push({ text: g, x, w, part });
     offset = through;
   });
-  return { width, letters };
+  return withInk(letters);
 }
 
 /** How the look sets lyric text: as written, or upper case (Unbounded and Syne on shouted lines). */

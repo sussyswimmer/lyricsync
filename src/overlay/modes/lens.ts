@@ -958,6 +958,8 @@ export class LensMode implements ModeRenderer {
         size: look.size,
         font: `${look.weight} ${look.size.toFixed(2)}px ${look.font}`,
         letterSpacingPx: look.letterSpacing * look.size,
+        // styles/lens.css: rows and slots are set solid
+        lineHeight: 1,
         params: this.params ?? motionParams(look),
         steps: this.steps,
       },

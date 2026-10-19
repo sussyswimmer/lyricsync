@@ -21,6 +21,11 @@
  * a letter shows outside the feather, so a lit letter can hop on its own without its unlit twin
  * peeking out under it: the base copy only moves in held syllables, whose letters rise as they light.
  *
+ * Glyphs may draw past their boxes (WordInk). The wipe runs from before the word's ink to past it, and
+ * every run of text in the overlay (`.kl`, `.kw-run`) is padded out by the word's bleed (--kb-x,
+ * --kb-y, stage.css): WebKit sizes a moving letter's layer by its box, not its ink, and cut what
+ * overhung it off with a hard edge.
+ *
  * Every word's motion is planned (karaoke.ts) and handed to the compositor sharing one window, the
  * line's [origin, end]: Chromium needs a main-thread frame to start a batch and another when it ends,
  * so a line costs two whatever it moves; WebKit hands the same animations to Core Animation. The work
@@ -35,12 +40,13 @@ import {
   FEATHER,
   FULL_TRANSFORM,
   heldParts,
+  leadOf,
   letterRest,
-  OVERHANG,
   partsOf,
   planWord,
   rebase,
   restTransform,
+  trailOf,
   wordUntil,
   type LetterBox,
   type Part,
@@ -49,7 +55,7 @@ import {
   type WordShape,
 } from "./karaoke";
 import { compositorSteps } from "./keyframes";
-import { canvasMeasure, isRtl, measureLetters, roughMeasure, type Measure } from "./letters";
+import { canvasInk, canvasMeasure, isRtl, measureLetters, roughMeasure, type InkMeasure, type Measure } from "./letters";
 import { LEAD_MS, LEAVE_MS, SETTLE_IN_MS, type MotionParams } from "./params";
 import { commit, type SongTimeline } from "./timeline";
 
@@ -63,6 +69,8 @@ export interface KaraokeLook {
   font: string;
   /** CSS letter-spacing of the row, px */
   letterSpacingPx: number;
+  /** CSS line-height of the row, in font sizes: each letter's box is this tall (default 1) */
+  lineHeight?: number;
   /** from motionParams(look) */
   params: MotionParams;
   /** a static placement for every copy of every letter (Arc: letters on its curve); forces the letter split */
@@ -101,6 +109,24 @@ export const SLICE_MS = 6;
 export const MOUNT_SLICE_MS = 3;
 /** The overlay reaches this far beyond the word's box (glyph overhangs, the lift, the bloom), in em. */
 const PAD_EM = 0.5;
+/** Ink is reached with this much to spare, px (antialiased edges). */
+const BLEED_MARGIN = 1;
+
+/**
+ * How far every run of text in a word's overlay is padded out (stage.css `.kl`, `.kw-run`), px:
+ * sideways by the furthest any glyph overhangs its own box, up and down by what the tallest and
+ * deepest glyphs draw past a `lineHeight`-tall box. 0 where nothing overhangs, or nothing was measured.
+ */
+export function bleedOf(shape: WordShape, lineHeight: number): { x: number; y: number } {
+  const ink = shape.ink;
+  if (!ink) return { x: 0, y: 0 };
+  const halfLeading = (lineHeight - (ink.ascent + ink.descent)) / 2;
+  const past = Math.max(ink.above, ink.below) - halfLeading;
+  return {
+    x: ink.side > 0 ? Math.ceil(ink.side) + BLEED_MARGIN : 0,
+    y: ink.ascent + ink.descent > 0 && past > 0 ? Math.ceil(past) + BLEED_MARGIN : 0,
+  };
+}
 
 interface Overlay {
   fx: HTMLElement;
@@ -136,6 +162,8 @@ interface WordView {
   ov: Overlay | null;
   /** the plain text, split into placed letters (with `place`), and what it read before */
   txt: { el: HTMLElement; text: string } | null;
+  /** the word box carries a bleed (--kb-x, --kb-y) for its runs of text */
+  bled: boolean;
   mounted: boolean;
 }
 
@@ -171,6 +199,7 @@ export class KaraokeLine {
   private readonly look: KaraokeLook;
   private readonly steps: boolean;
   private measure: Measure | null = null;
+  private ink: InkMeasure | null | undefined;
   private origin = 0;
   private end = 0;
   private settleIn = false;
@@ -201,6 +230,7 @@ export class KaraokeLine {
         shape: null,
         ov: null,
         txt: null,
+        bled: false,
         mounted: false,
       });
     });
@@ -348,6 +378,10 @@ export class KaraokeLine {
       v.el.classList.remove("kw-on");
       put(v.el, "transform", "none");
       put(v.el, "will-change", "auto");
+      if (v.bled) {
+        put(v.el, "--kb-x", "");
+        put(v.el, "--kb-y", "");
+      }
       if (v.txt) v.txt.el.textContent = v.txt.text;
       v.txt = null;
     }
@@ -471,8 +505,9 @@ export class KaraokeLine {
     if (v.shape) return v.shape;
     const { size, font, letterSpacingPx } = this.look;
     this.measure ??= canvasMeasure(font) ?? roughMeasure(size);
-    const { width, letters } = measureLetters(v.text, v.parts, this.measure, letterSpacingPx);
-    v.shape = { width, size, letters, rtl: isRtl(v.text) };
+    if (this.ink === undefined) this.ink = canvasInk(font);
+    const { width, letters, ink } = measureLetters(v.text, v.parts, this.measure, letterSpacingPx, this.ink ?? undefined);
+    v.shape = { width, size, letters, rtl: isRtl(v.text), ...(ink ? { ink } : {}) };
     return v.shape;
   }
 
@@ -500,14 +535,21 @@ export class KaraokeLine {
         box.append(sp);
         return sp;
       });
-    const whole = (box: HTMLElement): HTMLElement[] => {
-      box.append(h("span", "kl", text));
+    const whole = (box: HTMLElement, cls = "kl"): HTMLElement[] => {
+      box.append(h("span", cls, text));
       return [];
     };
+    // every run of text is padded out by the word's bleed, so no layer is smaller than its ink
+    const bleed = bleedOf(shape, (this.look.lineHeight ?? 1) * size);
+    if (bleed.x > 0 || bleed.y > 0) {
+      put(v.el, "--kb-x", px(bleed.x));
+      put(v.el, "--kb-y", px(bleed.y));
+      v.bled = true;
+    }
 
     // the dark legibility copy, under everything and unclipped
     const dark = h("span", "kw-dark");
-    const darkLetters = moves || placed ? letterSpans(dark) : (dark.textContent = text, []);
+    const darkLetters = moves || placed ? letterSpans(dark) : whole(dark, "kw-run");
     // held letters' own blooms
     const letterGlows: HTMLElement[] = [];
     if (held) {
@@ -519,18 +561,19 @@ export class KaraokeLine {
     }
     // the word's bloom
     const glow = h("span", "kw-glow");
-    const glowLetters = placed ? letterSpans(glow) : (glow.textContent = text, []);
+    const glowLetters = placed ? letterSpans(glow) : whole(glow, "kw-run");
 
     // The windows, in track coordinates (where the track rests when the word is fully lit). LTR: the
-    // lit window runs from PAD_EM before the word to its end plus the overhang, then fades out over the
-    // feather. The base window starts, hard-edged, where that fade begins and runs on past the word:
-    // over the feather the lit copy fades out over the base copy at full strength, which is a true
-    // crossfade (two complementary masks would let the wallpaper through mid-way), and a clip costs the
-    // compositor nothing where a second mask would cost an offscreen pass per word. RTL mirrors it.
+    // lit window runs from PAD_EM before the word to its end plus the overhang (past its last glyph's
+    // ink), then fades out over the feather. The base window starts, hard-edged, where that fade begins
+    // and runs on past the word: over the feather the lit copy fades out over the base copy at full
+    // strength, which is a true crossfade (two complementary masks would let the wallpaper through
+    // mid-way), and a clip costs the compositor nothing where a second mask would cost an offscreen pass
+    // per word. RTL mirrors it.
     const W = shape.width;
-    const pad = PAD_EM * size;
+    const pad = Math.max(PAD_EM * size, leadOf(shape) + bleed.x);
     const feather = Math.max(1, FEATHER * W);
-    const over = OVERHANG * size;
+    const over = trailOf(shape);
     const span = pad + W + over + feather;
     const track = h("span", "kw-track");
     const win = h("span", "kw-win");

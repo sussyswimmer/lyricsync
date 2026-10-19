@@ -1266,6 +1266,7 @@ export class ArcMode implements ModeRenderer {
         size: g.size,
         font: this.fontAt(look, g.size),
         letterSpacingPx: look.letterSpacing * g.size,
+        lineHeight: LINE_HEIGHT,
         params: this.params ?? motionParams(look),
         place: arcPlacer(curve, g.shape.words, g.frames, g.shape.total, metrics),
         steps: this.steps,

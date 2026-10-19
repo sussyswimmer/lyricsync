@@ -8,8 +8,9 @@
  * - FakeAnimationHost (a base class) and animatable() (for an existing object) give an element
  *   `animate` and `getAnimations`.
  * - fakeContext2d() / withCanvas(): a canvas 2D context whose measureText gives every character `em`
- *   of the font size in the CSS font shorthand, so canvasMeasure works in node. Call resetMeasure()
- *   (motion/letters.ts) after stubbing, so the next measurer picks the canvas up.
+ *   of the font size in the CSS font shorthand, so canvasMeasure works in node; with `ink`, also the
+ *   bounding boxes canvasInk reads. Call resetMeasure() (motion/letters.ts) after stubbing, so the next
+ *   measurer picks the canvas up.
  *
  * Not a test file itself.
  */
@@ -243,18 +244,26 @@ export function fontPx(font: string): number {
 export interface FakeContext2d {
   font: string;
   measured: number;
-  measureText(text: string): { width: number };
+  measureText(text: string): Partial<TextMetrics> & { width: number };
 }
 
 /**
  * A 2D context for canvasMeasure: every character `em` of the font size wide, and each pair in
  * `kern` (e.g. {"AV": -0.06}) that many em tighter, the way a real font kerns.
  */
-export function fakeContext2d(em = 0.5, kern: Readonly<Record<string, number>> = {}): FakeContext2d {
+/** Where one character's ink reaches past its box, in font sizes (FakeInk.chars), and the font's box. */
+export interface FakeInk {
+  chars: Readonly<Record<string, { left?: number; right?: number; up?: number; down?: number }>>;
+  /** the font's ascent and descent, in font sizes */
+  ascent: number;
+  descent: number;
+}
+
+export function fakeContext2d(em = 0.5, kern: Readonly<Record<string, number>> = {}, ink?: FakeInk): FakeContext2d {
   const ctx: FakeContext2d = {
     font: "16px sans-serif",
     measured: 0,
-    measureText(text: string): { width: number } {
+    measureText(text: string): Partial<TextMetrics> & { width: number } {
       ctx.measured++;
       const size = fontPx(ctx.font);
       let width = [...text].length * em * size;
@@ -265,7 +274,22 @@ export function fakeContext2d(em = 0.5, kern: Readonly<Record<string, number>> =
           at = text.indexOf(pair, at + 1);
         }
       }
-      return { width };
+      if (!ink) return { width };
+      // each character drawn `em` on from the last, its ink as `ink.chars` says (or inside its box)
+      const boxes = [...text].map((c, i) => {
+        const o = ink.chars[c] ?? {};
+        return { left: (o.left ?? 0) - i * em, right: (i + 1) * em + (o.right ?? 0), up: o.up ?? 0.7, down: o.down ?? 0.1 };
+      });
+      const most = (f: (b: (typeof boxes)[number]) => number): number => Math.max(...boxes.map(f)) * size;
+      return {
+        width,
+        actualBoundingBoxLeft: most((b) => b.left),
+        actualBoundingBoxRight: most((b) => b.right),
+        actualBoundingBoxAscent: most((b) => b.up),
+        actualBoundingBoxDescent: most((b) => b.down),
+        fontBoundingBoxAscent: ink.ascent * size,
+        fontBoundingBoxDescent: ink.descent * size,
+      };
     },
   };
   return ctx;

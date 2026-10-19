@@ -6,19 +6,23 @@ import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overl
 import { InterludeDots } from "../src/overlay/motion/dots";
 import { findInterludes, interludeAt, INTERLUDE_AFTER_MS, planDots } from "../src/overlay/motion/interlude";
 import {
+  closedWindow,
   emphasized,
   FEATHER,
   FULL_TRANSFORM,
   heldParts,
+  leadOf,
   letterRest,
   OVERHANG,
   partsOf,
   planWord,
   rebase,
   restTransform,
+  trailOf,
   wipeEdge,
   wordUntil,
   type Track,
+  type WordInk,
   type WordShape,
   type WordTiming,
 } from "../src/overlay/motion/karaoke";
@@ -36,8 +40,20 @@ import {
   STEP_MS,
   thin,
 } from "../src/overlay/motion/keyframes";
-import { cased, casedLines, graphemes, isRtl, measureLetters, resetMeasure, roughMeasure, splittable, type Measure } from "../src/overlay/motion/letters";
-import { KaraokeLine, SETTLE_IN_MS, type LetterPlacer } from "../src/overlay/motion/line";
+import {
+  canvasInk,
+  cased,
+  casedLines,
+  graphemes,
+  isRtl,
+  measureLetters,
+  resetMeasure,
+  roughMeasure,
+  splittable,
+  type InkMeasure,
+  type Measure,
+} from "../src/overlay/motion/letters";
+import { bleedOf, KaraokeLine, SETTLE_IN_MS, type LetterPlacer } from "../src/overlay/motion/line";
 import {
   A_MAX,
   BL_EMPHASIS,
@@ -645,6 +661,47 @@ describe("letters", () => {
     expect(measureLetters("a", [{ text: "a" }], kerned).letters).toEqual([{ text: "a", x: 0, w: 10, part: 0 }]);
   });
 
+  it("measure where their glyphs draw past their boxes: the word's edges, and any one letter's", () => {
+    // "j" reaches 3 px left of its box, "t" 2 px right of its own, "f" 6 px right; no glyph is taller than the font
+    const ink: InkMeasure = (text) => ({
+      left: text.startsWith("j") ? 3 : 0,
+      right: text.endsWith("f") ? 6 : text.endsWith("t") ? 2 : 0,
+      above: -2,
+      below: text.includes("j") ? 1 : -1,
+      ascent: 50,
+      descent: 15,
+    });
+    expect(measureLetters("jot", [{ text: "jot" }], kerned, 0, ink).ink).toEqual({ left: 3, right: 2, side: 3, above: -2, below: 1, ascent: 50, descent: 15 });
+    // a letter inside the word overhangs its own box, not the word's: only `side` counts it
+    expect(measureLetters("oft", [{ text: "oft" }], kerned, 0, ink).ink).toEqual({ left: 0, right: 2, side: 6, above: -2, below: -1, ascent: 50, descent: 15 });
+    // a word that can't be split is one run; nothing is measured without an ink measurer
+    expect(measureLetters("الضوء", [{ text: "الضوء" }], kerned, 0, ink).ink?.side).toBe(0);
+    expect(measureLetters("jot", [{ text: "jot" }], kerned).ink).toBeUndefined();
+  });
+
+  it("read glyph overhangs from the canvas, or none where it gives no bounding boxes", () => {
+    const ctx = fakeContext2d(0.5, {}, { chars: { f: { right: 0.2 }, j: { left: 0.1, down: 0.3 } }, ascent: 0.9, descent: 0.25 });
+    vi.stubGlobal("document", withCanvas({ createElement: () => ({}) }, ctx));
+    resetMeasure();
+    try {
+      const ink = canvasInk("600 100px Test") as InkMeasure;
+      expect(ink("f")).toMatchObject({ left: 0, ascent: 90, descent: 25 });
+      expect(ink("f").right).toBeCloseTo(20, 6);
+      expect(ink("j").left).toBeCloseTo(10, 6);
+      expect(ink("j").below).toBeCloseTo(5, 6);
+      expect(ink("o").above).toBeCloseTo(-20, 6);
+      vi.stubGlobal("document", withCanvas({ createElement: () => ({}) }, fakeContext2d()));
+      resetMeasure();
+      expect((canvasInk("600 100px Test") as InkMeasure)("f")).toEqual({ left: 0, right: 0, above: 0, below: 0, ascent: 0, descent: 0 });
+      vi.stubGlobal("document", undefined);
+      resetMeasure();
+      expect(canvasInk("600 100px Test")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      resetMeasure();
+    }
+  });
+
   it("come in the look's case, every syllable with them", () => {
     expect(cased("Đèn phố", "upper")).toBe("ĐÈN PHỐ");
     expect(cased("Hold on", "as-is")).toBe("Hold on");
@@ -717,6 +774,48 @@ describe("the wipe", () => {
     expect(edge(span / 2)).toBeCloseTo((edge(0) + edge(span)) / 2, 6);
     expect(edge(-100)).toBe(edge(0));
     expect(edge(span + 500)).toBe(edge(span));
+  });
+
+  it("starts before ink that leads the word, and runs on past glyphs that overhang its end", () => {
+    const plain = shapeOf("left", [{ text: "left" }]);
+    const ink: WordInk = { left: 4, right: 12, side: 12, above: 0, below: 0, ascent: 50, descent: 15 };
+    const shape: WordShape = { ...plain, ink };
+    const W = shape.width;
+    const word = { start: 1000, end: 1600 };
+    const edge = wipeEdge(word, partsOf(word, "left"), shape);
+    // a pixel to spare past the ink at both ends
+    expect(leadOf(shape)).toBe(5);
+    expect(trailOf(shape)).toBe(13);
+    expect(edge(0)).toBeCloseTo(-(FEATHER * W + 5), 6);
+    expect(edge(600)).toBeCloseTo(W + 13, 6);
+    // the windows travel just as far: closed to the left of all ink, open past all of it
+    const win = planWord(word, "left", shape, BL).window?.frames ?? [];
+    expect(xOfFrame(win[0])).toBeCloseTo(closedWindow(shape), 2);
+    expect(closedWindow(shape)).toBeCloseTo(-(W + 13 + FEATHER * W + 5), 6);
+    expect(xOfFrame(win[win.length - 1])).toBe(0);
+    // an overhang smaller than OVERHANG keeps the minimum; none measured is the old wipe
+    expect(trailOf({ ...plain, ink: { ...ink, right: 1 } })).toBe(OVERHANG * plain.size);
+    expect(leadOf(plain)).toBe(0);
+    expect(trailOf(plain)).toBe(OVERHANG * plain.size);
+    // right to left, the ink on the right leads and the ink on the left trails
+    const rtl: WordShape = { ...shape, rtl: true };
+    expect(leadOf(rtl)).toBe(13);
+    expect(trailOf(rtl)).toBe(5);
+    expect(closedWindow(rtl)).toBeCloseTo(W + 5 + FEATHER * W + 13, 6);
+  });
+
+  it("pads every run of text out past its glyphs' ink, sideways and up and down", () => {
+    const plain = shapeOf("left", [{ text: "left" }]);
+    expect(bleedOf(plain, 65)).toEqual({ x: 0, y: 0 });
+    const ink: WordInk = { left: 0, right: 0, side: 10.2, above: 3, below: -5, ascent: 50, descent: 15 };
+    // sideways by the furthest overhang; up by what the tallest glyph draws past a 64.96 px line box
+    expect(bleedOf({ ...plain, ink }, 1.12 * 58)).toEqual({ x: 12, y: 5 });
+    // a roomier line box takes it in
+    expect(bleedOf({ ...plain, ink }, 80)).toEqual({ x: 12, y: 0 });
+    // nothing overhangs: no padding at all
+    expect(bleedOf({ ...plain, ink: { ...ink, side: 0, above: -4, below: -2 } }, 65)).toEqual({ x: 0, y: 0 });
+    // no font box (an engine without fontBoundingBox*): no vertical padding
+    expect(bleedOf({ ...plain, ink: { ...ink, ascent: 0, descent: 0 } }, 10).y).toBe(0);
   });
 
   it("is linear within each syllable, and eases out across a held one", () => {
@@ -1551,6 +1650,29 @@ describe("a karaoke line", () => {
       // and no word box ever moves
       expect(boxes[0]?.getAnimations()).toEqual([]);
     }
+  });
+
+  it("pads a word's runs of text out by its glyphs' overhang, and lights it past them", () => {
+    // a "t" whose crossbar reaches 0.15 em past its box, as in a script face
+    const ink = fakeContext2d(0.5, {}, { chars: { t: { right: 0.15 } }, ascent: 0.9, descent: 0.25 });
+    vi.stubGlobal("document", withCanvas({ createElement: (tag: string) => new Node(tag) }, ink));
+    resetMeasure();
+    const { line: k, boxes } = line(words(["lit", "on"], 10_000, 400));
+    k.mount(10_000, false);
+    while (k.mounting) runFrames();
+    const [lit, on] = boxes as [Node, Node];
+    // ceil(0.15 × 58) + 1 px to spare, sideways; the font's box already holds every glyph's height
+    expect(lit.style.getPropertyValue("--kb-x")).toBe("10.00px");
+    expect(lit.style.getPropertyValue("--kb-y")).toBe("0.00px");
+    expect(on.style.getPropertyValue("--kb-x")).toBe("");
+    // the bloom and dark copies draw whole words in runs of their own, which take the padding
+    expect(lit.find("kw-glow")[0]?.kids("kw-run").map((r) => r.textContent)).toEqual(["lit"]);
+    // the base window starts past the crossbar's ink (87 px + 8.7 + 1), so a sung word is lit to its tip
+    expect(lit.find("kw-bwin")[0]?.style.left).toBe("96.70px");
+    expect(on.find("kw-bwin")[0]?.style.left).toBe(`${(58 + OVERHANG * 58).toFixed(2)}px`);
+    k.destroy();
+    expect(lit.style.getPropertyValue("--kb-x")).toBe("");
+    expect(lit.style.getPropertyValue("--kb-y")).toBe("");
   });
 
   it("places every copy of each letter with its LetterPlacer, through translate and rotate", () => {

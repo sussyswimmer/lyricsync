@@ -852,6 +852,7 @@ export class DriftMode implements ModeRenderer {
         size: row.size,
         font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`,
         letterSpacingPx: look.letterSpacing * row.size,
+        lineHeight: LINE_HEIGHT,
         params: this.params ?? motionParams(look),
         steps: this.steps,
       },
