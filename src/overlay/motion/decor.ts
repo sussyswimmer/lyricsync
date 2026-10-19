@@ -20,8 +20,10 @@ import type { Track } from "./karaoke";
 import { framesOf, keyPoints, num, sampleTimes, thin } from "./keyframes";
 import type { Power } from "./power";
 
-/** A picture is this many font sizes across... */
-export const PICTURE_EM = 1;
+/** A picture is this many font sizes across, of its word's size while it is sung (KaraokeLook.scaleOf)... */
+export const PICTURE_EM = 1.2;
+/** ...though a word swollen more than this many times its row's size doesn't take its picture further */
+export const PICTURE_SWELL_MAX = 2;
 /** ...and lives this long from its word's start unless its route says otherwise, ms. */
 export const PICTURE_MS = 2400;
 /** A splash starts this long after its word does, as the word's own motion gets going, ms. */

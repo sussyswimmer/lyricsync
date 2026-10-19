@@ -46,7 +46,7 @@ import type { WordDecor } from "../../core/flair";
 import type { Word } from "../../core/lrc";
 import { h, put } from "../dom";
 import { pictureUrl } from "../pictures";
-import { PICTURE_EM, planPictureLife, planSplash, seedOf, type Particle } from "./decor";
+import { PICTURE_EM, PICTURE_SWELL_MAX, planPictureLife, planSplash, seedOf, type Particle } from "./decor";
 import {
   closedWindow,
   FEATHER,
@@ -101,6 +101,8 @@ export interface KaraokeLook {
    */
   host?: HTMLElement;
   spot?: (word: number, t: number) => Spot | null;
+  /** how many times `size` word `word` is drawn while it is sung (Lens's slots swell it): its picture matches. 1 by default */
+  scaleOf?: (word: number) => number;
 }
 
 /**
@@ -769,7 +771,7 @@ export class KaraokeLine {
     const url = decor.picture ? pictureUrl(decor.picture) : null;
     const layers = url ? this.layersOf() : null;
     if (url && decor.picture && layers) {
-      const side = PICTURE_EM * size;
+      const side = this.sideOf(v);
       const picture = (scale = 1): { route: HTMLElement; img: HTMLImageElement } => {
         const route = h("span", "kw-route");
         route.setAttribute("aria-hidden", "true");
@@ -869,6 +871,12 @@ export class KaraokeLine {
     return { x: x + w / 2, y, w };
   }
 
+  /** How big word `v`'s picture is drawn, px: as big as the word is while it is sung. */
+  private sideOf(v: WordView): number {
+    const scale = this.look.scaleOf?.(v.index) ?? 1;
+    return PICTURE_EM * this.look.size * Math.min(Math.max(scale, 1), PICTURE_SWELL_MAX);
+  }
+
   /**
    * The route of word `v`'s picture (routes.ts), from where the line's words are: as it starts and,
    * for each word after it, as that one starts. `layoutless` (while building, before the line has
@@ -897,7 +905,7 @@ export class KaraokeLine {
       id,
       at,
       until: this.sungBy,
-      side: PICTURE_EM * size,
+      side: this.sideOf(v),
       size,
       amp: params.karaoke === "full" ? params.amp : 0,
       seed: seedOf(`${v.index}|${v.text}|${Math.round(at)}`),

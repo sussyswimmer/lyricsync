@@ -4,7 +4,7 @@ import { parseLrc, type Line, type Word } from "../src/core/lrc";
 import { CALM_NEAR_LEVEL, lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
 import { bloomLayers, bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
 import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overlay/motion/curve";
-import { PICTURE_EM, PICTURE_LIFE, PICTURE_MS, planPictureLife, seedOf } from "../src/overlay/motion/decor";
+import { PICTURE_EM, PICTURE_LIFE, PICTURE_MS, PICTURE_SWELL_MAX, planPictureLife, seedOf } from "../src/overlay/motion/decor";
 import { InterludeDots } from "../src/overlay/motion/dots";
 import { findInterludes, interludeAt, INTERLUDE_AFTER_MS, planDots } from "../src/overlay/motion/interlude";
 import {
@@ -1547,7 +1547,7 @@ describe("a karaoke line", () => {
   const words = (texts: string[], start: number, every: number, length = every * 0.8): Word[] =>
     texts.map((text, i) => ({ text: `${text} `, start: start + i * every, end: start + i * every + length }));
 
-  function line(ws: Word[], p = BL, extra: { place?: LetterPlacer; decor?: ReadonlyMap<number, WordDecor> } = {}): { line: KaraokeLine; boxes: Node[]; tl: SongTimeline } {
+  function line(ws: Word[], p = BL, extra: { place?: LetterPlacer; decor?: ReadonlyMap<number, WordDecor>; scaleOf?: (word: number) => number } = {}): { line: KaraokeLine; boxes: Node[]; tl: SongTimeline } {
     const { boxes } = row(ws);
     const tl = new SongTimeline();
     tl.sync({ t: ws[0]?.start ?? 0, running: true });
@@ -1837,6 +1837,19 @@ describe("a karaoke line", () => {
     // the other words have none, and a picture without light leaves the layer under the words empty
     for (const b of [boxes[0], boxes[1]]) expect([...(b?.find("kw-pic") ?? []), ...(b?.find("kw-splash") ?? [])]).toEqual([]);
     expect(under.children).toEqual([]);
+  });
+
+  it("draws a picture as big as its word is drawn while it is sung, within PICTURE_SWELL_MAX", () => {
+    const sideAt = (scale: number): number => {
+      const { line: k, boxes } = line(words(["here", "comes", "rain"], 10_000, 300), BL, { decor: RAIN, scaleOf: (j) => (j === 2 ? scale : 9) });
+      layOut(boxes);
+      mountAll(k, 10_000);
+      return Number.parseFloat(String(layers(boxes[2]).over.kids("kw-route")[0]?.kids("kw-pic")[0]?.style.width));
+    };
+    expect(sideAt(2)).toBeCloseTo(PICTURE_EM * 58 * 2, 1);
+    // never smaller than its row's size, nor bigger than the cap
+    expect(sideAt(0.5)).toBeCloseTo(PICTURE_EM * 58, 1);
+    expect(sideAt(5)).toBeCloseTo(PICTURE_EM * 58 * PICTURE_SWELL_MAX, 1);
   });
 
   it("plays a picture's route on its own window, from where its line's words are laid out", () => {

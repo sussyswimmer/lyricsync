@@ -6,6 +6,7 @@ import { DEFAULT_PICK, resolveLook, shadowLayers, withBloom, type Frame, type Lo
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
 import { POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotLayout } from "../src/overlay/modes/slot-layouts";
 import type { Cue } from "../src/overlay/modes/types";
+import { PICTURE_EM } from "../src/overlay/motion/decor";
 import { findInterludes } from "../src/overlay/motion/interlude";
 import { leadTimes } from "../src/overlay/motion/schedule";
 import { FakeAnimationHost } from "./fake-motion";
@@ -905,5 +906,14 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
     expect(slots.length).toBeGreaterThan(1);
     for (const slot of slots) expect(slot.getAnimations().length).toBe(1);
     expect(String(slots[0]?.style.getPropertyValue("transform"))).toMatch(/^translate\(/u);
+  });
+
+  it("Spotlight draws a word's picture as big as its word is once the light is on it", () => {
+    const l = look();
+    const { mode, row } = lens(l, LINES, SPOTLIGHT_LAYOUT);
+    mode.paint(cue(0, 2000));
+    frames();
+    const pic = everything(row()).find((e) => e.classList.contains("kw-pic"));
+    expect(Number.parseFloat(String(pic?.style.width))).toBeGreaterThan(1.5 * PICTURE_EM * l.size);
   });
 });

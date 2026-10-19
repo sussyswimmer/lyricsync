@@ -53,6 +53,8 @@ const BREAK_EM = 1.05;
 const SEEK_MS = 250;
 /** ...and while paused (or pausing), any move further than this. */
 const PAUSED_SEEK_MS = 50;
+/** A word's picture is sized to the word this far into it (or halfway, if sooner), as the lens has it, ms. */
+const SWELL_AT_MS = 400;
 /** The next line is prepared from this long after a line change, once that change's frames are out... */
 const PREPARE_DELAY_MS = 600;
 /** ...in idle slices this far apart. */
@@ -1009,6 +1011,14 @@ export class LensMode implements ModeRenderer {
           const s = pose.scale[j] ?? 1;
           const w = (row.shape.widths[j] ?? 0) * s;
           return { x: (pose.x[j] ?? 0) + w / 2, y: row.slotY + (pose.y[j] ?? 0) + this.baseline * (1 - s), w };
+        },
+        // as big as the word is drawn once the lens (or the spotlight, or its poster row) has it
+        scaleOf: (j) => {
+          const word = this.lines[row.index]?.words[j];
+          if (!word) return 1;
+          const t = word.start + Math.min((word.end - word.start) / 2, SWELL_AT_MS);
+          const pose = row.plan ? row.plan.at(t) : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0);
+          return pose.scale[j] ?? 1;
         },
       },
       this.timeline,
