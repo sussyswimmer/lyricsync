@@ -246,10 +246,26 @@ export function stackOffsets(heights: readonly number[], shown: number, depth: n
   return new Map([...placed].map(([i, p]) => [i, p.at]));
 }
 
-/** Brightness of a line `off` lines from the focus (negative: already sung). */
-export function lineLevel(off: number): number {
+/**
+ * Untimed lyrics (`calm`, paced by guesswork): the line in focus is only a guess, so the lines next to
+ * it are nearly as bright...
+ */
+export const CALM_NEAR_LEVEL = 0.82;
+/** ...and those this many lines from it are drawn sharp, in the lyric color, so they read as easily. */
+export const CALM_SHARP_LINES = 2;
+
+/**
+ * Brightness of a line `off` lines from the focus (negative: already sung). `calm` (untimed lyrics):
+ * neighbors stay readable, fading out gently toward REACH, so whichever line is really being sung
+ * reads well even when the guess is a line or two off.
+ */
+export function lineLevel(off: number, calm = false): number {
   const d = Math.abs(off);
   if (d >= REACH) return 0;
+  if (calm) {
+    if (d <= 1) return 1 - (1 - CALM_NEAR_LEVEL) * d;
+    return CALM_NEAR_LEVEL * (1 - ((d - 1) / (REACH - 1)) ** 1.6);
+  }
   const near = off < 0 ? SUNG_LEVEL : UPCOMING_LEVEL;
   if (d <= 1) return 1 - (1 - near) * d;
   return near * (1 - (d - 1) / (REACH - 1));
@@ -647,7 +663,7 @@ export class DriftMode implements ModeRenderer {
       // `dist` lines back toward look.y by projection(dist), so place it that much further out.
       const y = snap(shift + p.at, look.dpr) / projection(dist, depth) - box / 2;
       out.set(i, {
-        opacity: slot.kind === "line" ? lineLevel(p.off) : 1,
+        opacity: slot.kind === "line" ? lineLevel(p.off, look.unsynced) : 1,
         off: p.off,
         y,
         scale,
@@ -945,7 +961,8 @@ export class DriftMode implements ModeRenderer {
     const shadow = textShadow(look, row.size);
     let color = look.colors.lyric;
     let textShadowOf = shadow;
-    if (!focus) {
+    // untimed lyrics' near neighbors stay sharp, in the lyric color (CALM_SHARP_LINES)
+    if (!focus && !state.startsWith("near")) {
       const step = Number(state.split(":")[1] ?? BLUR_STEPS);
       const blur = Math.max(0.6, step * (this.depth > 0 ? DRIFT_BLUR_EM : STACK_BLUR_EM) * row.size);
       color = "transparent";
@@ -1001,6 +1018,7 @@ export class DriftMode implements ModeRenderer {
     const i = this.slotOfLine[row.index] ?? -1;
     const off = layout.get(i)?.off;
     if (off === undefined) return i < this.target ? "past" : "up";
+    if (this.look?.unsynced && Math.round(Math.abs(off)) <= CALM_SHARP_LINES) return off < 0 ? "near:past" : "near:up";
     return off < 0 ? `past:${blurStep(off)}` : `up:${blurStep(off)}`;
   }
 

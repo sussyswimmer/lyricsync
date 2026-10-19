@@ -144,12 +144,13 @@ describe("cueAt: linger", () => {
     expect(cueAt(calm, 9999).line).toBe(0);
   });
 
-  it("does not apply to evenly paced plain lyrics either", () => {
+  it("does not apply to paced plain lyrics either", () => {
     const plain = pacePlain("First placeholder line\nSecond placeholder line", 60_000);
     const calm = cueMap(plain);
     expect(calm.unsynced).toBe(true);
-    expect(cueAt(calm, 29_000)).toEqual({ line: 0, waiting: false, t: 29_000 });
-    expect(cueAt(calm, 30_000).line).toBe(1);
+    const second = plain.lines[1]?.start ?? 0;
+    expect(cueAt(calm, second - 1)).toEqual({ line: 0, waiting: false, t: second - 1 });
+    expect(cueAt(calm, second).line).toBe(1);
   });
 });
 

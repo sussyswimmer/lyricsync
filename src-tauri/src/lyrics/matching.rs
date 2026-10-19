@@ -95,8 +95,21 @@ fn score(track: &Track, candidate: &Record) -> Option<(u8, bool, bool, bool, boo
     ))
 }
 pub fn best<'a>(track: &Track, candidates: &'a [Record]) -> Option<&'a Record> {
+    best_of(track, candidates.iter())
+}
+/// The best candidate that has synced lyrics, by `best`'s ranking among those alone: a synced
+/// version beats plain text even a duration tier further off, since plain text can only be paced
+/// by guesswork.
+pub fn best_synced<'a>(track: &Track, candidates: &'a [Record]) -> Option<&'a Record> {
+    best_of(
+        track,
+        candidates
+            .iter()
+            .filter(|record| record.has_synced() && !record.instrumental),
+    )
+}
+fn best_of<'a>(track: &Track, candidates: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
     candidates
-        .iter()
         .filter_map(|record| score(track, record).map(|score| (record, score)))
         .min_by(|(a, sa), (b, sb)| {
             sa.cmp(sb)
@@ -148,6 +161,33 @@ mod tests {
         album.id = 4;
         album.album_name = track.album.clone();
         assert_eq!(best(&track, &[synced, album]).unwrap().id, 4);
+    }
+    #[test]
+    fn best_synced_takes_timing_over_a_closer_plain_record() {
+        let track = track();
+        let mut plain = record();
+        plain.synced_lyrics = None;
+        let mut farther = record();
+        farther.id = 2;
+        farther.duration += 4.0;
+        let mut instrumental = record();
+        instrumental.id = 3;
+        instrumental.instrumental = true;
+        let candidates = [plain.clone(), farther.clone()];
+        assert_eq!(best(&track, &candidates).unwrap().id, 1);
+        assert_eq!(best_synced(&track, &candidates).unwrap().id, 2);
+        // an instrumental record's text doesn't count as timing
+        assert_eq!(
+            best_synced(&track, &[instrumental.clone(), farther])
+                .unwrap()
+                .id,
+            2
+        );
+        assert!(best_synced(&track, &[plain, instrumental]).is_none());
+        // still within what `best` accepts: 8 s off at most
+        let mut far = record();
+        far.duration += 9.0;
+        assert!(best_synced(&track, &[far]).is_none());
     }
     #[test]
     fn duration_boundaries_and_metadata_rejection() {

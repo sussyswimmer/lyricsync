@@ -284,6 +284,22 @@ describe("Drift while paused", () => {
     expect(rows[1]?.style.getPropertyValue("text-shadow")).toBe("");
   });
 
+  it("draws untimed lyrics' near lines sharp in the lyric color, and only the far ones soft", () => {
+    const calm = lookFor({}, { unsynced: true });
+    const { mode, rows } = drift(0, calm, EIGHT);
+    mode.paint(cue(3, 7500, false));
+    for (const near of [rows[1], rows[2], rows[4], rows[5]]) {
+      for (const txt of near?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    }
+    for (const far of [rows[0], rows[6]]) {
+      for (const txt of far?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("transparent");
+    }
+    // timed lyrics keep their soft neighbors
+    const timed = drift(0, lookFor(), EIGHT);
+    timed.mode.paint(cue(3, 7500, false));
+    for (const txt of timed.rows[2]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("transparent");
+  });
+
   it("glides again (no stage crossfade) once playing", () => {
     const { mode, rows } = drift();
     mode.paint(cue(1, 5000, false));

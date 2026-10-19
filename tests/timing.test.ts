@@ -5,7 +5,10 @@ import {
   LINE_FILL_MS,
   LINE_GAP_MS,
   MAX_WORD_MS,
+  PLAIN_INTRO,
   PLAIN_LINE_MS,
+  PLAIN_MIN_LINE_MS,
+  PLAIN_OUTRO,
   WORD_FILL_MS,
   isKnownDuration,
   karaokeWords,
@@ -129,15 +132,37 @@ describe("spreadWords (known bounds)", () => {
 });
 
 describe("pacePlain", () => {
-  it("paces non-empty lines evenly across the duration and flags them unsynced", () => {
+  it("paces non-empty lines after an intro and before an outro, and flags them unsynced", () => {
     const { lines, unsynced } = pacePlain("One\n\nTwo two\r\n  Three  \n", 9000);
     expect(unsynced).toBe(true);
-    expect(lines.map((l) => [l.text, l.start, l.end])).toEqual([
-      ["One", 0, 3000 - LINE_GAP_MS],
-      ["Two two", 3000, 6000 - LINE_GAP_MS],
-      ["Three", 6000, 9000],
-    ]);
+    expect(lines.map((l) => l.text)).toEqual(["One", "Two two", "Three"]);
+    expect(lines[0]?.start).toBe(PLAIN_INTRO.minMs);
+    expect(lines[2]?.end).toBe(9000 - PLAIN_OUTRO.minMs);
+    lines.slice(0, -1).forEach((l, i) => expect(l.end).toBeCloseTo((lines[i + 1]?.start ?? 0) - LINE_GAP_MS, 9));
     expect(lines[1]?.words.map((w) => w.text)).toEqual(["Two ", "two"]);
+  });
+
+  it("gives a line time for its syllables, and a stanza break a pause", () => {
+    const span = (l: { start: number } | undefined, next: { start: number } | undefined): number => (next?.start ?? 0) - (l?.start ?? 0);
+    // a long line takes longer than a short one
+    const { lines } = pacePlain("hi\nevery syllable in this longer line\nhi\nhi", 120_000);
+    expect(span(lines[1], lines[2])).toBeGreaterThan(2 * span(lines[0], lines[1]));
+    // a blank row between stanzas leaves a gap as long as an average line
+    const flat = pacePlain("one two\nthree four\nfive six", 120_000).lines;
+    const stanzas = pacePlain("one two\n\nthree four\nfive six", 120_000).lines;
+    expect(span(stanzas[0], stanzas[1])).toBeCloseTo(2 * span(stanzas[1], stanzas[2]), 6);
+    expect(span(flat[0], flat[1])).toBeCloseTo(span(flat[1], flat[2]), 6);
+  });
+
+  it("bounds the intro and the outro, and gives them up when the lines need the room", () => {
+    const long = pacePlain("a\nb", 600_000).lines;
+    expect(long[0]?.start).toBe(PLAIN_INTRO.maxMs);
+    expect(long[1]?.end).toBe(600_000 - PLAIN_OUTRO.maxMs);
+    const song = pacePlain("a\nb", 200_000).lines;
+    expect(song[0]?.start).toBeCloseTo(200_000 * PLAIN_INTRO.share, 6);
+    const crowded = pacePlain(Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n"), 10 * PLAIN_MIN_LINE_MS + 2000).lines;
+    expect(crowded[0]?.start).toBe(0);
+    expect(crowded[9]?.end).toBe(10 * PLAIN_MIN_LINE_MS + 2000);
   });
 
   it("uses a fixed pace when the duration is unknown", () => {

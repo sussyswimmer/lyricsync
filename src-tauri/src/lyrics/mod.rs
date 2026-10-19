@@ -65,6 +65,12 @@ impl std::fmt::Display for Failure {
 #[async_trait]
 pub trait Provider: Send + Sync {
     async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure>;
+    /// A synced version of a song `lookup` found only plain text for, from a broader search; None
+    /// when there is none. Plain text can only be paced by guesswork, which drifts from the singer,
+    /// so the service asks this quietly right after a plain-only answer, while the plain text shows.
+    async fn synced(&self, _track: &Track) -> Result<Option<Lyrics>, Failure> {
+        Ok(None)
+    }
 }
 pub fn empty(key: &str, status: LyricsStatus) -> Lyrics {
     Lyrics {
@@ -121,7 +127,8 @@ const RETRY_BACKOFF: [Duration; 3] = [
 enum FollowUp {
     /// The lookup failed on something transient.
     Retry,
-    /// The answer is a plain-only hit due for a recheck (`cache::stale`), showing meanwhile.
+    /// The answer is plain text only, showing meanwhile: just looked up, or a cached answer due for
+    /// a recheck (`cache::stale`). A synced version replaces it live.
     Recheck(Lyrics),
 }
 pub struct Service {
@@ -215,7 +222,9 @@ impl Service {
                         None
                     } else if transient {
                         Some(FollowUp::Retry)
-                    } else if from_cache && cache::stale(&result, saved_at, now_seconds()) {
+                    } else if result.status == LyricsStatus::PlainOnly
+                        && (!from_cache || cache::stale(&result, saved_at, now_seconds()))
+                    {
                         Some(FollowUp::Recheck(result.clone()))
                     } else {
                         None
@@ -253,7 +262,12 @@ impl Service {
             }
             let failure = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
                 Ok(Ok(result)) => {
+                    let plain = (result.status == LyricsStatus::PlainOnly).then(|| result.clone());
                     self.settle(track, token, result).await;
+                    // plain text only: a synced version is worth one more ask
+                    if let Some(plain) = plain {
+                        self.recheck(track, token, plain).await;
+                    }
                     return;
                 }
                 Ok(Err(failure)) => failure,
@@ -265,12 +279,13 @@ impl Service {
             }
         }
     }
-    /// Asks LRCLIB once whether a plain-only song has synced lyrics now, while the plain text
-    /// shows. Synced lyrics replace it live (from unsynced to word highlight); any other answer
-    /// keeps it and starts its 30 days again; a failure leaves it due, for the next play.
+    /// Asks LRCLIB once for a synced version of a plain-only song (`Provider::synced`), while the
+    /// plain text shows. Synced lyrics replace it live (from unsynced to word highlight); none keeps
+    /// the plain text and starts its 30 days again; a failure leaves it due, for the next play.
     async fn recheck(&self, track: &Track, token: u64, plain: Lyrics) {
-        let result = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
-            Ok(Ok(result)) => result,
+        let result = match tokio::time::timeout(DEADLINE, self.fetch_synced(track)).await {
+            Ok(Ok(Some(result))) => result,
+            Ok(Ok(None)) => plain.clone(),
             Ok(Err(failure)) => {
                 applog!("lyrics recheck failed: {failure}");
                 return;
@@ -384,6 +399,27 @@ impl Service {
             ));
         }
         Ok(result)
+    }
+    /// `fetch` for `Provider::synced`: in a slot, for the current track only, a synced answer or none.
+    async fn fetch_synced(&self, track: &Track) -> Result<Option<Lyrics>, Failure> {
+        let skipped = || Failure::permanent("skipped: another track started");
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let _slot = self
+            .slots
+            .acquire()
+            .await
+            .map_err(|e| Failure::permanent(e.to_string()))?;
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let found = self.provider.synced(track).await?;
+        Ok(found.filter(|lyrics| {
+            lyrics.track_key == track.key
+                && lyrics.status == LyricsStatus::Found
+                && cache::cacheable(lyrics)
+        }))
     }
     fn current(&self, key: &str) -> bool {
         self.state

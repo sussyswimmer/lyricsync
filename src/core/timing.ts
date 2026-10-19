@@ -12,6 +12,19 @@ export const MAX_WORD_MS = 1600;
 const WEIGHT_FLOOR = 0.5;
 /** Pace for plain lyrics when the track duration is unknown. */
 export const PLAIN_LINE_MS = 4000;
+/**
+ * Plain lyrics: singing rarely starts on the first beat, so the first line waits this share of the
+ * song (within these bounds) for its intro...
+ */
+export const PLAIN_INTRO = { share: 0.06, minMs: 2000, maxMs: 14_000 } as const;
+/** ...and the last line ends this share before the song does, for its outro. */
+export const PLAIN_OUTRO = { share: 0.07, minMs: 3000, maxMs: 18_000 } as const;
+/** Every plain line keeps at least this long: a short song with many lines gives up its intro and outro first. */
+export const PLAIN_MIN_LINE_MS = 1200;
+/** A plain line takes as long as its syllables, plus this many more for the breath around it... */
+const PLAIN_BREATH = 3;
+/** ...and a blank row between stanzas as long as an average line (the band plays on). */
+const PLAIN_STANZA_GAP = 1;
 /** A line with no word timing fills with the highlight within this long of its start, ms... */
 export const LINE_FILL_MS = 400;
 /** ...each word in this long... */
@@ -113,15 +126,51 @@ export function timeWords(units: readonly string[], start: number, end: number):
   return layout(units, durations.map((d) => Math.min(d, MAX_WORD_MS)), start, end);
 }
 
-/** Plain lyrics with no timestamps: lines paced evenly across the track, flagged unsynced. */
+/**
+ * Plain lyrics with no timestamps, paced as a singer would roughly take them: after an intro and
+ * before an outro (PLAIN_INTRO, PLAIN_OUTRO), each line for as long as its syllables plus a breath,
+ * and a pause where a blank row ends a stanza. Flagged unsynced: it is a guess, which drifts from the
+ * singer, so the renderer shows it calmly, with no word highlight and its neighbors easy to read.
+ */
 export function pacePlain(plain: string, durationMs: number): Timeline {
-  const texts = plain.split(/\r\n|\r|\n/u).map(normalizeSpace).filter((t) => t !== "");
-  const span = isKnownDuration(durationMs) ? durationMs : texts.length * PLAIN_LINE_MS;
-  const slot = texts.length > 0 ? span / texts.length : 0;
-  const lines = texts.map((text, i): Line => {
-    const start = i * slot;
-    const end = i === texts.length - 1 ? span : Math.max(start, start + slot - LINE_GAP_MS);
-    return { start, end, text, words: timeWords(splitWords(text), start, end), estimated: true };
+  // the lines, each with whether a blank row (a stanza break) comes before it
+  const items: { text: string; afterBreak: boolean }[] = [];
+  let blank = false;
+  for (const row of plain.split(/\r\n|\r|\n/u).map(normalizeSpace)) {
+    if (row === "") {
+      blank = items.length > 0;
+      continue;
+    }
+    items.push({ text: row, afterBreak: blank });
+    blank = false;
+  }
+  const n = items.length;
+  if (n === 0) return { lines: [], unsynced: true };
+  const known = isKnownDuration(durationMs);
+  const span = known ? durationMs : n * PLAIN_LINE_MS;
+  const within = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+  let intro = known ? within(span * PLAIN_INTRO.share, PLAIN_INTRO.minMs, PLAIN_INTRO.maxMs) : 0;
+  let outro = known ? within(span * PLAIN_OUTRO.share, PLAIN_OUTRO.minMs, PLAIN_OUTRO.maxMs) : 0;
+  if (span - intro - outro < n * PLAIN_MIN_LINE_MS) {
+    intro = 0;
+    outro = 0;
+  }
+  const weights = items.map((it) => splitWords(it.text).reduce((sum, w) => sum + syllables(w), 0) + PLAIN_BREATH);
+  const average = weights.reduce((a, b) => a + b, 0) / n;
+  const gaps = items.map((it, i) => (i > 0 && it.afterBreak ? average * PLAIN_STANZA_GAP : 0));
+  const total = weights.reduce((a, b) => a + b, 0) + gaps.reduce((a, b) => a + b, 0);
+  const unit = (span - intro - outro) / total;
+  const starts: number[] = [];
+  let at = intro;
+  items.forEach((_, i) => {
+    at += (gaps[i] ?? 0) * unit;
+    starts.push(at);
+    at += (weights[i] ?? 0) * unit;
+  });
+  const lines = items.map((it, i): Line => {
+    const start = starts[i] ?? 0;
+    const end = i === n - 1 ? span - outro : Math.max(start, (starts[i + 1] ?? span) - LINE_GAP_MS);
+    return { start, end, text: it.text, words: timeWords(splitWords(it.text), start, end), estimated: true };
   });
   return { lines, unsynced: true };
 }

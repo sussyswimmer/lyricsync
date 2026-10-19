@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WordDecor } from "../src/core/flair";
 import { parseLrc, type Line, type Word } from "../src/core/lrc";
-import { lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
+import { CALM_NEAR_LEVEL, lineLevel, placeSlots, stackOffsets } from "../src/overlay/modes/drift";
 import { bloomLayers, bloomShadow, dotBloom } from "../src/overlay/motion/bloom";
 import { clamp01, sineOut, sineOutInverse, spline, type Key } from "../src/overlay/motion/curve";
 import { PICTURE_EM, PICTURE_MS } from "../src/overlay/motion/decor";
@@ -2070,5 +2070,16 @@ describe("the list's layout", () => {
     expect(lineLevel(-1)).toBeCloseTo(0.58, 12);
     expect(lineLevel(2)).toBeLessThan(lineLevel(1));
     expect(lineLevel(3.5)).toBe(0);
+  });
+
+  it("keeps untimed lyrics' neighbors readable: nearly as bright next to the focus, fading out by the reach", () => {
+    expect(lineLevel(0, true)).toBe(1);
+    expect(lineLevel(1, true)).toBeCloseTo(CALM_NEAR_LEVEL, 12);
+    expect(lineLevel(-1, true)).toBe(lineLevel(1, true));
+    expect(lineLevel(2, true)).toBeGreaterThan(0.55);
+    expect(lineLevel(2, true)).toBeGreaterThan(lineLevel(1) + 0.1);
+    expect(lineLevel(3, true)).toBeLessThan(lineLevel(2, true));
+    expect(lineLevel(3.49, true)).toBeLessThan(0.02);
+    expect(lineLevel(3.5, true)).toBe(0);
   });
 });

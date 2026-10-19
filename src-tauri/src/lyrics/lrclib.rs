@@ -84,6 +84,12 @@ pub fn records(values: Vec<serde_json::Value>) -> Vec<Record> {
         .collect()
 }
 impl Record {
+    /// Synced lyrics with something in them.
+    pub fn has_synced(&self) -> bool {
+        self.synced_lyrics
+            .as_ref()
+            .is_some_and(|s| !s.trim().is_empty())
+    }
     pub fn into_lyrics(&self, key: &str) -> Lyrics {
         if self.instrumental {
             return empty(key, LyricsStatus::Instrumental);
@@ -283,6 +289,48 @@ impl Provider for LrcLib {
             }
         }
         Ok(empty(&track.key, LyricsStatus::NotFound))
+    }
+    /// A synced version of a song `lookup` found plain text for: the exact record (it may have
+    /// gained timing since), the record without the album, then every record a search finds, under
+    /// the title and under its plain form, any one with synced lyrics `matching` accepts (another
+    /// album or a length a few seconds off). None when LRCLIB has none; the last search's failure
+    /// when it couldn't say.
+    async fn synced(&self, track: &Track) -> Result<Option<Lyrics>, Failure> {
+        if !track.duration_ms.is_finite()
+            || track.duration_ms < MIN_DURATION_MS
+            || track.title.trim().is_empty()
+            || track.artist.trim().is_empty()
+        {
+            return Ok(None);
+        }
+        let mut albums = vec![true];
+        if !track.album.trim().is_empty() {
+            albums.push(false);
+        }
+        for album in albums {
+            if let Some(record) = self.exact(track, album).await {
+                if record.has_synced() && !record.instrumental {
+                    return Ok(Some(record.into_lyrics(&track.key)));
+                }
+            }
+        }
+        let mut titles = vec![track.title.clone()];
+        let retry = matching::retry_title(&track.title);
+        if !retry.is_empty() && retry != track.title {
+            titles.push(retry);
+        }
+        let mut failure = None;
+        for title in titles {
+            match self.search(track, &title).await {
+                Ok(records) => {
+                    if let Some(record) = matching::best_synced(track, &records) {
+                        return Ok(Some(record.into_lyrics(&track.key)));
+                    }
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+        failure.map_or(Ok(None), Err)
     }
 }
 #[cfg(test)]

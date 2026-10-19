@@ -440,3 +440,22 @@ Decisions you can reverse:
 Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §12 has the checks, and §7 now notes that the CPU runs include Effects mode.
 Needs from Codex: nothing.
 Contract: v5 (`effectsMode`).
+
+
+## 2026-10-19 · Claude Code · Lyrics without timing: a synced version looked for, better pacing, a readable sheet
+Done: Maxwell again: "when the singer speeds up and slows down the lyrics can't catch up because they stay on a fixed tempo".
+- **What still had a fixed tempo:** since the line-level lighting above, a song with line timestamps lights each line as the singer starts it, at whatever pace they sing. A live probe of LRCLIB for 8 popular songs found 20 records each, all synced, none plain-only, so that covers most songs. What was left: songs whose closest LRCLIB match is plain text, which `pacePlain` spread evenly from 0:00 to the end, so every line drifted as the singer's pace changed.
+- **A synced version, looked for at once** (Rust, `lyrics/`):
+  - `Provider::synced` (by default none) asks LRCLIB for a synced version of the same song: the exact record (it may have gained timing since), the exact lookup without the album, then the records a search finds under the title and under its `retry_title` form. `matching::best_synced` ranks only the records with synced lyrics that aren't instrumental, by the usual rules, so another album, or a length a duration band further off (still within 8 s), wins over plain text.
+  - The service asks it as the quiet follow-up right after any plain-only answer for the playing track. Before, only a cached plain-only answer older than 30 days was rechecked, and with the same lookup that had found plain text. A synced answer replaces the plain text live and is cached. With none, the plain text stays and its 30 days start again; a failure leaves it due for the next play.
+  - Cache entries are format version 2. A version 1 plain-only entry, saved before this follow-up existed, is served and due at once, so songs already played get the search at their next play.
+- **Better pacing when there is no timing at all** (`pacePlain`): the first line waits for an intro (6% of the song, 2 to 14 s) and the last ends before an outro (7%, 3 to 18 s). Each line takes time by its syllables plus a breath, and a blank row between stanzas is a pause as long as an average line. A short song with many lines gives up its intro and outro first, so every line keeps at least 1.2 s.
+- **A readable sheet** (the calm list unsynced lyrics get): the guess can still be a line or two off, so the two lines each side of the current one are drawn sharp in the lyric color, the next ones at 82% fading gently (`lineLevel(off, calm)`, `CALM_NEAR_LEVEL`, `CALM_SHARP_LINES`), instead of dimmed and blurred like a timed song's neighbors.
+Tests: 1190 vitest in 33 files. New: `pacePlain`'s intro, outro, syllable weights and stanza pauses; the calm `lineLevel`; unsynced near rows drawn sharp. Coverage is 98.6% of statements. 276 Rust tests (1 ignored). New: `best_synced`; `synced` finding a version by search or the exact record that gained timing, finding none, a failed search as a transient error, nothing asked for an untitled track; a plain answer replaced live; no synced version, asked about once; only the playing track asked about; the version 1 cache entry. `pnpm build`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- A synced version from another album or edition, or with a length up to 8 s off, is preferred to the exact match's plain text.
+- The plain pacing constants in `core/timing.ts`: `PLAIN_INTRO`, `PLAIN_OUTRO`, `PLAIN_MIN_LINE_MS`, and the breath and stanza weights.
+- Two sharp neighbors each side for unsynced lyrics.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §11 step 3 has the checks.
+Needs from Codex: nothing.
+Contract: unchanged (v5).

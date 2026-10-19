@@ -410,3 +410,92 @@ async fn an_unusable_exact_answer_falls_through_to_search() {
         assert!(requests.lock().unwrap()[2].starts_with("GET /api/search?"));
     }
 }
+/// The demo song's record with plain text only.
+fn plain_record() -> Record {
+    Record {
+        synced_lyrics: None,
+        ..record()
+    }
+}
+#[tokio::test]
+async fn a_synced_version_is_found_by_search_when_the_exact_records_are_plain() {
+    // Another album's record, 3 s longer, has timing: it beats plain text in a closer tier.
+    let other_album = Record {
+        id: 7,
+        album_name: "Demo Deluxe".into(),
+        duration: 183.0,
+        ..record()
+    };
+    let (client, requests, server) = server(vec![
+        (200, serde_json::to_string(&plain_record()).unwrap()),
+        (200, serde_json::to_string(&plain_record()).unwrap()),
+        (
+            200,
+            serde_json::to_string(&vec![plain_record(), other_album]).unwrap(),
+        ),
+    ])
+    .await;
+    let found = client.synced(&track()).await.unwrap().unwrap();
+    assert_eq!(found.status, LyricsStatus::Found);
+    assert_eq!(found.track_key, track().key);
+    server.await.unwrap();
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].contains("album_name="));
+    assert!(requests[1].starts_with("GET /api/get?") && !requests[1].contains("album_name="));
+    assert!(requests[2].starts_with("GET /api/search?"));
+}
+#[tokio::test]
+async fn the_exact_record_answers_when_it_gained_timing() {
+    let (client, requests, server) =
+        server(vec![(200, serde_json::to_string(&record()).unwrap())]).await;
+    assert_eq!(
+        client.synced(&track()).await.unwrap().unwrap().status,
+        LyricsStatus::Found
+    );
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+#[tokio::test]
+async fn no_synced_version_anywhere_is_none_and_a_failed_search_is_the_answer() {
+    let mut decorated = track();
+    decorated.title = "Paper Sun (Radio Edit)".into();
+    // Plain everywhere, under both titles; an instrumental record doesn't count as synced.
+    let instrumental = Record {
+        id: 9,
+        instrumental: true,
+        ..record()
+    };
+    let (client, requests, server) = server(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (
+            200,
+            serde_json::to_string(&vec![plain_record(), instrumental]).unwrap(),
+        ),
+        (200, serde_json::to_string(&vec![plain_record()]).unwrap()),
+    ])
+    .await;
+    assert_eq!(client.synced(&decorated).await.unwrap(), None);
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    // A search that never answers is reported, so the plain text stays due for another ask.
+    let mut no_album = track();
+    no_album.album = String::new();
+    let busy: Vec<(u16, String)> = std::iter::once((404, "{}".to_string()))
+        .chain((0..SEARCH_ATTEMPTS).map(|_| (503, "{}".to_string())))
+        .collect();
+    let (client, _, server) = self::server(busy).await;
+    let failure = client.synced(&no_album).await.unwrap_err();
+    assert!(failure.transient);
+    server.await.unwrap();
+}
+#[tokio::test]
+async fn nothing_is_asked_for_a_track_lrclib_cannot_match() {
+    let (client, requests, server) = server(vec![]).await;
+    let mut untitled = track();
+    untitled.title = " ".into();
+    assert_eq!(client.synced(&untitled).await.unwrap(), None);
+    server.await.unwrap();
+    assert!(requests.lock().unwrap().is_empty());
+}

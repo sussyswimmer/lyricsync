@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Lyrics, LyricsStatus } from "../contract/contract";
 import { parseLrc } from "../src/core/lrc";
-import { pacePlain } from "../src/core/timing";
+import { pacePlain, PLAIN_INTRO, PLAIN_LINE_MS, PLAIN_OUTRO } from "../src/core/timing";
 import type { StageView } from "../src/overlay/stage";
 import { sameLyrics, viewFor } from "../src/overlay/view";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
@@ -163,12 +163,14 @@ describe("viewFor: found", () => {
 });
 
 describe("viewFor: plain-only", () => {
-  it("paces plain lines evenly across the track, unsynced", () => {
+  it("paces plain lines across the track after its intro, unsynced", () => {
     const view = viewFor(lyrics("plain-only", { plain: PLAIN }), 30_000);
     expect(view).toEqual({ kind: "lyrics", timeline: pacePlain(PLAIN, 30_000) });
     if (view.kind !== "lyrics") return;
-    expect(view.timeline.lines.map((l) => l.start)).toEqual([0, 10_000, 20_000]);
-    expect(view.timeline.lines[view.timeline.lines.length - 1]?.end).toBe(30_000);
+    expect(view.timeline.unsynced).toBe(true);
+    expect(view.timeline.lines.map((l) => l.text)).toEqual(["First placeholder line", "Second placeholder line", "Third one"]);
+    expect(view.timeline.lines[0]?.start).toBe(PLAIN_INTRO.minMs);
+    expect(view.timeline.lines[view.timeline.lines.length - 1]?.end).toBe(30_000 - PLAIN_OUTRO.minMs);
   });
 
   it("never treats synced text as timed when the status says plain-only", () => {
@@ -177,9 +179,11 @@ describe("viewFor: plain-only", () => {
     expect(viewFor(lyrics("plain-only", { synced: neonMonsoon }), DURATION)).toEqual({ kind: "not-found" });
   });
 
-  it("paces at a fixed rate when the duration is unknown", () => {
+  it("gives each line PLAIN_LINE_MS on average when the duration is unknown", () => {
     const view = viewFor(lyrics("plain-only", { plain: PLAIN }), 0);
-    expect(view.kind === "lyrics" && view.timeline.lines.map((l) => l.start)).toEqual([0, 4000, 8000]);
+    if (view.kind !== "lyrics") throw new Error("no lyrics");
+    expect(view.timeline.lines[0]?.start).toBe(0);
+    expect(view.timeline.lines[view.timeline.lines.length - 1]?.end).toBe(3 * PLAIN_LINE_MS);
   });
 
   it("is not-found with no plain text", () => {

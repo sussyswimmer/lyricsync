@@ -159,7 +159,7 @@ Both OSes, with the installed app and a few dozen songs of different kinds:
 
 1. Each song gets a style and a font that suit it: dense, fast songs a list (Stack), slow songs with held notes Arc or Drift, short shouted hooks Lens. The **Picked for this song** card in Settings names the same style and font the desktop shows, and its reason reads sensibly.
 2. A song never changes style or font while it plays, except once, at a line change or a break, when its cover arrives late or synced lyrics replace plain ones.
-3. Plain (unsynced) lyrics always get the calm list. Songs in Vietnamese get a font with Vietnamese letters; Japanese, Chinese and Korean songs use the system's fonts for those characters.
+3. Plain (unsynced) lyrics always get the calm list, its current line flanked by two sharp, bright lines each side. The first line waits for the song's intro, long lines stay up longer than short ones, and there's a pause between verses. A song whose closest LRCLIB match is plain text but which has a synced version under another album switches to word highlight within a few seconds of starting. Songs in Vietnamese get a font with Vietnamese letters; Japanese, Chinese and Korean songs use the system's fonts for those characters.
 4. Play a song again later in the same session: it looks exactly as before, from its first line.
 5. The menu bar / tray menu's **Effects ▸** Calm, Balanced and Lively set the Effects slider in Settings, and its check follows the slider.
 
