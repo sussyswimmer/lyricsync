@@ -38,6 +38,21 @@ export const PACE_WINDOW = 4;
 const PACE_MIN_LINES = 3;
 /** No song is sung slower or faster than this, in beats a second. */
 const PACE_RANGE = [1.2, 16] as const;
+/**
+ * A line sung faster than the time it has: the spare time goes to held notes, up to this share of the
+ * line's paced length plus HOLD_FREE_MS, and a little (HOLD_PAST) of any more; the rest is the pause
+ * before the next line. Singers drag words out more often than they rest, but a long break after a
+ * line is the band, not a held note.
+ */
+const HOLD_FREE_SHARE = 0.75;
+const HOLD_FREE_MS = 600;
+const HOLD_PAST = 0.15;
+/** Of the held time, this share slows every word by its beats (a held note anywhere slows the line)... */
+const HOLD_STRETCH = 0.4;
+/** ...and the rest goes to the words most likely held: holdWeight. */
+export const HELD_WORD_MS = 4000;
+/** Sung sounds singers stretch: oh, ooh, ah, whoa, yeah, ay, mm, na, la. */
+const HELD_VOCABLE = /^(?:o+h*|a+h+|who+a+h*|wo+a+h*|ye+a+h*|a+y+|m+|na+|la+)$/u;
 
 /** A lyric sheet ready for the renderer. */
 export interface Timeline {
@@ -211,20 +226,56 @@ export function singingPace(lines: readonly { start: number; next: number; beats
 }
 
 /**
- * Word timing for a line with no word tags, sung at `pace` beats a second (singingPace): its words
- * take as long as their beats do at that pace, or the whole line when it has less room (the singer
- * hurried), split by weight with the last word held (timeWords). When the line has room left, the
- * last word holds on into it for up to LAST_WORD_HOLD_MS more, the way singers hold a line's end; the
- * rest is the pause before the next line, so the highlight never crawls through it. Without a pace,
- * the words fill the line.
+ * How likely a word is to be held, from its text alone (0: not more than any other): a line's last
+ * word most, then a word that ends a phrase (a comma, a dash, an ellipsis), one spelled out long
+ * ("loooove", "ohhh", "love~"), a sung vocable (oh, yeah, whoa) and a word ending on an open vowel or
+ * "-ing", which is where singers stretch.
+ */
+export function holdWeight(unit: string, last: boolean): number {
+  const text = unit.trim();
+  const letters = text.normalize("NFD").replace(/[^\p{L}]/gu, "").toLowerCase();
+  let w = last ? 3 : 0;
+  if (!last && /(?:[,;:…—–-]|\.\.\.)$/u.test(text)) w += 1.5;
+  if (/(\p{L})\1{2,}/u.test(letters) || text.includes("~")) w += 2.5;
+  if (HELD_VOCABLE.test(letters)) w += 1.2;
+  // an open vowel (go, you, away, free), a stressed short word (me, we, she) or -ing; not a silent e (time, love)
+  if (/(?:[aiouy]|[aeiou]e|ing)$/u.test(letters) || /^(?:me|be|we|he|she)$/u.test(letters)) w += 0.4;
+  return w;
+}
+
+/** How much of a line's `extra` ms (past its paced length `base`) goes to held notes rather than the pause after it. */
+export function holdBudget(base: number, extra: number): number {
+  if (extra <= 0) return 0;
+  const free = HOLD_FREE_SHARE * base + HOLD_FREE_MS;
+  return extra <= free ? extra : free + HOLD_PAST * (extra - free);
+}
+
+/**
+ * Word timing for a line with no word tags, sung at `pace` beats a second (singingPace). A line with
+ * less room than its beats take at that pace (the singer hurried) fills it, split by weight with the
+ * last word held (timeWords); so does a line without a pace. A line with room to spare is sung at the
+ * pace, and the spare time the singer most likely spends dragging words out (holdBudget) goes to the
+ * words: HOLD_STRETCH of it slows every word by its beats, the rest goes by holdWeight, mostly to the
+ * last word and to words that end a phrase or are spelled out long. So the highlight waits on a held
+ * note instead of running on ahead of the singer, and what's left is the pause before the next line.
+ * A word holds HELD_WORD_MS at most.
  */
 export function paceWords(units: readonly string[], start: number, end: number, pace: number): Word[] {
   const slot = Math.max(0, end - start);
-  const sung = Number.isFinite(pace) && pace > 0 ? Math.min(slot, (beatsOf(units) * 1000) / pace) : slot;
-  const words = timeWords(units, start, start + sung);
-  const last = words[words.length - 1];
-  if (last && sung < slot) last.end = Math.min(end, last.end + LAST_WORD_HOLD_MS, Math.max(last.end, last.start + MAX_WORD_MS));
-  return words;
+  const base = Number.isFinite(pace) && pace > 0 ? (beatsOf(units) * 1000) / pace : slot;
+  if (units.length === 0 || base >= slot) return timeWords(units, start, end);
+  const budget = holdBudget(base, slot - base);
+  const weights = units.map(weight);
+  const beats = weights.reduce((a, b) => a + b, 0);
+  const last = units.length - 1;
+  const holds = units.map((u, i) => holdWeight(u, i === last));
+  const held = holds.reduce((a, b) => a + b, 0);
+  const durations = units.map((_, i) => {
+    const sung = (base * (weights[i] ?? 0)) / beats;
+    const hold = budget * (HOLD_STRETCH * ((weights[i] ?? 0) / beats) + (1 - HOLD_STRETCH) * ((holds[i] ?? 0) / held));
+    return Math.max(sung, Math.min(sung + hold, HELD_WORD_MS));
+  });
+  return layout(units, durations, start, end);
 }
 
 /** Index of the line playing at `t` (the last one started), or -1 before the first line. */
