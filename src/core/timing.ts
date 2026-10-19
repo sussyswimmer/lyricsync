@@ -187,13 +187,13 @@ export function beatsOf(units: readonly string[]): number {
   return units.reduce((sum, unit) => sum + weight(unit), 0);
 }
 
-/** The value `q` of the way up sorted `values` (linear between neighbors). */
+/** The value `q` (0..1) of the way up `values`, linear between neighbors. `values` is never empty. */
 function quantile(values: readonly number[], q: number): number {
   const sorted = [...values].sort((a, b) => a - b);
-  const at = Math.min(1, Math.max(0, q)) * (sorted.length - 1);
+  const value = (i: number): number => sorted[Math.min(i, sorted.length - 1)] as number;
+  const at = q * (sorted.length - 1);
   const lo = Math.floor(at);
-  const below = sorted[lo] ?? NaN;
-  return below + ((sorted[lo + 1] ?? below) - below) * (at - lo);
+  return value(lo) + (value(lo + 1) - value(lo)) * (at - lo);
 }
 
 /**
