@@ -176,7 +176,7 @@ async fn timeout_emits_error_releases_flight_and_does_not_cache_failure() {
     let receiver = service.start(track(), true);
     assert_eq!(events.recv().await.unwrap().status, LyricsStatus::Loading);
     tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_secs(6)).await;
+    tokio::time::advance(DEADLINE).await;
     assert_eq!(
         wait(receiver, &track().key).await.status,
         LyricsStatus::Error
@@ -368,7 +368,7 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
     // ...then the user skips twice, the second time before the next song's lookup even starts.
     let passed = service.start(other(), false);
     let playing = service.start(third.clone(), false);
-    // The song passed over doesn't even wait for a slot (well within its six seconds)...
+    // The song passed over doesn't even wait for a slot (well within its deadline)...
     let passed = tokio::time::timeout(Duration::from_secs(5), wait(passed, &other().key)).await;
     assert_eq!(passed.unwrap().status, LyricsStatus::Error);
     // ...and the queued one gives its slot up without a request.

@@ -8,11 +8,14 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// LRCLIB answers HTTP 400 for a duration under one second.
 const MIN_DURATION_MS: f64 = 1000.0;
-/// The wait before the one retry when the server names none, or there was no connection.
+/// The wait before a retry when the server names none, or there was no connection.
 const RETRY_WAIT: Duration = Duration::from_secs(1);
-/// A longer `Retry-After` isn't waited out inside a lookup, which has six seconds in all; the
+/// A longer `Retry-After` isn't waited out inside a lookup (`super::DEADLINE` in all); the
 /// service's quiet retries come back later instead.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
+/// How many times a search is asked before its failure is the lookup's. LRCLIB's search answers
+/// "busy" (503, `retry-after: 1`) about half the time, and a second later it usually answers.
+const SEARCH_ATTEMPTS: u32 = 4;
 /// "Not now": LRCLIB answers 503 when it's busy and 429 when it rate-limits, both with
 /// `retry-after: 1`; a gateway answers 502 or 504 when it can't reach LRCLIB.
 fn busy(status: StatusCode) -> bool {
@@ -128,19 +131,20 @@ impl LrcLib {
             base,
         })
     }
-    /// Asks once more, after `Retry-After`, when the answer means "not now" (`busy`) or there was
-    /// no connection. The service's deadline bounds the whole lookup, waits included.
+    /// Asks up to `attempts` times, after `Retry-After`, while the answer means "not now" (`busy`)
+    /// or there is no connection. The service's deadline bounds the whole lookup, waits included.
     async fn json<T: DeserializeOwned>(
         &self,
         endpoint: &str,
         parameters: &[(&str, String)],
         allow_404: bool,
+        attempts: u32,
     ) -> Result<Option<T>, Failure> {
         let url = self
             .base
             .join(endpoint)
             .map_err(|e| Failure::permanent(e.to_string()))?;
-        let mut retried = false;
+        let mut asked = 1;
         let mut response = loop {
             let request = self
                 .client
@@ -151,7 +155,7 @@ impl LrcLib {
                 Ok(response) if busy(response.status()) => {
                     let header = response.headers().get(reqwest::header::RETRY_AFTER);
                     match retry_wait(header.and_then(|value| value.to_str().ok())) {
-                        Some(wait) if !retried => wait,
+                        Some(wait) if asked < attempts => wait,
                         _ => {
                             return Err(Failure::transient(format!(
                                 "LRCLIB returned HTTP {}",
@@ -161,10 +165,12 @@ impl LrcLib {
                     }
                 }
                 Ok(response) => break response,
-                Err(error) if !retried && (error.is_connect() || error.is_timeout()) => RETRY_WAIT,
+                Err(error) if asked < attempts && (error.is_connect() || error.is_timeout()) => {
+                    RETRY_WAIT
+                }
                 Err(error) => return Err(Failure::transient(error.to_string())),
             };
-            retried = true;
+            asked += 1;
             tokio::time::sleep(wait).await;
         };
         let status = response.status();
@@ -213,9 +219,32 @@ impl LrcLib {
                 ("artist_name", track.artist.clone()),
             ],
             false,
+            SEARCH_ATTEMPTS,
         )
         .await
         .map(|values| records(values.unwrap_or_default()))
+    }
+    /// The record LRCLIB has for this title, artist and length (and, with `album`, album), when it
+    /// is one `matching` accepts. Anything else is a miss, a failed request included: LRCLIB
+    /// answers "busy" (503) to metadata it can't match exactly, such as an album or a length it has
+    /// differently, so the search still gets its turn, and the search's failures are the ones
+    /// reported. A busy answer isn't asked again, since it is how a miss looks.
+    async fn exact(&self, track: &Track, album: bool) -> Option<Record> {
+        let mut parameters = vec![
+            ("track_name", track.title.clone()),
+            ("artist_name", track.artist.clone()),
+        ];
+        if album {
+            parameters.push(("album_name", track.album.clone()));
+        }
+        parameters.push(("duration", (track.duration_ms / 1000.0).to_string()));
+        let value = self
+            .json::<serde_json::Value>("get", &parameters, true, 1)
+            .await
+            .ok()??;
+        let record: Record = serde_json::from_value(value).ok()?;
+        let usable = matching::best(track, std::slice::from_ref(&record)).is_some();
+        usable.then_some(record)
     }
 }
 #[async_trait]
@@ -232,22 +261,13 @@ impl Provider for LrcLib {
         {
             return Ok(empty(&track.key, LyricsStatus::NotFound));
         }
-        // An exact answer that isn't a usable record counts as a miss: search still gets its turn.
-        let exact: Option<Record> = self
-            .json::<serde_json::Value>(
-                "get",
-                &[
-                    ("track_name", track.title.clone()),
-                    ("artist_name", track.artist.clone()),
-                    ("album_name", track.album.clone()),
-                    ("duration", (track.duration_ms / 1000.0).to_string()),
-                ],
-                true,
-            )
-            .await?
-            .and_then(|value| serde_json::from_value(value).ok());
-        if let Some(record) = exact {
-            if matching::best(track, std::slice::from_ref(&record)).is_some() {
+        // The exact match, then the same without the album (a player's album name often differs
+        // from LRCLIB's: an edition, a remaster), then a search.
+        if let Some(record) = self.exact(track, true).await {
+            return Ok(record.into_lyrics(&track.key));
+        }
+        if !track.album.trim().is_empty() {
+            if let Some(record) = self.exact(track, false).await {
                 return Ok(record.into_lyrics(&track.key));
             }
         }

@@ -29,6 +29,12 @@ export interface Line {
   end: number;
   words: Word[];
   text: string;
+  /**
+   * Its words' times are a guess (no usable word tags: they are spread over the line by weight). The
+   * karaoke lights such a line as a whole (timing.ts karaokeWords) instead of sweeping it at the
+   * guessed pace, which drifts from the voice whenever the singer speeds up or slows down.
+   */
+  estimated?: boolean;
 }
 
 /** Span of the last line when the track duration is unknown. */
@@ -186,15 +192,15 @@ function syllableParts(word: Word, at: number, unit: string, marks: readonly Mar
  * tag). A closing tag only bounds the last word and is clamped to `end` anyway, so it isn't counted,
  * unless it is the line's only tag.
  */
-function wordsFor(entry: Entry, end: number): Word[] {
+function wordsFor(entry: Entry, end: number): { words: Word[]; estimated: boolean } {
   const { text, marks, shift, start } = entry;
   const times = marks.map((m) => m.time + shift);
   const near = (t: number): boolean => t >= start - TAG_SLACK_MS && t <= end + TAG_SLACK_MS;
   const forwards = times.every((t, i) => t >= (times[i - 1] ?? -Infinity));
   const counted = times.length > 1 && marks[marks.length - 1]?.index === text.length ? times.slice(0, -1) : times;
   const sane = forwards && counted.filter(near).length >= Math.ceil(counted.length / 2);
-  if (marks.length === 0 || !sane) return timeWords(splitWords(text), start, end);
-  return taggedWords(text, marks, times.map((t) => Math.min(end, Math.max(start, t))), start, end);
+  if (marks.length === 0 || !sane) return { words: timeWords(splitWords(text), start, end), estimated: true };
+  return { words: taggedWords(text, marks, times.map((t) => Math.min(end, Math.max(start, t))), start, end), estimated: false };
 }
 
 /**
@@ -241,7 +247,9 @@ export function parseLrc(raw: string, durationMs: number): Line[] {
     const next = kept[i + 1];
     const natural = next ? next.start - LINE_GAP_MS : Number.isFinite(limit) ? limit : entry.start + LAST_LINE_MS;
     const end = Math.max(entry.start, Math.min(natural, limit));
-    return { start: entry.start, end, text: entry.text, words: entry.text === "" ? [] : wordsFor(entry, end) };
+    if (entry.text === "") return { start: entry.start, end, text: entry.text, words: [] };
+    const { words, estimated } = wordsFor(entry, end);
+    return { start: entry.start, end, text: entry.text, words, ...(estimated ? { estimated } : {}) };
   });
 }
 

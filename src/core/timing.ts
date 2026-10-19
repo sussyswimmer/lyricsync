@@ -12,6 +12,12 @@ export const MAX_WORD_MS = 1600;
 const WEIGHT_FLOOR = 0.5;
 /** Pace for plain lyrics when the track duration is unknown. */
 export const PLAIN_LINE_MS = 4000;
+/** A line with no word timing fills with the highlight within this long of its start, ms... */
+export const LINE_FILL_MS = 400;
+/** ...each word in this long... */
+export const WORD_FILL_MS = 120;
+/** ...each starting at most this long after the one before. */
+const FILL_STAGGER_MS = 40;
 
 /** A lyric sheet ready for the renderer. */
 export interface Timeline {
@@ -115,9 +121,27 @@ export function pacePlain(plain: string, durationMs: number): Timeline {
   const lines = texts.map((text, i): Line => {
     const start = i * slot;
     const end = i === texts.length - 1 ? span : Math.max(start, start + slot - LINE_GAP_MS);
-    return { start, end, text, words: timeWords(splitWords(text), start, end) };
+    return { start, end, text, words: timeWords(splitWords(text), start, end), estimated: true };
   });
   return { lines, unsynced: true };
+}
+
+/**
+ * A line's words as the karaoke draws them. A line timed word by word keeps its words. A line whose
+ * word times are a guess (`Line.estimated`) lights as a whole: its words fill one after another within
+ * LINE_FILL_MS (at most half the line) of its start, each as one quick syllable, and each stays sung,
+ * risen and glowing, until the line ends. Nothing then moves at a pace the singer doesn't keep.
+ */
+export function karaokeWords(line: Line): Word[] {
+  if (line.estimated !== true || line.words.length === 0) return line.words;
+  const n = line.words.length;
+  const fill = Math.min(LINE_FILL_MS, Math.max(0, line.end - line.start) / 2);
+  const each = Math.min(WORD_FILL_MS, fill);
+  const step = n > 1 ? Math.min(FILL_STAGGER_MS, (fill - each) / (n - 1)) : 0;
+  return line.words.map((w, i) => {
+    const start = line.start + i * step;
+    return { text: w.text, start, end: Math.max(start + each, line.end), parts: [{ text: w.text, start, end: start + each }] };
+  });
 }
 
 /** Index of the line playing at `t` (the last one started), or -1 before the first line. */

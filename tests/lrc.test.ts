@@ -80,6 +80,19 @@ describe("parseLrc: enhanced fixture", () => {
   });
 });
 
+describe("parseLrc: guessed word times", () => {
+  it("flags a line whose word times are a guess, and not one its tags time", () => {
+    const lines = parseLrc("[00:01.00]no tags here\n[00:03.00]\n[00:05.00]<00:05.00>with <00:05.50>tags<00:06.00>", 10_000);
+    expect(lines.map((l) => [l.text, l.estimated])).toEqual([
+      ["no tags here", true],
+      ["", undefined],
+      ["with tags", undefined],
+    ]);
+    // tags that can't be trusted are thrown away, and the line's times are guessed
+    expect(parseLrc("[00:05.00]<00:09.00>back <00:01.00>wards", 20_000)[0]?.estimated).toBe(true);
+  });
+});
+
 describe("parseLrc: timestamps", () => {
   it("accepts every fraction width, a colon fraction, short and long minutes", () => {
     const lines = parseLrc(

@@ -879,6 +879,27 @@ describe("a word's motion", () => {
     expect(rise(params({ energy: 1, effects: 100 }))).toBeGreaterThan(rise(HOUSE) * 1.4);
   });
 
+  it("lit in one quick syllable of a long word (a line lit as a whole), it hops as fast as the syllable lights", () => {
+    const shape = shapeOf("bridge", [{ text: "bridge" }]);
+    const quick = { start: 5000, end: 8000, parts: [{ text: "bridge", start: 5000, end: 5120 }] };
+    const plan = planWord(quick, "bridge", shape, BL);
+    // the window is open by the syllable's end, and stays open
+    const win = plan.window?.frames ?? [];
+    expect(win.map((f) => f.offset)).toEqual([0, 0.04, 1]);
+    expect(xOfFrame(win[0])).toBeCloseTo(closedWindow(shape), 2);
+    expect(win.slice(1).map(xOfFrame)).toEqual([0, 0]);
+    // every letter hops in those 120 ms, exactly as in a word that lasts them
+    const brief = planWord({ start: 5000, end: 5120 }, "bridge", shape, BL);
+    plan.letters.forEach((track, j) => {
+      expect(track?.t0).toBeLessThan(5120);
+      expect(track?.t0).toBeCloseTo(brief.letters[j]?.t0 ?? NaN, 3);
+      expect(track?.frames).toEqual(brief.letters[j]?.frames);
+    });
+    // while the bloom and the pop last the whole word
+    expect(plan.glow?.duration ?? 0).toBeGreaterThan(2900);
+    expect((plan.pop?.t0 ?? 0) + (plan.pop?.duration ?? 0)).toBeGreaterThan(8000);
+  });
+
   it("wipes its lit window open while the contents slide back the same distance", () => {
     const shape = shapeOf("bridge", [{ text: "bridge" }]);
     const plan = planWord({ start: 5800, end: 6150 }, "bridge", shape, BL);

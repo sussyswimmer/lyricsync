@@ -369,3 +369,32 @@ Tests: 1123 vitest (31 files; new: ink measuring, the wipe past overhangs, the b
 Not verified: on a real Mac. `docs/ACCEPTANCE.md` §10 step 8 has the check.
 Needs from Codex: nothing.
 Contract: unchanged (v4).
+
+## 2026-10-19 · Claude Code · Lines lit as a whole, lookups that survive a busy LRCLIB, colors that look like the cover
+Done: three reports from Maxwell after the first real use.
+- **"When the singer speeds up it stays on the same speed":** most LRCLIB lyrics are timed by line only, and the karaoke swept each such line at the pace `timeWords` guesses, which drifts whenever the singer speeds up or slows down. Now:
+  - `parseLrc` and `pacePlain` flag a line whose word times are a guess (`Line.estimated`).
+  - The modes draw `karaokeWords(line)` (`core/timing.ts`): an estimated line's words each fill in one quick syllable (`WORD_FILL_MS`, 120 ms), one after another, within `LINE_FILL_MS` (400 ms, at most half the line) of its start, and each stays sung (risen, glowing) to the line's end. Lines timed word by word are unchanged. Nothing else reads the presentation timing: the stage's cues and the picker still see the estimates.
+  - `planWord` takes the ripple's hold from the wipe's own duration (the last syllable's end), so a quick fill in a long word hops as quickly as it lights.
+  - Lens magnifies no word on an estimated line (the row rests), and the picker never sets a line-timed song in Lens. Neon Monsoon, line-timed, is now Arc · Fraunces without its cover as with it, so `look-wiring`'s refinement tests use a stand-in dark gray cover that moves it to Drift.
+- **"Couldn't load lyrics for a lot of the songs":** LRCLIB's `/api/get` answers 503 (not 404) to metadata it can't match exactly, such as an album name or a length it has differently, which is common with Spotify's metadata, and `/api/search` answers 503 with `retry-after: 1` about half the time (measured from here, through Cloudflare). `lookup` propagated the exact lookup's error with `?`, so the search never ran. Now:
+  - A failed exact lookup is a miss.
+  - `/api/get` is asked again without the album.
+  - The search is asked up to `SEARCH_ATTEMPTS` (4) times while it answers busy.
+  - The lookup's `DEADLINE` goes from 6 s to 15 s.
+  - Live, with album names and lengths unlike LRCLIB's for five songs, three rounds: 14 of 15 found in 0.3 to 3.5 s. The miss was a made-up length no version on LRCLIB has. The old client would have answered error for all 15.
+- **"I want the lyrics color to match the album cover":** `paletteOf` left the lyric color near white (lightness 0.92, saturation ≤ 0.3) and the dim color gray whatever the cover, and gave black-and-white covers the default amber. Now:
+  - The highlight keeps the vivid color's own saturation (0.56 to 0.95, lightness 0.6 to 0.74).
+  - The lyric and dim colors take the cover's tone: the chroma- and share-weighted mean hue of its colorful pixels. Their tint is as strong as those pixels' saturation, times how well their hues agree, times how much of the cover they take (in full from 30%). The lyric is at lightness 0.84 to 0.87 and saturation up to 0.72; the dim at lightness 0.66.
+  - A highlight of the lyrics' own hue is held at lightness ≤ 0.66, so sung words stay distinct.
+  - Gray covers get grays: a near-white highlight (0.96) over light gray lyrics (0.74) and a gray dim (0.56), or their colorful accent as the highlight.
+  - Checked by eye on 15 real covers, fetched for a local check only and not committed.
+Tests: 1131 vitest (new: the `estimated` flag, `karaokeWords`, the hop hold, Lens resting on an estimated line, the picker never choosing Lens for line timing, and the palette rewritten for the new rules with legibility over 300 random covers). 265 Rust (1 ignored; new: a busy exact lookup still searches, the album-less exact lookup, search retries, the 15 s deadline). `pnpm build`, `pnpm coverage`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- Line-level lighting for every line without word tags, rather than a better guess at word times. The fill's speed (`LINE_FILL_MS`, `WORD_FILL_MS`) is in `core/timing.ts`.
+- No Lens for line-timed songs.
+- The lyric color may go to lightness 0.84 (the C4 rule said 0.85), and gray covers' lyrics to 0.74.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 steps 9 and 10 have the checks.
+Needs from Codex: nothing.
+Contract: unchanged (v4).
+

@@ -105,8 +105,9 @@ impl State {
     }
 }
 /// One lookup's budget, from the track change through the cache, waiting for a free slot, the
-/// exact match and the searches.
-const DEADLINE: Duration = Duration::from_secs(6);
+/// exact matches and the searches, with their retries while LRCLIB answers "busy". The overlay
+/// shows the lyrics loading meanwhile.
+const DEADLINE: Duration = Duration::from_secs(15);
 /// After a transient failure on the current track (no network yet after wake, a busy or
 /// rate-limiting LRCLIB, the deadline), the lookup is tried again after each of these waits: about
 /// a minute and a half in all.
@@ -187,7 +188,7 @@ impl Service {
                         (error_result, false, now_seconds(), error.transient)
                     }
                     Err(_) => {
-                        applog!("lyrics lookup timed out after six seconds");
+                        applog!("lyrics lookup timed out after {} s", DEADLINE.as_secs());
                         let error_result = empty(&track.key, LyricsStatus::Error);
                         (error_result, false, now_seconds(), true)
                     }
@@ -256,7 +257,7 @@ impl Service {
                     return;
                 }
                 Ok(Err(failure)) => failure,
-                Err(_) => Failure::transient("timed out after six seconds"),
+                Err(_) => Failure::transient(format!("timed out after {} s", DEADLINE.as_secs())),
             };
             applog!("lyrics retry failed: {failure}");
             if !failure.transient {
@@ -275,7 +276,7 @@ impl Service {
                 return;
             }
             Err(_) => {
-                applog!("lyrics recheck timed out after six seconds");
+                applog!("lyrics recheck timed out after {} s", DEADLINE.as_secs());
                 return;
             }
         };

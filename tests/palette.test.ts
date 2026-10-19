@@ -30,15 +30,24 @@ const hue = (hex: string): number => hexToHsl(hex)[0];
 /** Distance between two hues on the color wheel, 0..0.5. */
 const hueGap = (a: number, b: number): number => Math.min(Math.abs(a - b), 1 - Math.abs(a - b));
 
+/** Readable on any wallpaper (behind the dark legibility shadow), and the words being sung stand out. */
 function expectLegible(p: Palette): void {
   for (const color of Object.values(p)) expect(color).toMatch(/^#[0-9a-f]{6}$/);
-  const [, , lyricL] = hexToHsl(p.lyric);
+  const [, lyricS, lyricL] = hexToHsl(p.lyric);
   const [, hiS, hiL] = hexToHsl(p.highlight);
-  expect(lyricL).toBeGreaterThanOrEqual(0.85);
-  expect(hiL).toBeGreaterThanOrEqual(0.6);
-  expect(hiL).toBeLessThanOrEqual(0.75);
-  expect(hiS).toBeGreaterThanOrEqual(0.55);
+  const [, , dimL] = hexToHsl(p.dim);
+  expect(lyricL).toBeGreaterThanOrEqual(0.72);
+  expect(dimL).toBeGreaterThanOrEqual(0.54);
+  expect(dimL).toBeLessThan(lyricL);
+  // a vivid mid-light highlight, or a near-white one over gray lyrics
+  const vivid = hiL >= 0.6 && hiL <= 0.75 && hiS >= 0.55;
+  const white = hiL >= 0.94 && hiS <= 0.15 && lyricL <= 0.8;
+  expect(vivid || white).toBe(true);
+  expect(Math.abs(hiL - lyricL) >= 0.1 || Math.abs(hiS - lyricS) >= 0.4).toBe(true);
 }
+
+/** Near-gray: a color with no hue to speak of. */
+const grayish = (hex: string): boolean => hexToHsl(hex)[1] <= 0.12;
 
 describe("color conversion", () => {
   it("round-trips between hex and HSL", () => {
@@ -51,13 +60,37 @@ describe("color conversion", () => {
 });
 
 describe("paletteFromPixels", () => {
-  it("tints lyrics with the dominant color and highlights with the most vivid one", () => {
+  it("highlights with the most vivid color, and tints the lyrics and the other lines with the cover's tone", () => {
     // like the prototype's Neon Monsoon cover: dark teal sky, orange sun, magenta stripes
     const p = paletteFromPixels(cover([[[15, 59, 70], 0.7], [[247, 169, 59], 0.2], [[212, 55, 122], 0.1]]));
     expect(hueGap(hue(p.highlight), hexToHsl("#f7a93b")[0])).toBeLessThan(0.02);
-    expect(hueGap(hue(p.lyric), rgbToHsl(15, 59, 70)[0])).toBeLessThan(0.02);
-    expect(hueGap(hue(p.dim), rgbToHsl(15, 59, 70)[0])).toBeLessThan(0.02);
+    // one tone for both, and a faint one: an orange sun on a teal sky clash, so neither tints much
+    expect(hueGap(hue(p.lyric), hue(p.dim))).toBeLessThan(0.01);
+    expect(hexToHsl(p.lyric)[1]).toBeLessThan(0.3);
     expectLegible(p);
+    // where the cover's colors agree, its tone is the lyrics' color
+    const sunset = paletteFromPixels(cover([[[20, 10, 30], 0.6], [[247, 120, 40], 0.3], [[230, 70, 60], 0.1]]));
+    expect(hueGap(hue(sunset.lyric), rgbToHsl(247, 120, 40)[0])).toBeLessThan(0.04);
+    expect(hexToHsl(sunset.lyric)[1]).toBeGreaterThan(0.4);
+    expectLegible(sunset);
+  });
+
+  it("tints as deeply as the cover is colorful, a black background notwithstanding", () => {
+    const blue = paletteFromPixels(cover([[[10, 10, 14], 0.85], [[40, 90, 220], 0.15]]));
+    expect(hueGap(hue(blue.lyric), rgbToHsl(40, 90, 220)[0])).toBeLessThan(0.02);
+    expect(hueGap(hue(blue.highlight), rgbToHsl(40, 90, 220)[0])).toBeLessThan(0.02);
+    const deep = paletteFromPixels(cover([[[30, 70, 200], 0.8], [[240, 240, 240], 0.2]]));
+    const faint = paletteFromPixels(cover([[[110, 120, 150], 0.8], [[240, 240, 240], 0.2]]));
+    expect(hexToHsl(deep.lyric)[1]).toBeGreaterThan(hexToHsl(faint.lyric)[1] + 0.2);
+    expect(hexToHsl(deep.dim)[1]).toBeGreaterThan(hexToHsl(faint.dim)[1]);
+    for (const p of [blue, deep, faint]) expectLegible(p);
+  });
+
+  it("keeps a highlight of the lyrics' own hue a step darker than them", () => {
+    const p = paletteFromPixels(cover([[[30, 70, 200], 0.8], [[240, 240, 240], 0.2]]));
+    expect(hueGap(hue(p.highlight), hue(p.lyric))).toBeLessThan(0.05);
+    expect(hexToHsl(p.highlight)[2]).toBeLessThanOrEqual(0.665);
+    expect(hexToHsl(p.lyric)[2] - hexToHsl(p.highlight)[2]).toBeGreaterThanOrEqual(0.17);
   });
 
   it("prefers a strong mid-tone over a larger washed-out area", () => {
@@ -75,32 +108,28 @@ describe("paletteFromPixels", () => {
     expectLegible(p);
   });
 
-  it("keeps lyrics neutral when the dominant color is nearly black", () => {
-    const p = paletteFromPixels(cover([[[10, 10, 14], 0.85], [[40, 90, 220], 0.15]]));
-    expect(hexToHsl(p.lyric)[1]).toBeLessThan(0.1);
-    expect(hueGap(hue(p.highlight), rgbToHsl(40, 90, 220)[0])).toBeLessThan(0.02);
-  });
-
-  it("falls back to the defaults on a gray cover", () => {
-    expect(paletteFromPixels(cover([[[30, 30, 30], 0.6], [[200, 200, 200], 0.4]]))).toEqual(DEFAULT_SETTINGS.colors);
+  it("gives a black-and-white cover grays: a near-white highlight over light gray lyrics", () => {
+    const p = paletteFromPixels(cover([[[30, 30, 30], 0.6], [[200, 200, 200], 0.4]]));
+    expect(Object.values(p).every(grayish)).toBe(true);
+    expect(hexToHsl(p.highlight)[2]).toBeGreaterThanOrEqual(0.94);
+    expectLegible(p);
   });
 
   it("does not invent a hue from a black cover with a faint tint", () => {
-    expect(paletteFromPixels(cover([[[12, 2, 4], 1]]))).toEqual(DEFAULT_SETTINGS.colors);
+    expect(Object.values(paletteFromPixels(cover([[[12, 2, 4], 1]]))).every(grayish)).toBe(true);
   });
 
   it("takes the highlight from a tiny colorful accent on a gray cover", () => {
     const p = paletteFromPixels(cover([[[40, 40, 40], 0.996], [[220, 30, 40], 0.004]]));
-    expect(p.lyric).toBe(DEFAULT_SETTINGS.colors.lyric);
-    expect(p.dim).toBe(DEFAULT_SETTINGS.colors.dim);
+    expect(grayish(p.lyric) && grayish(p.dim)).toBe(true);
     expect(hueGap(hue(p.highlight), rgbToHsl(220, 30, 40)[0])).toBeLessThan(0.02);
     expectLegible(p);
   });
 
   it("ignores a dull accent on a gray cover", () => {
-    expect(paletteFromPixels(cover([[[40, 40, 40], 0.996], [[120, 100, 100], 0.004]])).highlight).toBe(
-      DEFAULT_SETTINGS.colors.highlight,
-    );
+    const p = paletteFromPixels(cover([[[40, 40, 40], 0.996], [[120, 100, 100], 0.004]]));
+    expect(grayish(p.highlight)).toBe(true);
+    expect(hexToHsl(p.highlight)[2]).toBeGreaterThanOrEqual(0.94);
   });
 
   it("skips transparent pixels", () => {

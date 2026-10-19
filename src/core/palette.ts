@@ -32,8 +32,12 @@ const MIN_SHARE = 0.008;
 const GRAY_CHROMA = 0.08;
 /** On a gray cover, an accent at least this colorful still sets the highlight, however small. */
 const ACCENT_CHROMA = 0.2;
-/** Keeps near-black or near-white covers from tinting the lyrics with a hue you can't see in them. */
-const TINT_PER_CHROMA = 1.5;
+/**
+ * The cover's colors tint the lyric and dim colors in full once they cover this share of it, and not
+ * at all below COLOR_FROM: a sun on a black sky is the cover's color, however much sky there is.
+ */
+const COLOR_FROM = 0.04;
+const COLOR_FULL = 0.3;
 /** The warmest hue (orange), in turns; its opposite (blue) is the coolest. */
 const WARM_HUE = 40 / 360;
 /** A cover with at least this share of gray pixels has no hue. */
@@ -185,14 +189,21 @@ class CoverSums {
   }
 }
 
-/** Highlight from a bucket's hue, forced vivid and mid-light so it reads on any wallpaper. */
-const highlightFrom = (b: Bucket): string => hslToHex(b.h, Math.max(b.s, 0.62), clamp(b.l, 0.62, 0.72));
+/**
+ * Highlight from a bucket's color, kept as colorful as the cover has it (at least 0.56, so 0.55 once
+ * rounded to hex) and mid-light so it reads on any wallpaper; no lighter than `most`.
+ */
+const highlightFrom = (b: Bucket, most = 0.74): string => hslToHex(b.h, clamp(b.s, 0.56, 0.95), clamp(b.l, 0.6, most));
+/** Hues this close (in turns) read as one color: the highlight then keeps darker than the lyrics. */
+const SAME_HUE = 0.08;
 
 /**
- * Picks overlay colors from RGBA pixels (a 48×48 sample of the cover). The most common color
- * tints the lyric and dim colors; the most vivid common color becomes the highlight. Lyrics stay
- * at lightness ≥ 0.85 and the highlight at lightness 0.6–0.75 with saturation ≥ 0.55. Gray covers
- * get the default warm white and the most colorful pixel, or the default highlight.
+ * Picks overlay colors from RGBA pixels (a 48×48 sample of the cover), so the lyrics look like the
+ * cover: the most vivid common color is the highlight (the words being sung), and the cover's tone
+ * tints the lyric color (the words still to come) and the dim color (the other lines), as strongly
+ * as the cover is colorful. Lyrics stay at lightness ≥ 0.85 and the highlight at lightness 0.6–0.74
+ * with saturation ≥ 0.55. A gray cover (black and white, or a toned photo) gets grays: the highlight
+ * near white, the lyrics a light gray, or its colorful accent as the highlight.
  */
 export function paletteFromPixels(rgba: ArrayLike<number>): Palette {
   const sums = new BucketSums();
@@ -224,22 +235,52 @@ function readSample(rgba: ArrayLike<number>): { palette: Palette; cover: CoverSt
 
 function paletteOf(all: readonly Bucket[]): Palette {
   const total = all.reduce((sum, b) => sum + b.n, 0);
-  const defaults = DEFAULT_SETTINGS.colors;
   const dominant = all.reduce<Bucket | undefined>((a, b) => (a && a.n >= b.n ? a : b), undefined);
-  if (!dominant) return { ...defaults };
+  if (!dominant) return { ...DEFAULT_SETTINGS.colors };
 
   const score = (b: Bucket): number => b.c * (1 - Math.abs(b.l - 0.55)) * Math.sqrt(b.n);
   const vivid = all.filter((b) => b.n > total * MIN_SHARE).reduce((a, b) => (score(b) > score(a) ? b : a), dominant);
 
   if (vivid.c < GRAY_CHROMA) {
+    // Grays: a near-white highlight over light gray lyrics, or the cover's colorful accent, however
+    // small. Its pixels are all but gray, so nothing tints them.
     const accent = all.reduce((a, b) => (b.c > a.c ? b : a), dominant);
-    return { ...defaults, highlight: accent.c >= ACCENT_CHROMA ? highlightFrom(accent) : defaults.highlight };
+    return {
+      lyric: hslToHex(0, 0, 0.74),
+      highlight: accent.c >= ACCENT_CHROMA ? highlightFrom(accent) : hslToHex(0, 0, 0.96),
+      dim: hslToHex(0, 0, 0.56),
+    };
   }
-  const tint = Math.min(dominant.s, dominant.c * TINT_PER_CHROMA);
+
+  // The cover's tone: its colorful pixels' hues, each a vector as long as its chroma times its share.
+  // The tint is as strong as those colors are saturated, as much of the cover as they take, and as
+  // well as they agree on a hue (colors that clash leave the lyrics near neutral).
+  let x = 0;
+  let y = 0;
+  let weight = 0;
+  let saturation = 0;
+  let colorful = 0;
+  for (const b of all) {
+    if (b.c < GRAY_CHROMA) continue;
+    const k = (b.c * b.n) / total;
+    x += k * Math.cos(b.h * 2 * Math.PI);
+    y += k * Math.sin(b.h * 2 * Math.PI);
+    weight += k;
+    saturation += k * b.s;
+    colorful += b.n / total;
+  }
+  const tone = (((Math.atan2(y, x) / (2 * Math.PI)) % 1) + 1) % 1;
+  const agreement = weight > 0 ? Math.hypot(x, y) / weight : 0;
+  const strength = weight > 0 ? (saturation / weight) * agreement * smoothstep(colorful, COLOR_FROM, COLOR_FULL) : 0;
+
+  // A strongly toned cover tints the lyrics deeper; a highlight of the same hue then stays a step
+  // darker than them, so the words being sung still stand out from the ones to come.
+  const gap = Math.abs(vivid.h - tone);
+  const sameHue = Math.min(gap, 1 - gap) < SAME_HUE && strength > 0.3;
   return {
-    lyric: hslToHex(dominant.h, Math.min(tint, 0.3), 0.92),
-    highlight: highlightFrom(vivid),
-    dim: hslToHex(dominant.h, Math.min(tint, 0.18), 0.66),
+    lyric: hslToHex(tone, 0.12 + 0.6 * strength, 0.87 - 0.03 * strength),
+    highlight: highlightFrom(vivid, sameHue ? 0.66 : 0.74),
+    dim: hslToHex(tone, 0.08 + 0.4 * strength, 0.66),
   };
 }
 

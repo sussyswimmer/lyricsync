@@ -35,7 +35,11 @@ const DEMO_COVERS: readonly CoverStats[] = [
   { lightness: 0.239, contrast: 0.17, chroma: 0.263, colorfulness: 0.749, warmth: 0.161, gray: 0.084, hue: 0.039 },
   { lightness: 0.579, contrast: 0.273, chroma: 0.22, colorfulness: 0.577, warmth: -0.05, gray: 0.021, hue: 0.373 },
   { lightness: 0.434, contrast: 0.102, chroma: 0.482, colorfulness: 0.721, warmth: -0.616, gray: 0, hue: 0.748 },
+  // a stand-in no mock track has: a dark gray cover, which moves Neon Monsoon from Arc to Drift
+  { lightness: 0.12, contrast: 0.06, chroma: 0.03, colorfulness: 0.04, warmth: 0, gray: 0.95, hue: null },
 ];
+/** The dark gray stand-in cover. */
+const DARK_COVER = "data:demo/3";
 const PIXELS = new Uint8ClampedArray(48 * 48 * 4).map((_, i) => [40, 90, 200, 255][i % 4] ?? 0);
 const statsOf = (artwork: string | null | undefined): CoverStats | null => {
   const m = /^data:demo\/(\d+)$/u.exec(artwork ?? "");
@@ -185,8 +189,8 @@ const loading = (t: MockTrack): Lyrics => ({ trackKey: trackKeyOf(t), status: "l
 /** The track's synced lyrics reported as plain text first, as a stale plain-only cache entry would. */
 const plainFirst = (t: MockTrack): Lyrics => ({ trackKey: trackKeyOf(t), status: "plain-only", synced: null, plain: stripLrc(t.synced ?? ""), source: "cache" });
 
-/** What the picker itself makes of a mock track: its lyrics as the stage takes them, with or without its cover. */
-function picked(t: MockTrack, withCover: boolean, lyrics: Lyrics = lyricsOf(t)): SongLook {
+/** What the picker itself makes of a mock track: its lyrics as the stage takes them, with or without its cover (or `artwork`). */
+function picked(t: MockTrack, withCover: boolean, lyrics: Lyrics = lyricsOf(t), artwork: string | null = art(t)): SongLook {
   const view = viewFor(lyrics, t.durationMs);
   const timeline = view.kind === "lyrics" ? view.timeline : null;
   return pickLook(
@@ -194,7 +198,7 @@ function picked(t: MockTrack, withCover: boolean, lyrics: Lyrics = lyricsOf(t)):
       track: { trackKey: trackKeyOf(t), title: t.title, album: t.album, durationMs: t.durationMs },
       lines: timeline?.lines ?? [],
       timing: timingOf(lyrics, timeline),
-      cover: withCover ? statsOf(art(t)) : null,
+      cover: withCover ? statsOf(artwork) : null,
     }),
   );
 }
@@ -453,14 +457,14 @@ describe("commit timing (SPEC §4.6)", () => {
 });
 
 describe("refinement (SPEC §4.6)", () => {
-  /** Neon Monsoon committed without its cover (its first line was due): Lens · Bricolage. Its cover makes it Arc · Fraunces. */
+  /** Neon Monsoon committed without its cover (its first line was due): Arc · Fraunces. A dark gray cover makes it Drift · Fraunces. */
   async function committedWithoutCover(): Promise<{ r: Rig; t: MockTrack }> {
     const r = await rig();
     const t = mock("Neon Monsoon");
     await r.start(t);
     await after(300);
     await r.lyrics(lyricsOf(t));
-    expect(lookLabel(r.controller.look)).toBe("Lens · Bricolage");
+    expect(lookLabel(r.controller.look)).toBe("Arc · Fraunces");
     return { r, t };
   }
 
@@ -468,13 +472,13 @@ describe("refinement (SPEC §4.6)", () => {
     const { r, t } = await committedWithoutCover();
     const committed = r.controller.songLook;
     await after(1000);
-    await r.artwork(t);
+    await r.artwork(t, { artwork: DARK_COVER });
     // mid-line: nothing changes yet
     expect(r.stage.changes).toEqual([]);
     expect(r.controller.songLook).toBe(committed);
     r.stage.reachSafePoint();
-    const refined = picked(t, true);
-    expect(lookLabel(refined)).toBe("Arc · Fraunces");
+    const refined = picked(t, true, lyricsOf(t), DARK_COVER);
+    expect(lookLabel(refined)).toBe("Drift · Fraunces");
     expect(r.stage.changes).toEqual([[drawnAs(refined), "crossfade"]]);
     expect(r.heard[r.heard.length - 1]).toEqual(refined);
     // one refinement per song: a new picture and later safe points change nothing
@@ -489,8 +493,8 @@ describe("refinement (SPEC §4.6)", () => {
   it("crossfades a refinement in at once when it comes at a safe point (a break, before the first line)", async () => {
     const { r, t } = await committedWithoutCover();
     r.stage.safe = true;
-    await r.artwork(t);
-    expect(r.stage.changes).toEqual([[drawnAs(picked(t, true)), "crossfade"]]);
+    await r.artwork(t, { artwork: DARK_COVER });
+    expect(r.stage.changes).toEqual([[drawnAs(picked(t, true, lyricsOf(t), DARK_COVER)), "crossfade"]]);
     r.controller.destroy();
   });
 

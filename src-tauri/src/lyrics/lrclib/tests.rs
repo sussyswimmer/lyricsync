@@ -70,10 +70,11 @@ async fn exact_get_encodes_metadata_duration_and_user_agent() {
         .contains(&format!("user-agent: {}", USER_AGENT.to_lowercase())));
 }
 #[tokio::test]
-async fn missing_exact_match_searches_then_retries_clean_title() {
+async fn missing_exact_match_asks_without_the_album_then_searches_then_retries_clean_title() {
     let mut decorated = track();
     decorated.title = "Paper Sun - Remastered 2011".into();
     let (client, requests, server) = server(vec![
+        (404, "{}".into()),
         (404, "{}".into()),
         (200, "[]".into()),
         (200, serde_json::to_string(&vec![record()]).unwrap()),
@@ -85,44 +86,86 @@ async fn missing_exact_match_searches_then_retries_clean_title() {
     );
     server.await.unwrap();
     let requests = requests.lock().unwrap();
-    assert_eq!(requests.len(), 3);
-    assert!(requests[1].starts_with("GET /api/search?"));
-    assert!(requests[1].contains("Remastered"));
-    assert!(requests[2].contains("track_name=Paper+Sun&"));
-    assert!(!requests[2].contains("Remastered"));
+    assert_eq!(requests.len(), 4);
+    assert!(requests[0].starts_with("GET /api/get?") && requests[0].contains("album_name="));
+    assert!(requests[1].starts_with("GET /api/get?") && !requests[1].contains("album_name="));
+    assert!(requests[1].contains("duration=180"));
+    assert!(requests[2].starts_with("GET /api/search?"));
+    assert!(requests[2].contains("Remastered"));
+    assert!(requests[3].contains("track_name=Paper+Sun&"));
+    assert!(!requests[3].contains("Remastered"));
+}
+#[tokio::test]
+async fn the_record_found_without_the_album_is_the_answer() {
+    let (client, requests, server) = server(vec![
+        (404, "{}".into()),
+        (200, serde_json::to_string(&record()).unwrap()),
+    ])
+    .await;
+    assert_eq!(
+        client.lookup(&track()).await.unwrap().status,
+        LyricsStatus::Found
+    );
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    // No album to leave out: one exact lookup, then the search.
+    let mut no_album = track();
+    no_album.album = String::new();
+    let (client, requests, server) = self::server(vec![
+        (404, "{}".into()),
+        (200, serde_json::to_string(&vec![record()]).unwrap()),
+    ])
+    .await;
+    assert_eq!(
+        client.lookup(&no_album).await.unwrap().status,
+        LyricsStatus::Found
+    );
+    server.await.unwrap();
+    assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
 }
 #[tokio::test]
 async fn valid_empty_search_is_not_found_but_http_and_json_errors_are_errors() {
-    let (client, _, server) = server(vec![(404, "{}".into()), (200, "[]".into())]).await;
+    let (client, _, server) = server(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (200, "[]".into()),
+    ])
+    .await;
     assert_eq!(
         client.lookup(&track()).await.unwrap().status,
         LyricsStatus::NotFound
     );
     server.await.unwrap();
-    // A server error or a garbled answer may be gone a little later; a 4xx or an oversized
-    // answer would come back the same. None of them is retried within the lookup.
+    // A failed exact lookup is a miss; the search's failure is the lookup's. A server error or a
+    // garbled answer may be gone a little later; a 4xx or an oversized answer would come back the
+    // same. None of them is asked again within the lookup.
     for (response, transient) in [
-        ((500, "{}".into()), true),
+        ((500, String::from("{}")), true),
         ((200, "{".into()), true),
         ((403, "{}".into()), false),
         ((200, "x".repeat(MAX_RESPONSE_BYTES + 1)), false),
     ] {
-        let (client, requests, server) = self::server(vec![response]).await;
+        let (client, requests, server) =
+            self::server(vec![response.clone(), response.clone(), response]).await;
         assert_eq!(
             client.lookup(&track()).await.unwrap_err().transient,
             transient
         );
         // The size guard can close the socket without consuming the oversized response.
         server.await.unwrap();
-        assert_eq!(requests.lock().unwrap().len(), 1);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].starts_with("GET /api/search?"));
     }
 }
 #[tokio::test]
-async fn a_busy_answer_is_asked_again_once_after_retry_after() {
+async fn a_busy_exact_lookup_is_a_miss_and_the_search_still_finds_it() {
+    // LRCLIB answers "busy" to an album or a length it has differently: never the lookup's end.
     for status in [429, 503, 502, 504] {
         let (client, requests, server) = server_with_headers(vec![
             (status, "Retry-After: 0\r\n", "{}".into()),
-            (200, "", serde_json::to_string(&record()).unwrap()),
+            (status, "Retry-After: 0\r\n", "{}".into()),
+            (200, "", serde_json::to_string(&vec![record()]).unwrap()),
         ])
         .await;
         assert_eq!(
@@ -132,26 +175,41 @@ async fn a_busy_answer_is_asked_again_once_after_retry_after() {
         );
         server.await.unwrap();
         let requests = requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert!(requests.iter().all(|r| r.starts_with("GET /api/get?")));
+        assert_eq!(requests.len(), 3);
+        assert!(requests[..2].iter().all(|r| r.starts_with("GET /api/get?")));
+        assert!(requests[2].starts_with("GET /api/search?"));
     }
-    // Only once per request: a second busy answer ends the lookup, as transient.
-    let (client, requests, server) = server_with_headers(vec![
-        (503, "Retry-After: 0\r\n", "{}".into()),
-        (503, "Retry-After: 0\r\n", "{}".into()),
-    ])
-    .await;
+}
+#[tokio::test]
+async fn a_busy_search_is_asked_again_up_to_its_attempts_after_retry_after() {
+    let busy = || (503, "Retry-After: 0\r\n", String::from("{}"));
+    let found = (200, "", serde_json::to_string(&vec![record()]).unwrap());
+    let misses = || [(404, "", String::from("{}")), (404, "", String::from("{}"))];
+    let mut responses = misses().to_vec();
+    responses.extend([busy(), busy(), busy(), found]);
+    let (client, requests, server) = server_with_headers(responses).await;
+    assert_eq!(
+        client.lookup(&track()).await.unwrap().status,
+        LyricsStatus::Found
+    );
+    server.await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2 + SEARCH_ATTEMPTS as usize);
+    // Busy every time: the search's last answer ends the lookup, as transient.
+    let mut responses = misses().to_vec();
+    responses.extend((0..SEARCH_ATTEMPTS).map(|_| busy()));
+    let (client, requests, server) = server_with_headers(responses).await;
     let failure = client.lookup(&track()).await.unwrap_err();
     assert!(failure.transient);
     assert_eq!(failure.message, "LRCLIB returned HTTP 503");
     server.await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 2);
-    // Longer than the lookup can wait: no second request, the quiet retries come back later.
-    let (client, requests, server) =
-        server_with_headers(vec![(429, "Retry-After: 60\r\n", "{}".into())]).await;
+    assert_eq!(requests.lock().unwrap().len(), 2 + SEARCH_ATTEMPTS as usize);
+    // Longer than the lookup can wait: no second search, the quiet retries come back later.
+    let mut responses = misses().to_vec();
+    responses.push((429, "Retry-After: 60\r\n", "{}".into()));
+    let (client, requests, server) = server_with_headers(responses).await;
     assert!(client.lookup(&track()).await.unwrap_err().transient);
     server.await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(requests.lock().unwrap().len(), 3);
 }
 #[test]
 fn retry_after_is_read_in_seconds_and_capped() {
@@ -252,6 +310,7 @@ async fn untimed_or_unnamed_tracks_are_not_found_without_a_request() {
 async fn a_rejected_exact_lookup_still_searches() {
     let (client, requests, server) = server(vec![
         (400, "{}".into()),
+        (400, "{}".into()),
         (200, serde_json::to_string(&vec![record()]).unwrap()),
     ])
     .await;
@@ -260,7 +319,7 @@ async fn a_rejected_exact_lookup_still_searches() {
         LyricsStatus::Found
     );
     server.await.unwrap();
-    assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
+    assert!(requests.lock().unwrap()[2].starts_with("GET /api/search?"));
 }
 #[test]
 fn the_user_agent_and_every_manifest_carry_one_version() {
@@ -311,15 +370,24 @@ async fn a_null_or_malformed_search_record_does_not_hide_the_match() {
     no_length["id"] = 2.into();
     no_length["duration"] = serde_json::Value::Null;
     let body = serde_json::json!([no_length, { "id": "not a number" }, record()]);
-    let (client, requests, server) =
-        server(vec![(404, "{}".into()), (200, body.to_string())]).await;
+    let (client, requests, server) = server(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (200, body.to_string()),
+    ])
+    .await;
     let found = client.lookup(&track()).await.unwrap();
     assert_eq!(found.status, LyricsStatus::Found);
     assert_eq!(found.synced, record().synced_lyrics);
     server.await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(requests.lock().unwrap().len(), 3);
     // Only a body that isn't a list at all is an error.
-    let (client, _, server) = self::server(vec![(404, "{}".into()), (200, "{}".into())]).await;
+    let (client, _, server) = self::server(vec![
+        (404, "{}".into()),
+        (404, "{}".into()),
+        (200, "{}".into()),
+    ])
+    .await;
     assert!(client.lookup(&track()).await.is_err());
     server.await.unwrap();
 }
@@ -329,6 +397,7 @@ async fn an_unusable_exact_answer_falls_through_to_search() {
     no_length["duration"] = serde_json::Value::Null;
     for exact in [no_length.to_string(), r#"{"id":"not a number"}"#.into()] {
         let (client, requests, server) = server(vec![
+            (200, exact.clone()),
             (200, exact),
             (200, serde_json::to_string(&vec![record()]).unwrap()),
         ])
@@ -338,6 +407,6 @@ async fn an_unusable_exact_answer_falls_through_to_search() {
             LyricsStatus::Found
         );
         server.await.unwrap();
-        assert!(requests.lock().unwrap()[1].starts_with("GET /api/search?"));
+        assert!(requests.lock().unwrap()[2].starts_with("GET /api/search?"));
     }
 }

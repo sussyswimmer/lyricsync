@@ -1,5 +1,6 @@
 import "../../styles/lens.css";
 import type { Line } from "../../core/lrc";
+import { karaokeWords } from "../../core/timing";
 import { h, put } from "../dom";
 import { whenFaceLoads } from "../fonts";
 import { MIN_TEXT_PX, shadowLayers, snap, textShadow, type Look } from "../look";
@@ -541,7 +542,7 @@ export class LensMode implements ModeRenderer {
     const m = this.metrics[index];
     if (!m) return null;
     const shape: Shape = { widths: m.widths, order: m.order, gaps: gapsFor(m, this.space) };
-    const fit = fitRow(shape, look.size, look.width, this.lensed(look));
+    const fit = fitRow(shape, look.size, look.width, this.lensed(look, index));
     const size = look.size * fit.fit;
     const after = this.lines[index + 1] ? this.metrics[index + 1] : undefined;
     const y = focusCenter(look, size, after ? nextSize(after.full, size, look) : null);
@@ -550,9 +551,12 @@ export class LensMode implements ModeRenderer {
     return { shape, fit, size, y, baseline };
   }
 
-  /** Words move under the lens: with motion, on synced lyrics (the lite tier keeps it). */
-  private lensed(look: Look): boolean {
-    return look.motion && !look.unsynced;
+  /**
+   * Words move under the lens: with motion, on synced lyrics (the lite tier keeps it), on a line timed
+   * word by word. A line whose word times are a guess lights as a whole, so nothing is singled out.
+   */
+  private lensed(look: Look, index: number): boolean {
+    return look.motion && !look.unsynced && this.lines[index]?.estimated !== true;
   }
 
   // ---------- line changes ----------
@@ -888,7 +892,7 @@ export class LensMode implements ModeRenderer {
    * re-rastered as the lens moves.
    */
   private shade(row: Row, look: Look): void {
-    const lensed = this.lensed(look);
+    const lensed = this.lensed(look, row.index);
     const shadow = drawnShadow(look, smallestScale(row.fit, look.width, lensed), lensed ? OPACITY_MIN : 1);
     for (const slot of row.slots) put(slot, "--ut-dark", shadow);
   }
@@ -916,7 +920,7 @@ export class LensMode implements ModeRenderer {
     const origin = Math.min(t, first);
     let end = origin + 1;
     for (const w of words) end = Math.max(end, wordUntil(w, params));
-    const lensed = this.lensed(look);
+    const lensed = this.lensed(look, row.index);
     if (lensed) {
       const plan = row.plan;
       const covers = plan !== null && plan.end === end && plan.origin <= origin && (plan.rampFrom === null || plan.rampFrom === first);
@@ -944,15 +948,16 @@ export class LensMode implements ModeRenderer {
       origin,
       end,
       rampFrom,
-      motion: this.lensed(look),
+      motion: this.lensed(look, row.index),
       steps: this.steps,
       hold: look.power === "lite" && this.steps,
     });
   }
 
   private karaokeFor(row: Row, look: Look): KaraokeLine {
+    const line = this.lines[row.index];
     return new KaraokeLine(
-      this.lines[row.index]?.words ?? [],
+      line ? karaokeWords(line) : [],
       row.words,
       {
         size: look.size,
@@ -1029,7 +1034,7 @@ export class LensMode implements ModeRenderer {
         this.prepareTimer = setTimeout(step, PREPARE_GAP_MS);
         return;
       }
-      if (this.lensed(live) && !row.plan) {
+      if (this.lensed(live, index) && !row.plan) {
         const params = this.params ?? motionParams(live);
         let end = lead + 1;
         for (const w of line.words) end = Math.max(end, wordUntil(w, params));

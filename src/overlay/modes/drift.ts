@@ -1,4 +1,5 @@
 import type { Line } from "../../core/lrc";
+import { karaokeWords } from "../../core/timing";
 import { h, put } from "../dom";
 import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
@@ -846,7 +847,7 @@ export class DriftMode implements ModeRenderer {
 
   private karaokeFor(row: Row, look: Look): KaraokeLine {
     return new KaraokeLine(
-      row.line.words,
+      karaokeWords(row.line),
       row.words,
       {
         size: row.size,

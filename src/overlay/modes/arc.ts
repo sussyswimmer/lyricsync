@@ -1,5 +1,6 @@
 import "../../styles/arc.css";
 import type { Line } from "../../core/lrc";
+import { karaokeWords } from "../../core/timing";
 import { h, put, s } from "../dom";
 import { whenFaceLoads } from "../fonts";
 import { dropShadow, MIN_TEXT_PX, snap, type Look } from "../look";
@@ -1260,7 +1261,7 @@ export class ArcMode implements ModeRenderer {
     const curve = this.curveOf(look, this.geo.mid, this.geo.bend);
     const metrics = { baseline: this.baseline * g.size, lineHeight: LINE_HEIGHT * g.size, spacing: look.letterSpacing * g.size };
     return new KaraokeLine(
-      line.words,
+      karaokeWords(line),
       g.boxes,
       {
         size: g.size,

@@ -79,8 +79,8 @@ The settings window has a live preview at the top that plays the current song, o
 
 ### No lyrics, or the wrong song
 
-- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then falls back to a search by title and artist. Songs by several artists match however the credits are written ("A & B", "A, B", "A feat. B", "A x B"). It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
-- **"Couldn't load lyrics"** means the lookup failed: no connection, or LRCLIB didn't answer within 6 seconds. Undertone tries again by itself after 5, 20 and 60 seconds, and the lyrics appear as soon as one try works. If they don't, check your connection (and your proxy, see [Network](#network)), then use **Refetch lyrics**.
+- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then the same without the album (a player's album name often differs from LRCLIB's), then searches by title and artist. Songs by several artists match however the credits are written ("A & B", "A, B", "A feat. B", "A x B"). It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
+- **"Couldn't load lyrics"** means the lookup failed: no connection, or no answer from LRCLIB within 15 seconds. LRCLIB's search often answers "busy, try again in a second", so Undertone asks it up to four times before giving up. It then tries again by itself after 5, 20 and 60 seconds, and the lyrics appear as soon as one try works. If they don't, check your connection (and your proxy, see [Network](#network)), then use **Refetch lyrics**.
 - **Wrong lyrics:** **Refetch lyrics** skips the cache, which fixes lyrics that were corrected on LRCLIB since Undertone saved them. If LRCLIB's best match is itself wrong, refetching returns the same thing. Lyrics on LRCLIB are submitted by the community; [lrclib.net](https://lrclib.net) explains how to add or correct them.
 - **Lyrics but no word highlight:** LRCLIB only has unsynced text for this song. Undertone paces the lines evenly across the song instead (see "Plain (unsynced) lyrics" in the [user guide](docs/USER_GUIDE.md#loading-missing-and-unsynced-lyrics)). When you play the song more than 30 days after Undertone saved them, it checks LRCLIB for synced lyrics again; **Refetch lyrics** checks right away. Synced lyrics whose timestamps would keep one line up for most of the song are paced the same way.
 
@@ -91,7 +91,7 @@ Positive offsets make lyrics appear **earlier**; negative offsets make them appe
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
 - **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌥⇧⌘[ / ⌥⇧⌘] (Ctrl+Alt+Shift+[ / ] on Windows, unless you've changed them) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
-The song's nudge is added on top of the All songs offset. When a song's lyrics are timed by line only, Undertone estimates where each word falls, so judge the sync by when each line starts.
+The song's nudge is added on top of the All songs offset. Most songs' lyrics are timed by line only: Undertone then lights each whole line as the singer starts it, rather than guessing when each word comes, so judge the sync by when each line starts. Lyrics timed word by word light word by word.
 
 ### Nothing shows up
 
@@ -163,7 +163,7 @@ The mock plays ten demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
-| 0 | Neon Monsoon | line-synced LRC (word timing estimated), 35 s |
+| 0 | Neon Monsoon | line-synced LRC (each line lights as a whole), 35 s |
 | 1 | Paper Lanterns | enhanced LRC with real per-word timing, 24 s |
 | 2 | Letters Never Sent | plain lyrics only (unsynced style) |
 | 3 | Ultraviolet Static | not found |

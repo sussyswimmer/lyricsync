@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { Line } from "../src/core/lrc";
 import {
   LAST_WORD_HOLD_MS,
+  LINE_FILL_MS,
   LINE_GAP_MS,
   MAX_WORD_MS,
   PLAIN_LINE_MS,
+  WORD_FILL_MS,
   isKnownDuration,
+  karaokeWords,
   lineAt,
   pacePlain,
   progress,
@@ -146,6 +150,37 @@ describe("pacePlain", () => {
 
   it("handles empty lyrics", () => {
     expect(pacePlain(" \n\n", 1000)).toEqual({ lines: [], unsynced: true });
+  });
+});
+
+describe("karaokeWords (what the karaoke draws)", () => {
+  const guessed = (text: string, start: number, end: number): Line => ({ start, end, text, words: timeWords(splitWords(text), start, end), estimated: true });
+
+  it("keeps a line timed word by word as it is", () => {
+    const line: Line = { start: 1000, end: 3000, text: "as sung", words: spreadWords(splitWords("as sung"), 1000, 3000) };
+    expect(karaokeWords(line)).toBe(line.words);
+  });
+
+  it("lights a line with guessed word times as a whole: quick fills one after another, each word sung to the line's end", () => {
+    const line = guessed("one two three four", 10_000, 14_000);
+    const words = karaokeWords(line);
+    expect(words.map((w) => w.text)).toEqual(line.words.map((w) => w.text));
+    expect(words.map((w) => w.start)).toEqual([10_000, 10_040, 10_080, 10_120]);
+    expect(words.every((w) => w.end === 14_000)).toBe(true);
+    expect(words.map((w) => w.parts)).toEqual(words.map((w) => [{ text: w.text, start: w.start, end: w.start + WORD_FILL_MS }]));
+  });
+
+  it("fills a long line within LINE_FILL_MS, and a short one within half its length", () => {
+    const long = karaokeWords(guessed(Array.from({ length: 20 }, (_, i) => `w${i}`).join(" "), 0, 6000));
+    const lit = (words: readonly { parts?: { end: number }[] }[]): number => Math.max(...words.map((w) => w.parts?.[0]?.end ?? 0));
+    expect(lit(long)).toBeCloseTo(LINE_FILL_MS, 6);
+    const short = karaokeWords(guessed("quick little line", 0, 300));
+    expect(lit(short)).toBeLessThanOrEqual(150);
+    expect(short.every((w) => w.end === 300)).toBe(true);
+    // a lone word fills at once
+    expect(karaokeWords(guessed("hey", 500, 2500)).map((w) => [w.start, w.end, w.parts?.[0]?.end])).toEqual([[500, 2500, 500 + WORD_FILL_MS]]);
+    // plain lyrics are guessed too
+    expect(pacePlain("a b\nc d", 10_000).lines.every((l) => l.estimated === true)).toBe(true);
   });
 });
 
