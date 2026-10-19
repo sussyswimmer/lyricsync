@@ -6,7 +6,6 @@ import { DEFAULT_PICK, resolveLook, shadowLayers, withBloom, type Frame, type Lo
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
 import type { Cue } from "../src/overlay/modes/types";
 import { findInterludes } from "../src/overlay/motion/interlude";
-import { LINE_FILL_MS } from "../src/core/timing";
 import { leadTimes } from "../src/overlay/motion/schedule";
 import { FakeAnimationHost } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
@@ -467,30 +466,23 @@ describe("Lens on the motion engine: sleeping between line changes", () => {
     for (const s of slots) expect(s.children[0]?.classList.contains("kw")).toBe(true);
   });
 
-  it("rests a line whose word times are a guess: no fisheye, and the whole line lit as it starts", () => {
+  it("magnifies the guessed word on a line timed by line only, as on one timed word by word", () => {
     const guessed = LINES.map((l) => ({ ...l, estimated: true }));
     const { mode, row } = lens(look(), guessed);
-    mode.paint(cue(0, 2000));
+    const words = guessed[0]?.words ?? [];
+    mode.paint(cue(0, 1000));
     frames();
-    const slots = slotsOf(row());
-    expect(slots).toHaveLength(guessed[0]?.words.length ?? 0);
-    // nothing singled out: no slot animates, and every word is drawn at one scale
-    for (const s of slots) expect(s.getAnimations()).toEqual([]);
-    expect(new Set(slots.map((s) => lensOf(s).s.toFixed(4))).size).toBe(1);
-    // every word's wipe is open within LINE_FILL_MS of the line's start
-    const start = guessed[0]?.start ?? 0;
-    const words = wordsOf(row());
-    expect(words.length).toBeGreaterThan(1);
-    for (const w of words) {
-      const a = w.find("kw-track")[0]?.getAnimations()[0];
-      if (!a) throw new Error("no wipe");
-      const origin = 2000 - (a.currentTime ?? 0);
-      const open = a.keyframes.find((k) => /translateX\(0(?:\.0+)?px\)/u.test(String(k.transform)));
-      expect(open).toBeDefined();
-      const at = origin + Number(open?.offset) * (a.duration ?? 0);
-      expect(at).toBeGreaterThan(start);
-      expect(at).toBeLessThanOrEqual(start + LINE_FILL_MS + 1);
-    }
+    let last = 1000 + 16 * 12;
+    clock += 16 * 12;
+    words.forEach((w, j) => {
+      if (j === 0) return;
+      const t = (w.start + w.end) / 2 + 80;
+      clock += t - last;
+      last = t;
+      mode.paint(cue(0, t));
+      const scales = slotsOf(row()).map((s) => lensOf(s).s);
+      expect(scales.indexOf(Math.max(...scales)), `${w.text} at ${t}`).toBe(j);
+    });
   });
 
   it("magnifies the word being sung, and its bloom with it", () => {

@@ -396,7 +396,7 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, param
   const moveBase: boolean[] = [];
   const split = shape.letters.length >= 2;
   // how long the wipe takes to cross an average letter and the feather: the hop's hold. The wipe ends
-  // with the word's last syllable, which ends before the word in a line lit as a whole (karaokeWords).
+  // with the word's last syllable, which may end before the word does.
   const wiping = Math.max(1, Math.min(span, (parts[parts.length - 1]?.end ?? word.end) - word.start));
   const plain = shape.letters.filter((l) => held[l.part] !== true);
   const avg = plain.length > 0 ? plain.reduce((n, l) => n + l.w, 0) / plain.length : 0;

@@ -93,7 +93,7 @@ Positive offsets make lyrics appear **earlier**; negative offsets make them appe
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
 - **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌥⇧⌘[ / ⌥⇧⌘] (Ctrl+Alt+Shift+[ / ] on Windows, unless you've changed them) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
-The song's nudge is added on top of the All songs offset. Most songs' lyrics are timed by line only: Undertone then lights each whole line as the singer starts it, rather than guessing when each word comes, so judge the sync by when each line starts. Lyrics timed word by word light word by word.
+The song's nudge is added on top of the All songs offset. Most songs' lyrics are timed by line only: Undertone then works out when each word is sung, at the pace the song is being sung, so judge the sync by when each line starts. Lyrics timed word by word follow every word exactly.
 
 ### Nothing shows up
 
@@ -165,7 +165,7 @@ The mock plays ten demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
-| 0 | Neon Monsoon | line-synced LRC (each line lights as a whole), 35 s |
+| 0 | Neon Monsoon | line-synced LRC (words paced to the song), 35 s |
 | 1 | Paper Lanterns | enhanced LRC with real per-word timing, 24 s |
 | 2 | Letters Never Sent | plain lyrics only (unsynced style) |
 | 3 | Ultraviolet Static | not found |

@@ -1,6 +1,5 @@
 import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
-import { karaokeWords } from "../../core/timing";
 import { h, put } from "../dom";
 import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
@@ -860,7 +859,7 @@ export class DriftMode implements ModeRenderer {
   private karaokeFor(row: Row, look: Look): KaraokeLine {
     const decor = this.decor[row.index];
     return new KaraokeLine(
-      karaokeWords(row.line),
+      row.line.words,
       row.words,
       {
         size: row.size,

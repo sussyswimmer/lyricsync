@@ -1,7 +1,6 @@
 import "../../styles/arc.css";
 import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
-import { karaokeWords } from "../../core/timing";
 import { h, put, s } from "../dom";
 import { whenFaceLoads } from "../fonts";
 import { dropShadow, MIN_TEXT_PX, snap, type Look } from "../look";
@@ -1268,7 +1267,7 @@ export class ArcMode implements ModeRenderer {
     const metrics = { baseline: this.baseline * g.size, lineHeight: LINE_HEIGHT * g.size, spacing: look.letterSpacing * g.size };
     const decor = this.decor[g.i];
     return new KaraokeLine(
-      karaokeWords(line),
+      line.words,
       g.boxes,
       {
         size: g.size,

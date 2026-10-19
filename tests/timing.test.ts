@@ -1,20 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { Line } from "../src/core/lrc";
+import { parseLrc } from "../src/core/lrc";
 import {
   LAST_WORD_HOLD_MS,
-  LINE_FILL_MS,
   LINE_GAP_MS,
   MAX_WORD_MS,
+  PACE_QUANTILE,
+  PACE_WINDOW,
   PLAIN_INTRO,
   PLAIN_LINE_MS,
   PLAIN_MIN_LINE_MS,
   PLAIN_OUTRO,
-  WORD_FILL_MS,
+  beatsOf,
   isKnownDuration,
-  karaokeWords,
   lineAt,
+  paceWords,
   pacePlain,
   progress,
+  singingPace,
   splitWords,
   spreadWords,
   syllables,
@@ -178,32 +181,75 @@ describe("pacePlain", () => {
   });
 });
 
-describe("karaokeWords (what the karaoke draws)", () => {
-  const guessed = (text: string, start: number, end: number): Line => ({ start, end, text, words: timeWords(splitWords(text), start, end), estimated: true });
-
-  it("keeps a line timed word by word as it is", () => {
-    const line: Line = { start: 1000, end: 3000, text: "as sung", words: spreadWords(splitWords("as sung"), 1000, 3000) };
-    expect(karaokeWords(line)).toBe(line.words);
+describe("song-paced words (lines timed by line only)", () => {
+  it("counts a line's beats as its words' weights: syllables plus half a beat a word", () => {
+    expect(beatsOf(splitWords("the morning light"))).toBe(1 + 2 + 1 + 3 * 0.5);
+    expect(beatsOf([])).toBe(0);
   });
 
-  it("lights a line with guessed word times as a whole: quick fills one after another, each word sung to the line's end", () => {
-    const line = guessed("one two three four", 10_000, 14_000);
-    const words = karaokeWords(line);
-    expect(words.map((w) => w.text)).toEqual(line.words.map((w) => w.text));
-    expect(words.map((w) => w.start)).toEqual([10_000, 10_040, 10_080, 10_120]);
-    expect(words.every((w) => w.end === 14_000)).toBe(true);
-    expect(words.map((w) => w.parts)).toEqual(words.map((w) => [{ text: w.text, start: w.start, end: w.start + WORD_FILL_MS }]));
+  /** `n` lines of 5.5 beats from `from`, one every `every` ms. */
+  const steady = (n: number, from: number, every: number): { start: number; next: number; beats: number }[] =>
+    Array.from({ length: n }, (_, i) => ({ start: from + i * every, next: from + (i + 1) * every, beats: 5.5 }));
+
+  it("reads the pace from the lines around each one, so a pause after a line doesn't slow it down", () => {
+    // a line every 1.1 s (5 beats a second), and one with a 6 s pause after it
+    const lines = [...steady(4, 0, 1100), { start: 4400, next: 11_500, beats: 5.5 }, ...steady(5, 11_500, 1100)];
+    const pace = singingPace(lines);
+    for (const p of pace) expect(p).toBeCloseTo(5, 6);
   });
 
-  it("fills a long line within LINE_FILL_MS, and a short one within half its length", () => {
-    const long = karaokeWords(guessed(Array.from({ length: 20 }, (_, i) => `w${i}`).join(" "), 0, 6000));
-    const lit = (words: readonly { parts?: { end: number }[] }[]): number => Math.max(...words.map((w) => w.parts?.[0]?.end ?? 0));
-    expect(lit(long)).toBeCloseTo(LINE_FILL_MS, 6);
-    const short = karaokeWords(guessed("quick little line", 0, 300));
-    expect(lit(short)).toBeLessThanOrEqual(150);
-    expect(short.every((w) => w.end === 300)).toBe(true);
-    // a lone word fills at once
-    expect(karaokeWords(guessed("hey", 500, 2500)).map((w) => [w.start, w.end, w.parts?.[0]?.end])).toEqual([[500, 2500, 500 + WORD_FILL_MS]]);
+  it("follows the song as it speeds up and slows down from one part to the next", () => {
+    // ten lines at 5 beats a second, then ten at 10, then ten at 5 again
+    const lines = [...steady(10, 0, 1100), ...steady(10, 11_000, 550), ...steady(10, 16_500, 1100)];
+    const pace = singingPace(lines);
+    expect(pace[2]).toBeCloseTo(5, 6);
+    expect(pace[15]).toBeCloseTo(10, 6);
+    expect(pace[27]).toBeCloseTo(5, 6);
+    // between parts it is somewhere in between, and only the lines PACE_WINDOW away count
+    expect(pace[9]).toBeGreaterThan(5);
+    expect(pace[9 - PACE_WINDOW]).toBeCloseTo(5, 6);
+  });
+
+  it("takes the PACE_QUANTILE of the rates near a line, leaving out gaps, and has none with too little to go by", () => {
+    const rates = [2, 3, 4, 5, 6];
+    const lines = rates.map((r, i) => ({ start: i * 1000, next: (i + 1) * 1000, beats: r }));
+    expect(singingPace(lines)[2]).toBeCloseTo(2 + 4 * PACE_QUANTILE, 6);
+    const gaps = [{ start: 0, next: 1000, beats: 5 }, { start: 1000, next: 5000, beats: 0 }, { start: 5000, next: 6000, beats: 5 }];
+    expect(singingPace(gaps).every(Number.isNaN)).toBe(true);
+    expect(singingPace([])).toEqual([]);
+  });
+
+  it("sings a line with room to spare at the pace, holds its last word a little, and leaves the rest of the line as a pause", () => {
+    const units = splitWords("one two three four");
+    // 4 + 4 * 0.5 = 6 beats at 5 a second: 1.2 s
+    const words = paceWords(units, 10_000, 16_000, 5);
+    const sung = timeWords(units, 10_000, 11_200);
+    expect(words.slice(0, -1)).toEqual(sung.slice(0, -1));
+    expect(last(words)?.end).toBe((last(sung)?.end ?? 0) + LAST_WORD_HOLD_MS);
+    // never past the line's end, nor a word longer than MAX_WORD_MS
+    expect(last(paceWords(units, 10_000, 11_300, 5))?.end).toBe(11_300);
+    const held = paceWords(["Ohhh"], 0, 9000, 1.2);
+    expect(last(held)?.end).toBe(MAX_WORD_MS);
+  });
+
+  it("fills a line the singer hurries through, or any line without a pace, as before", () => {
+    const units = splitWords("a quick line with many words in it");
+    expect(paceWords(units, 0, 1500, 5)).toEqual(timeWords(units, 0, 1500));
+    expect(paceWords(units, 0, 6000, Number.NaN)).toEqual(timeWords(units, 0, 6000));
+    expect(paceWords([], 0, 6000, 5)).toEqual([]);
+  });
+
+  it("is what parseLrc does with lines that have no word tags: a pause no longer stretches the line before it", () => {
+    const rows = ["[00:00.00]one two three", "[00:01.10]four five six", "[00:02.20]seven eight nine", "[00:03.30]ten eleven twelve", "[00:10.00]thirteen fourteen", "[00:11.10]fifteen sixteen"];
+    const lines = parseLrc(rows.join("\n"), 14_000);
+    expect(lines.every((l) => l.estimated === true)).toBe(true);
+    // a steady line fills its slot as before
+    const steadyLine = lines[1] as Line;
+    expect(steadyLine.words).toEqual(timeWords(splitWords(steadyLine.text), steadyLine.start, steadyLine.end));
+    // the line before the pause is sung at the song's pace and done long before the next line
+    const paused = lines[3] as Line;
+    expect(last(paused.words)?.end).toBeLessThan(paused.start + 2500);
+    expect(paused.end).toBe(10_000 - LINE_GAP_MS);
     // plain lyrics are guessed too
     expect(pacePlain("a b\nc d", 10_000).lines.every((l) => l.estimated === true)).toBe(true);
   });

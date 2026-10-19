@@ -531,10 +531,7 @@ function pickStyle(f: SongFeatures, a: Axes): { style: Mode; scores: Record<Mode
   // Plain lyrics paced evenly can be anywhere in the song: show several lines, and nothing that
   // tracks a word. Without lyrics the stage shows a state, so the style is only a placeholder.
   if (f.timing === "none" || f.timing === "unsynced") return { style: "stack", scores, tie: false };
-  // The spotlight needs a word to follow: a line-timed song lights whole lines (timing.ts karaokeWords).
-  const ranked = CONTRACT_STYLES.filter((s) => s !== "lens" || f.timing === "word")
-    .map((s): [Mode, number] => [s, scores[s]])
-    .sort((x, y) => y[1] - x[1]);
+  const ranked = CONTRACT_STYLES.map((s): [Mode, number] => [s, scores[s]]).sort((x, y) => y[1] - x[1]);
   const [first, second] = ranked;
   if (!first) return { style: "arc", scores, tie: false };
   const tie = !!second && first[1] - second[1] < STYLE_TIE;

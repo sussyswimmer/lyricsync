@@ -25,12 +25,19 @@ export const PLAIN_MIN_LINE_MS = 1200;
 const PLAIN_BREATH = 3;
 /** ...and a blank row between stanzas as long as an average line (the band plays on). */
 const PLAIN_STANZA_GAP = 1;
-/** A line with no word timing fills with the highlight within this long of its start, ms... */
-export const LINE_FILL_MS = 400;
-/** ...each word in this long... */
-export const WORD_FILL_MS = 120;
-/** ...each starting at most this long after the one before. */
-const FILL_STAGGER_MS = 40;
+/**
+ * Lines timed by line only are sung at the pace of the lines around them: a line's rate is its beats
+ * (weights: syllables plus a little for each word) over the time until the next line starts. A pause
+ * after a line makes it read slower than it was sung, never faster, so the singing pace near a line
+ * is this high share of the rates of the lines up to PACE_WINDOW either side of it. That follows the
+ * song as it speeds up and slows down from one part to the next.
+ */
+export const PACE_QUANTILE = 0.7;
+export const PACE_WINDOW = 4;
+/** With fewer lines than this to go by, a line's words fill it, as they did before pacing. */
+const PACE_MIN_LINES = 3;
+/** No song is sung slower or faster than this, in beats a second. */
+const PACE_RANGE = [1.2, 16] as const;
 
 /** A lyric sheet ready for the renderer. */
 export interface Timeline {
@@ -175,22 +182,49 @@ export function pacePlain(plain: string, durationMs: number): Timeline {
   return { lines, unsynced: true };
 }
 
+/** A line's beats: its words' weights, which the pace is counted in. */
+export function beatsOf(units: readonly string[]): number {
+  return units.reduce((sum, unit) => sum + weight(unit), 0);
+}
+
+/** The value `q` of the way up sorted `values` (linear between neighbors). */
+function quantile(values: readonly number[], q: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = Math.min(1, Math.max(0, q)) * (sorted.length - 1);
+  const lo = Math.floor(at);
+  const below = sorted[lo] ?? NaN;
+  return below + ((sorted[lo + 1] ?? below) - below) * (at - lo);
+}
+
 /**
- * A line's words as the karaoke draws them. A line timed word by word keeps its words. A line whose
- * word times are a guess (`Line.estimated`) lights as a whole: its words fill one after another within
- * LINE_FILL_MS (at most half the line) of its start, each as one quick syllable, and each stays sung,
- * risen and glowing, until the line ends. Nothing then moves at a pace the singer doesn't keep.
+ * How fast the song is sung around each line, in beats a second, by line index (PACE_QUANTILE).
+ * `next` is when the following line starts; `beats` is 0 for an instrumental gap, which has no rate of
+ * its own. NaN where there's too little to go by.
  */
-export function karaokeWords(line: Line): Word[] {
-  if (line.estimated !== true || line.words.length === 0) return line.words;
-  const n = line.words.length;
-  const fill = Math.min(LINE_FILL_MS, Math.max(0, line.end - line.start) / 2);
-  const each = Math.min(WORD_FILL_MS, fill);
-  const step = n > 1 ? Math.min(FILL_STAGGER_MS, (fill - each) / (n - 1)) : 0;
-  return line.words.map((w, i) => {
-    const start = line.start + i * step;
-    return { text: w.text, start, end: Math.max(start + each, line.end), parts: [{ text: w.text, start, end: start + each }] };
+export function singingPace(lines: readonly { start: number; next: number; beats: number }[]): number[] {
+  const rates = lines.map((l) => (l.beats > 0 && l.next > l.start ? (l.beats * 1000) / (l.next - l.start) : NaN));
+  return lines.map((_, i) => {
+    const near = rates.slice(Math.max(0, i - PACE_WINDOW), i + PACE_WINDOW + 1).filter(Number.isFinite);
+    if (near.length < PACE_MIN_LINES) return NaN;
+    return Math.min(PACE_RANGE[1], Math.max(PACE_RANGE[0], quantile(near, PACE_QUANTILE)));
   });
+}
+
+/**
+ * Word timing for a line with no word tags, sung at `pace` beats a second (singingPace): its words
+ * take as long as their beats do at that pace, or the whole line when it has less room (the singer
+ * hurried), split by weight with the last word held (timeWords). When the line has room left, the
+ * last word holds on into it for up to LAST_WORD_HOLD_MS more, the way singers hold a line's end; the
+ * rest is the pause before the next line, so the highlight never crawls through it. Without a pace,
+ * the words fill the line.
+ */
+export function paceWords(units: readonly string[], start: number, end: number, pace: number): Word[] {
+  const slot = Math.max(0, end - start);
+  const sung = Number.isFinite(pace) && pace > 0 ? Math.min(slot, (beatsOf(units) * 1000) / pace) : slot;
+  const words = timeWords(units, start, start + sung);
+  const last = words[words.length - 1];
+  if (last && sung < slot) last.end = Math.min(end, last.end + LAST_WORD_HOLD_MS, Math.max(last.end, last.start + MAX_WORD_MS));
+  return words;
 }
 
 /** Index of the line playing at `t` (the last one started), or -1 before the first line. */

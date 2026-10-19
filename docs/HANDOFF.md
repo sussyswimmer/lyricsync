@@ -478,3 +478,20 @@ Decisions you can reverse:
 Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §13 has the checks.
 Needs from Codex: nothing.
 Contract: v6 (`yPos` no longer read).
+
+
+## 2026-10-19 · Claude Code · Word by word again, at the song's own pace
+Done: Maxwell, on the build that lit whole lines: "now it's not even syncing by word, it's just syncing the entire section like sentence … I want it to sync by the word like the previous build". Before that build he had said the word sweep "can't catch up because it stays on a fixed tempo" when the singer speeds up and slows down.
+- **A word sweep again** for lines timed by line only. The modes draw `line.words` again (`karaokeWords`, `LINE_FILL_MS` and `WORD_FILL_MS` are gone), Lens magnifies the guessed word again, and the picker may set a line-timed song in Lens again (Neon Monsoon is Lens · Bricolage without its cover, as before 07dbaf5).
+- **Paced to the song** (`core/timing.ts`). The old estimate spread a line's words over all the time up to the next line, so where the singer paused after a line the sweep crawled through the pause, fell behind, and jumped at the next line. Now:
+  - `singingPace` reads how fast the song is sung around each line. A line's rate is its beats (word weights: syllables plus half a beat a word) over the time until the next line starts. The pace near a line is the 70th percentile (`PACE_QUANTILE`) of the rates of the lines up to 4 either side (`PACE_WINDOW`): a pause only makes a line read slower, so a high share of the nearby rates is the singing pace, and the window follows a song from a slow verse into a fast chorus.
+  - `paceWords` sings a line at that pace: for as long as its beats take, or the whole line when it has less room (the singer hurried), split by weight as before (`timeWords`). When there's room left, the last word holds up to 600 ms more, and the rest is a pause.
+  - `parseLrc` works out the pace for the whole song, then times each line without word tags.
+- **Measured** on the line timing of 20 popular songs from LRCLIB (none of their 400 versions has word tags; fetched for a local check only, not committed): the median line sweeps as before (it fills its slot); a quarter of the lines, those followed by a pause, now finish more than 20% sooner than before, and 5% in under half the old time.
+Tests: 1192 vitest in 33 files. New: `beatsOf`, `singingPace` (pauses, speeding up and slowing down, the quantile, gaps), `paceWords`, `parseLrc` pacing a line before a pause, and Lens magnifying a guessed word. The whole-line tests are gone, and the look-wiring and picker tests are back to Lens for line-timed songs. `pnpm build` passes.
+Decisions you can reverse:
+- `PACE_QUANTILE` (0.7) and `PACE_WINDOW` (4).
+- Lens may be picked for line-timed songs again.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 step 9 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v6).

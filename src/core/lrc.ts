@@ -1,4 +1,4 @@
-import { LINE_GAP_MS, isKnownDuration, splitWords, spreadWords, timeWords } from "./timing";
+import { LINE_GAP_MS, beatsOf, isKnownDuration, paceWords, singingPace, splitWords, spreadWords, timeWords } from "./timing";
 
 /**
  * One word (or one CJK character) and when it is sung, in ms. `text` keeps the space that
@@ -30,9 +30,8 @@ export interface Line {
   words: Word[];
   text: string;
   /**
-   * Its words' times are a guess (no usable word tags: they are spread over the line by weight). The
-   * karaoke lights such a line as a whole (timing.ts karaokeWords) instead of sweeping it at the
-   * guessed pace, which drifts from the voice whenever the singer speeds up or slows down.
+   * Its words' times are a guess (no usable word tags): they are sung at the pace of the lines around
+   * it (timing.ts paceWords), so a held note on such a line is a guess too.
    */
   estimated?: boolean;
 }
@@ -192,14 +191,14 @@ function syllableParts(word: Word, at: number, unit: string, marks: readonly Mar
  * tag). A closing tag only bounds the last word and is clamped to `end` anyway, so it isn't counted,
  * unless it is the line's only tag.
  */
-function wordsFor(entry: Entry, end: number): { words: Word[]; estimated: boolean } {
+function wordsFor(entry: Entry, end: number, pace: number): { words: Word[]; estimated: boolean } {
   const { text, marks, shift, start } = entry;
   const times = marks.map((m) => m.time + shift);
   const near = (t: number): boolean => t >= start - TAG_SLACK_MS && t <= end + TAG_SLACK_MS;
   const forwards = times.every((t, i) => t >= (times[i - 1] ?? -Infinity));
   const counted = times.length > 1 && marks[marks.length - 1]?.index === text.length ? times.slice(0, -1) : times;
   const sane = forwards && counted.filter(near).length >= Math.ceil(counted.length / 2);
-  if (marks.length === 0 || !sane) return { words: timeWords(splitWords(text), start, end), estimated: true };
+  if (marks.length === 0 || !sane) return { words: paceWords(splitWords(text), start, end, pace), estimated: true };
   return { words: taggedWords(text, marks, times.map((t) => Math.min(end, Math.max(start, t))), start, end), estimated: false };
 }
 
@@ -207,7 +206,8 @@ function wordsFor(entry: Entry, end: number): { words: Word[]; estimated: boolea
  * Parses LRC (plain or enhanced with `<mm:ss.xx>` word tags) into sorted lines with word timing.
  * Junk lines and metadata are skipped. An empty timed line is an instrumental gap: it ends the
  * line before it and has no words. When several lyric lines share one stamp, the first wins. Each line ends `LINE_GAP_MS` before the next one starts and
- * never runs past `durationMs`.
+ * never runs past `durationMs`. Lines without word tags are sung at the pace of the lines around them
+ * (timing.ts singingPace).
  */
 export function parseLrc(raw: string, durationMs: number): Line[] {
   const rows = rowsOf(raw);
@@ -243,12 +243,22 @@ export function parseLrc(raw: string, durationMs: number): Line[] {
   });
 
   const limit = isKnownDuration(durationMs) ? durationMs : Infinity;
-  return kept.map((entry, i): Line => {
+  const ends = kept.map((entry, i) => {
     const next = kept[i + 1];
     const natural = next ? next.start - LINE_GAP_MS : Number.isFinite(limit) ? limit : entry.start + LAST_LINE_MS;
-    const end = Math.max(entry.start, Math.min(natural, limit));
+    return Math.max(entry.start, Math.min(natural, limit));
+  });
+  const pace = singingPace(
+    kept.map((entry, i) => ({
+      start: entry.start,
+      next: kept[i + 1]?.start ?? (ends[i] ?? entry.start) + LINE_GAP_MS,
+      beats: entry.text === "" ? 0 : beatsOf(splitWords(entry.text)),
+    })),
+  );
+  return kept.map((entry, i): Line => {
+    const end = ends[i] ?? entry.start;
     if (entry.text === "") return { start: entry.start, end, text: entry.text, words: [] };
-    const { words, estimated } = wordsFor(entry, end);
+    const { words, estimated } = wordsFor(entry, end, pace[i] ?? NaN);
     return { start: entry.start, end, text: entry.text, words, ...(estimated ? { estimated } : {}) };
   });
 }

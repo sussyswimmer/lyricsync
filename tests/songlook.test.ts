@@ -503,15 +503,6 @@ describe("synthetic profiles", () => {
     expect(["arc", "drift"]).toContain(look.style);
   });
 
-  it("never sets a song timed line by line in Lens: the spotlight needs a word to follow", () => {
-    for (const name of ["club remix chant", "bright pop"]) {
-      const built = SYNTHETIC.map((make) => make()).find((b) => b.name === name);
-      if (!built) throw new Error(name);
-      expect(pickLook(songFeatures(built.input)).style).toBe("lens");
-      expect(pickLook(songFeatures({ ...built.input, timing: "line" })).style).not.toBe("lens");
-    }
-  });
-
   it("bright pop: Lens in Syne", () => {
     const look = get("bright pop");
     expect(look.style).toBe("lens");
