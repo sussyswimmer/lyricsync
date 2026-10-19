@@ -20,10 +20,17 @@ import { splitWords, syllables, type Timeline } from "./timing";
 
 // ───────────────────────────────────────────── types ─────────────────────────────────────────────
 
-/** A style is one of the contract's four modes. Stack is how synced lyrics are drawn as a list. */
-export type Style = Mode;
-/** The styles the picker chooses between; on equal scores the earlier one ranks first. */
+/**
+ * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and two the
+ * overlay draws without the core knowing: Poster (the line as a block of rows set big) and Spotlight
+ * (the line sliding through the middle with the voice). Settings never names a style since contract
+ * v4, so the new ones need no contract change.
+ */
+export type Style = Mode | "poster" | "spotlight";
+/** The contract's modes. */
 export const CONTRACT_STYLES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
+/** The styles the picker chooses between; on equal scores the earlier one ranks first. */
+export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight"];
 
 /** How the lyrics are timed: per word (enhanced LRC), per line, evenly paced plain text, or no lyrics. */
 export type Timing = "word" | "line" | "unsynced" | "none";
@@ -125,7 +132,7 @@ export interface EmphasisRule {
  * why it was picked, for the settings card and QA.
  */
 export interface SongLook {
-  style: Mode;
+  style: Style;
   /** a bundled face at its one bundled weight (FONTS) */
   font: { family: string; weight: number };
   /** -100..100 like Settings.curve; used by Arc */
@@ -150,7 +157,7 @@ export interface SongLook {
   /** e.g. "slow, long held notes → Arc with Instrument Serif" */
   reason: string;
   /** the scores behind the pick, for QA */
-  scores: { style: Record<Mode, number>; font: Record<string, number> };
+  scores: { style: Record<Style, number>; font: Record<string, number> };
   /** true where a near-tie was settled by the trackKey hash rather than by the scores */
   ties: { style: boolean; font: boolean };
 }
@@ -496,17 +503,25 @@ export function axesOf(f: SongFeatures): Axes {
 
 // ─────────────────────────────────────────── styles ───────────────────────────────────────────
 
-const STYLE_LABEL: Record<Mode, string> = { arc: "Arc", lens: "Lens", drift: "Drift", stack: "Stack" };
+const STYLE_LABEL: Record<Style, string> = { arc: "Arc", lens: "Lens", drift: "Drift", stack: "Stack", poster: "Poster", spotlight: "Spotlight" };
 /** How far the house look (Arc, Fraunces) is favored when the lyrics are too short to tell much. */
 const HOUSE_PRIOR = 0.15;
 /** A near-tie this close goes to the trackKey hash, so similar songs don't all look the same. */
 const STYLE_TIE = 0.04;
+/**
+ * The one-line styles (the song in focus a line at a time) are each other's alternatives: any of them
+ * scoring within this of the best one-line pick can be a song's look, chosen by the trackKey hash. So
+ * one song gets Arc, the next Poster, Spotlight or Lens, where each would suit it, instead of every
+ * such song getting the same one.
+ */
+export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight"];
+const ONE_LINE_VARIETY = 0.1;
 const FONT_TIE = 0.03;
 
-function styleScores(f: SongFeatures, a: Axes): Record<Mode, number> {
+function styleScores(f: SongFeatures, a: Axes): Record<Style, number> {
   const timed = f.timing === "word" ? 1 : f.timing === "line" ? 0.5 : 0;
   const moody = (1 - a.vivid) * 0.5 + (1 - a.light) * 0.5;
-  const scores: Record<Mode, number> = {
+  const scores: Record<Style, number> = {
     // one line at a time on a curve: held notes, slower songs, lines short enough to bend; and the
     // house look, leaned toward as short lyrics say less
     arc:
@@ -521,19 +536,35 @@ function styleScores(f: SongFeatures, a: Axes): Record<Mode, number> {
     drift: 0.42 * a.space + 0.2 * (1 - a.pace) + 0.18 * moody + 0.1 * has(f, "dreamy") + 0.1 * (1 - a.punch) - 0.2 * a.longLines,
     // a flat, readable list: fast and dense, long lines (it wraps), reading ahead
     stack: 0.36 * a.density + 0.3 * a.pace + 0.14 * a.longLines + 0.1 * (1 - a.space) + 0.1 * (f.script === "cjk" ? a.density : 0),
+    // a gig poster: hooks, a beat to dance to, bright covers; short and medium lines set big in rows
+    poster:
+      0.3 * a.punch + 0.22 * bell(a.pace, 0.55, 0.3) + 0.16 * a.vivid + 0.12 * (1 - a.sustain) + 0.1 * has(f, "dance") + 0.1 * timed + 0.25 * smooth(f.shout, 0.05, 0.4) -
+      0.45 * a.longLines - 0.12 * a.intimacy - 0.25 * smooth(f.widthMedian, 30, 46),
+    // one word at a time in the middle: slow, spacious songs whose words each get their moment; needs
+    // the timing to be real, and words slow enough to read one by one
+    spotlight:
+      0.3 * a.sustain + 0.22 * a.space + 0.2 * (1 - a.pace) + 0.12 * (1 - a.density) + 0.12 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.35 : 0) -
+      0.4 * a.longLines - 0.4 * smooth(a.pace, 0.55, 0.85) - 0.05,
   };
-  for (const s of CONTRACT_STYLES) scores[s] = round(scores[s], 3);
+  for (const s of STYLES) scores[s] = round(scores[s], 3);
   return scores;
 }
 
-function pickStyle(f: SongFeatures, a: Axes): { style: Mode; scores: Record<Mode, number>; tie: boolean } {
+function pickStyle(f: SongFeatures, a: Axes): { style: Style; scores: Record<Style, number>; tie: boolean } {
   const scores = styleScores(f, a);
   // Plain lyrics paced evenly can be anywhere in the song: show several lines, and nothing that
   // tracks a word. Without lyrics the stage shows a state, so the style is only a placeholder.
   if (f.timing === "none" || f.timing === "unsynced") return { style: "stack", scores, tie: false };
-  const ranked = CONTRACT_STYLES.map((s): [Mode, number] => [s, scores[s]]).sort((x, y) => y[1] - x[1]);
+  const ranked = STYLES.map((s): [Style, number] => [s, scores[s]]).sort((x, y) => y[1] - x[1]);
   const [first, second] = ranked;
   if (!first) return { style: "arc", scores, tie: false };
+  if (ONE_LINE_STYLES.includes(first[0])) {
+    const near = ranked.filter(([s, v]) => ONE_LINE_STYLES.includes(s) && first[1] - v < ONE_LINE_VARIETY);
+    if (near.length > 1) {
+      const pick = near[Math.min(near.length - 1, Math.floor(stableHash(`${f.trackKey}#style`) * near.length))] ?? first;
+      return { style: pick[0], scores, tie: true };
+    }
+  }
   const tie = !!second && first[1] - second[1] < STYLE_TIE;
   if (second && tie && stableHash(`${f.trackKey}#style`) >= 0.5) return { style: second[0], scores, tie };
   return { style: first[0], scores, tie };
@@ -585,8 +616,10 @@ function fontVeto(face: FontChoice, f: SongFeatures, a: Axes): string | null {
 }
 
 /** Faces that suit each style. */
-const HARMONY: Record<Mode, Partial<Record<string, number>>> = {
+const HARMONY: Record<Style, Partial<Record<string, number>>> = {
   arc: { Fraunces: 0.08, "Instrument Serif": 0.08, Caveat: 0.04 },
+  poster: { Unbounded: 0.1, Syne: 0.1, "Bricolage Grotesque": 0.08, Fraunces: 0.04 },
+  spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, Syne: 0.04 },
   lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "JetBrains Mono": 0.04 },
   drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06 },
   stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, Fraunces: 0.03 },
@@ -620,7 +653,7 @@ function fontScore(family: string, f: SongFeatures, a: Axes): number {
   }
 }
 
-function pickFont(f: SongFeatures, a: Axes, style: Mode): { face: FontChoice; scores: Record<string, number>; tie: boolean } {
+function pickFont(f: SongFeatures, a: Axes, style: Style): { face: FontChoice; scores: Record<string, number>; tie: boolean } {
   const scores: Record<string, number> = {};
   const eligible: [FontChoice, number][] = [];
   for (const face of FONTS) {

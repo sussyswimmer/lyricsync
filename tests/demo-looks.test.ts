@@ -91,9 +91,9 @@ describe("the look demos (mock tracks 7–9)", () => {
     expect(look.traits).toEqual(expect.arrayContaining(["fast", "black-and-white cover"]));
   });
 
-  it("Strobe Hearts (Club Mix): short shouted hooks under a neon cover are Lens in Unbounded capitals", () => {
+  it("Strobe Hearts (Club Mix): short shouted hooks under a neon cover are a Poster in Unbounded capitals", () => {
     const look = lookOf(demo(STROBE));
-    expect(lookLabel(look)).toBe("Lens · Unbounded");
+    expect(lookLabel(look)).toBe("Poster · Unbounded");
     expect(look.textCase).toBe("upper");
     expect(look.traits).toEqual(expect.arrayContaining(["shouted lines", "remix"]));
   });

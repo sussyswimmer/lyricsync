@@ -94,7 +94,7 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   // they are sung and what their covers look like (src/core/songlook.ts; tests/demo-looks.test.ts).
   // A fast, dense verse under a black-and-white cover: Stack, in Bricolage.
   track("Ledger Lines", 76_000, 3, "found", { synced: ledgerLines }),
-  // Short shouted hooks, a club edit and a neon-on-black cover: Lens, in Unbounded capitals.
+  // Short shouted hooks, a club edit and a neon-on-black cover: Poster, in Unbounded capitals.
   track("Strobe Hearts (Club Mix)", 66_000, 4, "found", { synced: strobeHearts }),
   // Sparse, slow lines with long instrumental gaps under a cold, dark cover: Drift, in Instrument Serif.
   track("Glacier Nocturne", 118_000, 5, "found", { synced: glacierNocturne }),

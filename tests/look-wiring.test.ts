@@ -621,21 +621,21 @@ describe("what onLook hears", () => {
 describe("forced looks (QA)", () => {
   it("win over every song's pick, part by part, across track changes", async () => {
     const r = await rig();
-    r.controller.forceLook({ style: "lens" });
+    r.controller.forceLook({ style: "drift" });
     const sampler = mock("Script Sampler");
     await r.start(sampler, { artwork: art(sampler) });
     await r.lyrics(lyricsOf(sampler));
     const pick = picked(sampler, true);
     expect(pick.style).toBe("stack");
     // the style is forced, the face stays the song's
-    expect(r.stage.last).toMatchObject({ kind: "lyrics", look: { ...drawnAs(pick), style: "lens" } });
+    expect(r.stage.last).toMatchObject({ kind: "lyrics", look: { ...drawnAs(pick), style: "drift" } });
     // onLook hears the look as drawn, with the song's reasons
-    expect(r.heard[r.heard.length - 1]).toEqual({ ...pick, style: "lens" });
+    expect(r.heard[r.heard.length - 1]).toEqual({ ...pick, style: "drift" });
 
     const lanterns = mock("Paper Lanterns");
     await r.start(lanterns, { artwork: art(lanterns) });
     await r.lyrics(lyricsOf(lanterns));
-    expect(r.stage.last?.look).toEqual({ ...drawnAs(picked(lanterns, true)), style: "lens" });
+    expect(r.stage.last?.look).toEqual({ ...drawnAs(picked(lanterns, true)), style: "drift" });
 
     r.controller.forceLook(null);
     expect(r.stage.changes[r.stage.changes.length - 1]).toEqual([drawnAs(picked(lanterns, true)), "now"]);
@@ -683,18 +683,18 @@ describe("the mock tracks through the controller", () => {
       expect(got?.look, t.title).toEqual(picked(t, t.cover !== null));
       expect(got?.drawn, t.title).toEqual(drawnAs(got?.look));
     }
-    // the script sampler and plain lyrics get the readable list; Paper Lanterns and Glass Harbor their curve
+    // the script sampler and plain lyrics get the readable list; the word-timed demos a one-line style
     expect(of("Script Sampler")?.look?.style).toBe("stack");
     expect(FONTS.find((f) => f.family === of("Script Sampler")?.look?.font.family)?.vietnamese).toBe(true);
     expect(of("Letters Never Sent")?.look?.style).toBe("stack");
     expect(of("Letters Never Sent")?.look?.emphasis).toBeNull();
-    for (const title of ["Paper Lanterns", "Glass Harbor", "Neon Monsoon"]) expect(lookLabel(of(title)?.look ?? DEFAULT_PICK), title).toBe("Arc · Fraunces");
+    for (const title of ["Paper Lanterns", "Glass Harbor", "Neon Monsoon"]) expect(["arc", "lens", "poster", "spotlight"], title).toContain(of(title)?.look?.style);
     // the songs without lyrics keep a provisional look over their state
     expect(of("Ultraviolet Static")).toMatchObject({ kind: "not-found" });
     expect(of("Ultraviolet Static")?.look?.traits).toContain("no lyrics");
     expect(of("Tidal Interlude")).toMatchObject({ kind: "instrumental" });
     const styles = new Set([...looks.values()].filter((l) => l.kind === "lyrics").map((l) => l.drawn?.style));
-    expect(styles.size).toBeGreaterThanOrEqual(2);
+    expect(styles.size).toBeGreaterThanOrEqual(4);
   });
 
   it("are deterministic: two windows on the same bridge draw every song alike", async () => {

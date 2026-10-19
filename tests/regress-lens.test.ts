@@ -4,6 +4,7 @@ import { parseLrc, type Line } from "../src/core/lrc";
 import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
 import { DEFAULT_PICK, resolveLook, shadowLayers, withBloom, type Frame, type Look } from "../src/overlay/look";
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
+import { POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotLayout } from "../src/overlay/modes/slot-layouts";
 import type { Cue } from "../src/overlay/modes/types";
 import { findInterludes } from "../src/overlay/motion/interlude";
 import { leadTimes } from "../src/overlay/motion/schedule";
@@ -391,7 +392,7 @@ const BREAK = findInterludes(LINES)[0];
 const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, waiting, running });
 
 /** A built Lens on a fake host, with the live focus row, the next line and the break slot to look at. */
-function lens(l: Look = look(), lines: Line[] = LINES): {
+function lens(l: Look = look(), lines: Line[] = LINES, layout?: SlotLayout): {
   mode: LensMode;
   host: FakeElement;
   row: () => FakeElement | undefined;
@@ -400,7 +401,7 @@ function lens(l: Look = look(), lines: Line[] = LINES): {
   brk: () => FakeElement | undefined;
 } {
   const host = new FakeElement("main");
-  const mode = new LensMode();
+  const mode = new LensMode(layout);
   live.push(mode);
   mode.build(host as unknown as HTMLElement, lines, l);
   const box = (): FakeElement | undefined => host.children[0];
@@ -873,5 +874,36 @@ describe("Lens: the next line below the focus line", () => {
     expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(Math.min(l.size * 0.75, l.height / 2));
     const short = look({ size: 140 }, SHORT);
     expect(focusCenter(short, short.size, nextSize(600, short.size, short))).toBeGreaterThan(short.size * 0.75);
+  });
+});
+
+describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it("Poster turns and places every slot from its block, planned as one track per word on song time", () => {
+    const { mode, row } = lens(look(), LINES, POSTER_LAYOUT);
+    mode.paint(cue(1, 4600));
+    frames();
+    const slots = slotsOf(row());
+    expect(slots.length).toBeGreaterThan(1);
+    for (const slot of slots) {
+      expect(String(slot.style.getPropertyValue("transform"))).toMatch(/^translate\(-?[\d.]+px, -?[\d.]+px\) rotate\(-?[\d.]+deg\) scale\([\d.]+\)$/u);
+      const [track] = slot.getAnimations();
+      expect(track?.keyframes.every((f) => /rotate\(/u.test(String(f.transform)))).toBe(true);
+    }
+    // a block of rows: not every word on one baseline
+    const ys = new Set(slots.map((s) => /translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(s.style.getPropertyValue("transform")))?.[1]));
+    expect(ys.size).toBeGreaterThan(1);
+  });
+
+  it("Spotlight slides the line so the sung word is large in the middle", () => {
+    const { mode, row } = lens(look(), LINES, SPOTLIGHT_LAYOUT);
+    mode.paint(cue(1, 4600));
+    frames();
+    const slots = slotsOf(row());
+    expect(slots.length).toBeGreaterThan(1);
+    for (const slot of slots) expect(slot.getAnimations().length).toBe(1);
+    expect(String(slots[0]?.style.getPropertyValue("transform"))).toMatch(/^translate\(/u);
   });
 });

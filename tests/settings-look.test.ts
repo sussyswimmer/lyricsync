@@ -579,7 +579,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(500);
     const strobe = card();
     if (strobe.kind !== "look") throw new Error(`no look: ${strobe.kind}`);
-    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("lens Unbounded");
+    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("poster Unbounded");
     bridge.player.select(3);
     await vi.advanceTimersByTimeAsync(100);
     expect(card().kind).toBe("finding");

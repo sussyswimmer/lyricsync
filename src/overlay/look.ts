@@ -1,6 +1,7 @@
-import type { Mode, Settings } from "../../contract/contract";
+import type { Settings } from "../../contract/contract";
 import { isMove, isSplash, PLAIN_FLAIR, saneFlair, type Flair } from "../core/flair";
 import type { Palette } from "../core/palette";
+import { STYLES, type Style } from "../core/songlook";
 import { FONTS, fontFor, stackFor, type CjkLang } from "./fonts";
 import type { TextCase } from "./motion/letters";
 import { bloomOf, type EmphasisRule } from "./motion/params";
@@ -16,7 +17,7 @@ export const MIN_TEXT_PX = 11;
  * user's settings scale it (Size, Effects, Glow) but don't choose it.
  */
 export interface PickedLook {
-  style: Mode;
+  style: Style;
   font: { family: string; weight: number };
   /** -100..100, Arc only */
   curve: number;
@@ -78,7 +79,7 @@ export interface Look {
   unsynced: boolean;
   dpr: number;
   /** the style to draw with (the picked one) */
-  style: Mode;
+  style: Style;
   /** the song's motion character, for motionParams */
   energy: number;
   snap: number;
@@ -133,9 +134,10 @@ export function workAreaReference(stageHeight: number, screenHeight: number): nu
 const clamp = (x: number, lo: number, hi: number): number => (x <= lo ? lo : x >= hi ? hi : x);
 const finiteOr = (x: unknown, fallback: number): number => (typeof x === "number" && Number.isFinite(x) ? x : fallback);
 
-export const MODES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
+/** Every style a look can be drawn in (core/songlook.ts STYLES). */
+export const MODES: readonly Style[] = STYLES;
 
-export function isMode(value: unknown): value is Mode {
+export function isMode(value: unknown): value is Style {
   return typeof value === "string" && (MODES as readonly string[]).includes(value);
 }
 
@@ -237,7 +239,7 @@ export function withBloom(look: Omit<Look, "bloom">, bloom: number): Look {
 
 /** Forces parts of the picked look: `?look=`, `--look`, `?flair=`, the mock's `mode`/`font`/`curve`, the console. */
 export interface LookOverride {
-  style?: Mode;
+  style?: Style;
   /** a face's family name */
   font?: string;
   /** -100..100 */
@@ -274,7 +276,7 @@ export function parseLookOverride(value: unknown): LookOverride | null {
   if (typeof value !== "string") return null;
   const [style = "", font = "", curve = ""] = value.split(",").map((s) => s.trim());
   return cleanOverride({
-    ...(style ? { style: style.toLowerCase() as Mode } : {}),
+    ...(style ? { style: style.toLowerCase() as Style } : {}),
     ...(font ? { font } : {}),
     ...(curve ? { curve: Number(curve) } : {}),
   });

@@ -71,11 +71,17 @@ export interface RowFit {
   fit: number;
 }
 
-/** Each word's place as drawn, by logical index: left edge (px), drawn scale (fisheye × zoom), opacity. */
+/**
+ * Each word's place as drawn, by logical index: left edge (px), drawn scale (fisheye × zoom), opacity,
+ * and for layouts that move words off the line (slot-layouts.ts) a drop below its baseline (px) and a
+ * turn (degrees). Lens leaves those at 0.
+ */
 export interface LensPose {
   x: number[];
   scale: number[];
   opacity: number[];
+  y: number[];
+  rotate: number[];
 }
 
 export interface LensInput {
@@ -99,6 +105,10 @@ export interface LensInput {
   steps?: boolean;
   /** the lite tier: every pose holds to the next song-time beat (HOLD, STEP_MS), so software compositing redraws at most 20 times a second */
   hold?: boolean;
+  /** the layout's pose (slot-layouts.ts) with motion eased in by `lens` around singing position `a`; Lens's fisheye (poseOf) by default */
+  poseAt?: (lens: number, a: number, out: LensPose) => LensPose;
+  /** the layout turns words: every frame is `translate rotate scale` */
+  rotates?: boolean;
 }
 
 export interface LensPlan {
@@ -206,7 +216,7 @@ export function rampAt(rampFrom: number | null, t: number): number {
  */
 export function poseOf(shape: Shape, fit: RowFit, width: number, dpr: number, lens: number, a: number, out?: LensPose): LensPose {
   const n = shape.widths.length;
-  const pose = out ?? { x: new Array<number>(n).fill(0), scale: new Array<number>(n).fill(1), opacity: new Array<number>(n).fill(1) };
+  const pose = out ?? blankPose(n);
   const scales = pose.scale;
   for (let j = 0; j < n; j++) {
     const k = lens > 0 ? pull(j, a) : 1;
@@ -224,8 +234,28 @@ export function poseOf(shape: Shape, fit: RowFit, width: number, dpr: number, le
     const right = order[v + 1];
     x += zoom * (s * (widths[j] ?? 0) + ((gaps[v] ?? 0) * (s + (right === undefined ? s : (scales[right] ?? s)))) / 2);
   }
-  for (let j = 0; j < n; j++) scales[j] = (scales[j] ?? 1) * zoom;
+  for (let j = 0; j < n; j++) {
+    scales[j] = (scales[j] ?? 1) * zoom;
+    pose.y[j] = 0;
+    pose.rotate[j] = 0;
+  }
   return pose;
+}
+
+/** A pose of `n` words at rest at the stage's left edge. */
+export function blankPose(n: number): LensPose {
+  return {
+    x: new Array<number>(n).fill(0),
+    scale: new Array<number>(n).fill(1),
+    opacity: new Array<number>(n).fill(1),
+    y: new Array<number>(n).fill(0),
+    rotate: new Array<number>(n).fill(0),
+  };
+}
+
+/** A turned word's transform: translate(x, y) rotate(deg) scale(s), around its left baseline point. */
+export function turnTransform(x: number, y: number, deg: number, scale: number): string {
+  return `translate(${num(x, 2)}px, ${num(y, 2)}px) rotate(${num(deg, 3)}deg) scale(${num(scale, 4)})`;
 }
 
 /** A word's transform: its left baseline point at (x, y + its baseline), scaled around it (transform-origin: 0 baseline). */
@@ -247,15 +277,20 @@ export function planLens(input: LensInput): LensPlan {
   const xs = Array.from({ length: n }, () => new Array<number>(times.length));
   const ss = Array.from({ length: n }, () => new Array<number>(times.length));
   const os = Array.from({ length: n }, () => new Array<number>(times.length));
-  const pose: LensPose = { x: new Array<number>(n).fill(0), scale: new Array<number>(n).fill(1), opacity: new Array<number>(n).fill(1) };
+  const ys = Array.from({ length: n }, () => new Array<number>(times.length));
+  const rs = Array.from({ length: n }, () => new Array<number>(times.length));
+  const pose = blankPose(n);
+  const poseAt = input.poseAt ?? ((lens: number, a: number, out: LensPose): LensPose => poseOf(shape, fit, width, dpr, lens, a, out));
   for (let k = 0; k < times.length; k++) {
     const t = origin + (times[k] ?? 0);
     const lens = motion ? rampAt(rampFrom, t) : 0;
-    poseOf(shape, fit, width, dpr, lens, along[k] ?? 0, pose);
+    poseAt(lens, along[k] ?? 0, pose);
     for (let j = 0; j < n; j++) {
       (xs[j] as number[])[k] = pose.x[j] ?? 0;
       (ss[j] as number[])[k] = pose.scale[j] ?? 1;
       (os[j] as number[])[k] = pose.opacity[j] ?? 1;
+      (ys[j] as number[])[k] = pose.y[j] ?? 0;
+      (rs[j] as number[])[k] = pose.rotate[j] ?? 0;
     }
   }
   const last = times.length - 1;
@@ -269,7 +304,8 @@ export function planLens(input: LensInput): LensPlan {
     const a = c[i] ?? 0;
     return a + ((c[i + 1] ?? a) - a) * p;
   };
-  const tolerance = [THIN.x, THIN.scale, THIN.opacity];
+  const tolerance = [THIN.x, THIN.scale, THIN.opacity, THIN.x, 0.05];
+  const turns = input.rotates === true;
   // The lite tier: each pose holds from one song-time beat to the next (STEP_MS, the beat every stepped
   // track shares), so software compositing redraws the lens at most 20 times a second, on the same
   // instants as the rest of the scene's stepped motion.
@@ -279,8 +315,11 @@ export function planLens(input: LensInput): LensPlan {
     beats.push(duration);
   }
   const tracks = words.map((_, j): Track => {
-    const channels = [xs[j] as number[], ss[j] as number[], os[j] as number[]];
-    const frame = ([x, s, o]: readonly number[]): Keyframe => ({ transform: lensTransform(x ?? 0, y, s ?? 1), opacity: num(clamp01(o ?? 1), 3) });
+    const channels = [xs[j] as number[], ss[j] as number[], os[j] as number[], ys[j] as number[], rs[j] as number[]];
+    const frame = ([x, s, o, dy, r]: readonly number[]): Keyframe => ({
+      transform: turns ? turnTransform(x ?? 0, y + (dy ?? 0), r ?? 0, s ?? 1) : lensTransform(x ?? 0, y + (dy ?? 0), s ?? 1),
+      opacity: num(clamp01(o ?? 1), 3),
+    });
     if (input.hold === true) {
       const onBeats = channels.map((c) => beats.map((ms) => valueAt(c, ms)));
       const keep = holds(onBeats, tolerance);
@@ -288,17 +327,25 @@ export function planLens(input: LensInput): LensPlan {
       return { t0: origin, duration, frames };
     }
     const keep = thin(times, channels, tolerance);
-    const points = keyPoints(times, keep, channels, input.steps === true ? { t0: origin, quantum: [STEP_QUANTUM.x, STEP_QUANTUM.scale, STEP_QUANTUM.opacity] } : null);
+    const points = keyPoints(times, keep, channels, input.steps === true ? { t0: origin, quantum: [STEP_QUANTUM.x, STEP_QUANTUM.scale, STEP_QUANTUM.opacity, STEP_QUANTUM.x, 0.1] } : null);
     return { t0: origin, duration, frames: framesOf(points, duration, frame) };
   });
   const sampleAt = (k: number): LensPose => ({
     x: xs.map((c) => c[k] ?? 0),
     scale: ss.map((c) => c[k] ?? 1),
     opacity: os.map((c) => c[k] ?? 1),
+    y: ys.map((c) => c[k] ?? 0),
+    rotate: rs.map((c) => c[k] ?? 0),
   });
   const at = (t: number): LensPose => {
     const ms = t - origin;
-    return { x: xs.map((c) => valueAt(c, ms)), scale: ss.map((c) => valueAt(c, ms)), opacity: os.map((c) => valueAt(c, ms)) };
+    return {
+      x: xs.map((c) => valueAt(c, ms)),
+      scale: ss.map((c) => valueAt(c, ms)),
+      opacity: os.map((c) => valueAt(c, ms)),
+      y: ys.map((c) => valueAt(c, ms)),
+      rotate: rs.map((c) => valueAt(c, ms)),
+    };
   };
   return { origin, end, rampFrom, tracks, final: sampleAt(last), at };
 }

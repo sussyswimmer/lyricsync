@@ -18,7 +18,8 @@ import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
 import { warmPictures } from "../pictures";
-import { fitRow, lensTransform, OPACITY_MIN, planLens, poseOf, smallestScale, zoomAt, type LensPlan, type LensPose, type RowFit, type Shape } from "./lens-plan";
+import { lensTransform, planLens, turnTransform, zoomAt, type LensPlan, type LensPose, type Shape } from "./lens-plan";
+import { LENS_LAYOUT, POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
 import type { Cue, ModeRenderer } from "./types";
 
 // The fisheye's geometry lives in lens-plan.ts (pure); these stay importable from here.
@@ -77,13 +78,15 @@ interface Metrics {
 /** Where a focus line goes: its row, fitted, centered at `y`, its baseline on the device pixel grid. */
 interface Geometry {
   shape: Shape;
-  fit: RowFit;
+  fit: SlotFit;
   /** font size under the full lens, px */
   size: number;
   /** center, px from the top of the stage */
   y: number;
   /** baseline, px from the top of the stage */
   baseline: number;
+  /** from its center down to where the next line's top goes, px */
+  drop: number;
 }
 
 /** A focus line: one absolutely placed slot per word (the lens), each holding the word's `.kw` box (the karaoke). */
@@ -218,6 +221,8 @@ function nextElement(): HTMLDivElement {
 export class LensMode implements ModeRenderer {
   /** Nothing happens at a word boundary that the compositor isn't already drawing: sleep through them. */
   readonly wordWakes = false;
+  /** where the focus line's words go: Lens's fisheye, or Poster's or Spotlight's layout (slot-layouts.ts) */
+  private readonly layout: SlotLayout;
   private readonly timeline = new SongTimeline();
   /** slow motion steps on the song-time beat where the engine composites stepped keyframes */
   private readonly steps = compositorSteps();
@@ -244,7 +249,7 @@ export class LensMode implements ModeRenderer {
   private current: string | null = null;
   private nextShown: NextShown | null = null;
   /** what showNext last drew the next line for, to draw it again at rest */
-  private nextAt: { index: number; focusSize: number; y: number } | null = null;
+  private nextAt: { index: number; focusSize: number; y: number; drop: number } | null = null;
   /** the next focus line, built (hidden) and planned ahead in idle slices */
   private prepared: Row | null = null;
   private prepareTimer: ReturnType<typeof setTimeout> | null = null;
@@ -266,6 +271,10 @@ export class LensMode implements ModeRenderer {
   /** numbers each focus line's animation group, so a line taken down never cancels its successor's */
   private serial = 0;
 
+  constructor(layout: SlotLayout = LENS_LAYOUT) {
+    this.layout = layout;
+  }
+
   /** The stage crossfades line changes only under reduced motion; otherwise Lens moves its lines itself. */
   crossfades(_next?: Cue): boolean {
     return this.look ? !this.look.motion : true;
@@ -285,7 +294,7 @@ export class LensMode implements ModeRenderer {
     this.params = motionParams(look);
     this.motionKey = paramsKey(this.params);
     host.textContent = "";
-    const box = h("div", "lens");
+    const box = h("div", this.layout.kind === "lens" ? "lens" : `lens is-${this.layout.kind}`);
     box.style.fontFamily = look.font;
     box.style.fontWeight = String(look.weight);
     box.style.fontSize = `${look.size}px`;
@@ -552,13 +561,25 @@ export class LensMode implements ModeRenderer {
     const m = this.metrics[index];
     if (!m) return null;
     const shape: Shape = { widths: m.widths, order: m.order, gaps: gapsFor(m, this.space) };
-    const fit = fitRow(shape, look.size, look.width, this.lensed(look));
+    const fit = this.layout.fit(shape, look.size, { width: look.width, height: look.height }, this.lensed(look), index, look.size > 0 ? this.baseline / look.size : 0.8);
     const size = look.size * fit.fit;
     const after = this.lines[index + 1] ? this.metrics[index + 1] : undefined;
-    const y = focusCenter(look, size, after ? nextSize(after.full, size, look) : null);
+    const next = after ? nextSize(after.full, size, look) : null;
+    let y: number;
+    let drop: number;
+    if (this.layout.kind === "lens") {
+      y = focusCenter(look, size, next);
+      drop = size * NEXT_DROP;
+    } else {
+      // a taller block: centered, but clear of the top, with the next line below it on the stage
+      const reach = this.layout.extent(fit, size);
+      drop = reach.below + 0.55 * look.size;
+      const room = look.height - drop - (next ?? 0) * NEXT_DEPTH - 2;
+      y = Math.max(Math.min(look.y, room), Math.min(reach.above + 0.2 * look.size, look.height / 2));
+    }
     // a 1em box of the fitted size centered on y at scale 1; its baseline lands on a device pixel
     const baseline = snap(y - size / 2 + this.baseline * fit.fit, look.dpr);
-    return { shape, fit, size, y, baseline };
+    return { shape, fit, size, y, baseline, drop };
   }
 
   /** Words move under the lens: with motion, on synced lyrics (the lite tier keeps it). */
@@ -579,7 +600,7 @@ export class LensMode implements ModeRenderer {
     const was = this.nextShown;
     this.current = key;
     const animated = look.motion && previous !== null && !this.frozen;
-    const glide = animated && cue.running && previous !== "" && view.kind === "line" && was?.index === view.index;
+    const glide = animated && this.layout.glides && cue.running && previous !== "" && view.kind === "line" && was?.index === view.index;
     this.settleGlides();
     const old = this.focus;
     this.focus = null;
@@ -596,7 +617,7 @@ export class LensMode implements ModeRenderer {
       const brk = this.breakAt(view.il, g.y, look);
       this.focus = { kind: "break", brk };
       this.startBreak(brk, cue.t, look);
-      this.showNext(view.il.next, g.size, g.y, look, animated ? "fade" : "cut");
+      this.showNext(view.il.next, g.size, g.y, look, animated ? "fade" : "cut", g.drop);
       this.schedulePrepare();
       return;
     }
@@ -607,7 +628,7 @@ export class LensMode implements ModeRenderer {
     this.mountRow(row, cue.t, cue.running, look);
     if (glide && was) this.glideIn(row, was, look);
     else if (animated) this.fadeIn(row.el);
-    this.showNext(view.index + 1, row.size, row.y, look, glide ? "glide" : animated ? "fade" : "cut");
+    this.showNext(view.index + 1, row.size, row.y, look, glide ? "glide" : animated ? "fade" : "cut", row.drop);
     this.schedulePrepare();
   }
 
@@ -622,7 +643,7 @@ export class LensMode implements ModeRenderer {
         put(f.row.el, "opacity", "1");
       }
       const at = this.nextAt;
-      if (at) this.showNext(at.index, at.focusSize, at.y, look, "cut");
+      if (at) this.showNext(at.index, at.focusSize, at.y, look, "cut", at.drop);
     }
     if (f.kind === "break") {
       this.startBreak(f.brk, cue.t, look, force);
@@ -804,7 +825,7 @@ export class LensMode implements ModeRenderer {
    * the line that just moved into focus); "fade": a different line fades out and this one in; "cut":
    * drawn at once.
    */
-  private showNext(index: number, focusSize: number, y: number, look: Look, how: "glide" | "fade" | "cut"): void {
+  private showNext(index: number, focusSize: number, y: number, look: Look, how: "glide" | "fade" | "cut", drop = focusSize * NEXT_DROP): void {
     const line = this.lines[index];
     const m = this.metrics[index];
     const shown = this.nextShown;
@@ -821,7 +842,7 @@ export class LensMode implements ModeRenderer {
     const size = nextSize(m.full, focusSize, look);
     // centered from the measured width (not translate(-50%)), so the text sits on whole device pixels
     const x = snap((look.width - (m.full * size) / look.size) / 2, look.dpr);
-    const top = snap(y + focusSize * NEXT_DROP, look.dpr);
+    const top = snap(y + drop, look.dpr);
     const text = line.words.map((w) => w.text).join("").trimEnd();
     if (next.textContent !== text) next.textContent = text;
     put(next, "font-size", `${num(size, 2)}px`);
@@ -830,7 +851,7 @@ export class LensMode implements ModeRenderer {
     put(next, "transform", `translate(${num(x, 2)}px, ${num(top, 2)}px)`);
     put(next, "opacity", "1");
     this.nextShown = { index, size, baseline: top + (this.baseline * size) / look.size };
-    this.nextAt = { index, focusSize, y };
+    this.nextAt = { index, focusSize, y, drop };
     if (how === "glide") {
       const rise = NEXT_RISE * focusSize;
       const frames = this.wallFrames(
@@ -858,7 +879,7 @@ export class LensMode implements ModeRenderer {
   private introGeometry(next: number, look: Look): Geometry {
     const m = this.metrics[next];
     const y = focusCenter(look, look.size, m ? nextSize(m.full, look.size, look) : null);
-    return { shape: { widths: [], order: [], gaps: [] }, fit: { low: 1, rest: 0, widest: 0, fit: 1 }, size: look.size, y, baseline: y };
+    return { shape: { widths: [], order: [], gaps: [] }, fit: { low: 1, rest: 0, widest: 0, fit: 1 }, size: look.size, y, baseline: y, drop: look.size * NEXT_DROP };
   }
 
   /** Builds line `index`'s row: a slot per word, each placed at the line's baseline, holding the word's `.kw` box. */
@@ -889,7 +910,7 @@ export class LensMode implements ModeRenderer {
     const row: Row = { ...g, index, el, slots, words, slotY: g.baseline - this.baseline, karaoke: null, plan: null };
     this.shade(row, look);
     // where it rests: at rest, and in the line's lens once planned (mountRow)
-    this.pose(row, poseOf(g.shape, g.fit, look.width, look.dpr, 0, 0));
+    this.pose(row, this.layout.pose(g.shape, g.fit, look.width, look.dpr, 0, 0));
     return row;
   }
 
@@ -899,15 +920,18 @@ export class LensMode implements ModeRenderer {
    * re-rastered as the lens moves.
    */
   private shade(row: Row, look: Look): void {
-    const lensed = this.lensed(look);
-    const shadow = drawnShadow(look, smallestScale(row.fit, look.width, lensed), lensed ? OPACITY_MIN : 1);
+    const faintest = this.layout.faintest(row.fit, look.width, this.lensed(look));
+    const shadow = drawnShadow(look, faintest.scale, faintest.opacity);
     for (const slot of row.slots) put(slot, "--ut-dark", shadow);
   }
 
   /** Every slot's inline style: what shows outside the lens's animations. */
   private pose(row: Row, pose: LensPose): void {
+    const turns = this.layout.rotates;
     row.slots.forEach((slot, j) => {
-      put(slot, "transform", lensTransform(pose.x[j] ?? 0, row.slotY, pose.scale[j] ?? 1));
+      const x = pose.x[j] ?? 0;
+      const y = row.slotY + (pose.y[j] ?? 0);
+      put(slot, "transform", turns ? turnTransform(x, y, pose.rotate[j] ?? 0, pose.scale[j] ?? 1) : lensTransform(x, y, pose.scale[j] ?? 1));
       put(slot, "opacity", num(pose.opacity[j] ?? 1, 3));
     });
   }
@@ -936,7 +960,7 @@ export class LensMode implements ModeRenderer {
       row.plan = null;
     }
     const plan = row.plan;
-    this.pose(row, plan ? plan.final : poseOf(row.shape, row.fit, look.width, look.dpr, 0, 0));
+    this.pose(row, plan ? plan.final : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0));
     for (const slot of row.slots) put(slot, "will-change", plan ? "transform, opacity" : "auto");
     if (look.unsynced) return;
     row.karaoke ??= this.karaokeFor(row, look);
@@ -958,6 +982,8 @@ export class LensMode implements ModeRenderer {
       motion: this.lensed(look),
       steps: this.steps,
       hold: look.power === "lite" && this.steps,
+      poseAt: (lens, a, out) => this.layout.pose(row.shape, row.fit, look.width, look.dpr, lens, a, out),
+      rotates: this.layout.rotates,
     });
   }
 
@@ -979,10 +1005,10 @@ export class LensMode implements ModeRenderer {
         // a word's top middle where the lens draws it at that moment (its slot: transform-origin 0 baseline)
         host: row.el,
         spot: (j, t) => {
-          const pose = row.plan ? row.plan.at(t) : poseOf(row.shape, row.fit, look.width, look.dpr, 0, 0);
+          const pose = row.plan ? row.plan.at(t) : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0);
           const s = pose.scale[j] ?? 1;
           const w = (row.shape.widths[j] ?? 0) * s;
-          return { x: (pose.x[j] ?? 0) + w / 2, y: row.slotY + this.baseline * (1 - s), w };
+          return { x: (pose.x[j] ?? 0) + w / 2, y: row.slotY + (pose.y[j] ?? 0) + this.baseline * (1 - s), w };
         },
       },
       this.timeline,
@@ -1084,4 +1110,14 @@ export class LensMode implements ModeRenderer {
 
 export function createLens(): ModeRenderer {
   return new LensMode();
+}
+
+/** Poster: the line as a block of rows justified by size, composed its own way each line (slot-layouts.ts). */
+export function createPoster(): ModeRenderer {
+  return new LensMode(POSTER_LAYOUT);
+}
+
+/** Spotlight: the line slides through the middle of the screen with the voice, the sung word large (slot-layouts.ts). */
+export function createSpotlight(): ModeRenderer {
+  return new LensMode(SPOTLIGHT_LAYOUT);
 }

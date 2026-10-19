@@ -301,7 +301,7 @@ describe("the picked look", () => {
       ...pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }),
       traits: ["big repeating hooks"],
       reason: "big repeating hooks → Lens with Syne",
-      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3 }, font: { Syne: 0.5 } },
+      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3, poster: 0.2, spotlight: 0.1 }, font: { Syne: 0.5 } },
       ties: { style: false, font: false },
     };
     const drawn: PickedLook = pickedOf(song);

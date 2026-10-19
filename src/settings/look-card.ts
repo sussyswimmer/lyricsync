@@ -1,6 +1,5 @@
-import type { Mode } from "../../contract/contract";
 import { FONTS } from "../core/faces";
-import { lookLabel } from "../core/songlook";
+import { lookLabel, type Style } from "../core/songlook";
 import { h } from "../overlay/dom";
 import type { StageView } from "../overlay/stage";
 import { icon, nextId, setAttr, setText } from "./controls";
@@ -11,7 +10,7 @@ import { icon, nextId, setAttr, setText } from "./controls";
  * which adds the reason and its traits.
  */
 export interface CardLook {
-  style: Mode;
+  style: Style;
   font: { family: string; weight: number };
   /** e.g. "slow, long held notes → Arc with Instrument Serif" */
   reason?: string;
@@ -87,7 +86,7 @@ export function reasonSentence(look: CardLook): string {
 export const QUIET_MS = 1000;
 
 /** Each style's glyph, as the old style tiles drew it. */
-const GLYPHS: Record<Mode, readonly [string, number, number][]> = {
+const GLYPHS: Record<Style, readonly [string, number, number][]> = {
   arc: [
     ["M7 4.6 Q12 1.2 17 4.6", 1.3, 0.45],
     ["M2.5 10.2 Q12 3.4 21.5 10.2", 2.4, 1],
@@ -107,6 +106,18 @@ const GLYPHS: Record<Mode, readonly [string, number, number][]> = {
     ["M3 2.6 H21", 1.3, 0.4],
     ["M3 8 H21", 2.6, 1],
     ["M3 13.4 H21", 1.3, 0.4],
+  ],
+  // a block of rows, the short one set big
+  poster: [
+    ["M4 3 H20", 2.2, 0.55],
+    ["M7 8.2 H17", 4.2, 1],
+    ["M4 13.4 H20", 2.2, 0.55],
+  ],
+  // the sung word large in the middle, its neighbors small and faint to either side
+  spotlight: [
+    ["M2.5 8 H4.5", 1.6, 0.35],
+    ["M8 8 H16", 5.2, 1],
+    ["M19.5 8 H21.5", 1.6, 0.35],
   ],
 };
 /** Three dots while the lyrics are on their way; one faint line when there are none. */

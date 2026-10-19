@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Lyrics, Mode } from "../contract/contract";
+import type { Lyrics } from "../contract/contract";
 import { MOCK_TRACKS, lyricsOf, trackKeyOf } from "../src/bridge/mock";
 import { FONTS } from "../src/core/faces";
 import { parseLrc } from "../src/core/lrc";
@@ -7,6 +7,7 @@ import { coverStats, type CoverStats } from "../src/core/palette";
 import {
   CONTRACT_STYLES,
   LookKeeper,
+  STYLES,
   hasWordTags,
   hintsOf,
   lookLabel,
@@ -15,6 +16,7 @@ import {
   songFeatures,
   stableHash,
   timingOf,
+  type Style,
   type EmphasisRule,
   type SongFeatures,
   type SongInput,
@@ -390,7 +392,7 @@ function looksOf(builds: readonly Built[]): Map<string, SongLook> {
 }
 
 const face = (family: string) => FONTS.find((x) => x.family === family);
-const MODES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
+const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight"];
 
 // ───────────────────────────── tests ─────────────────────────────
 
@@ -490,9 +492,9 @@ describe("synthetic profiles", () => {
     expect(look.energy).toBeLessThanOrEqual(0.2);
   });
 
-  it("club remix: Lens in Unbounded capitals", () => {
+  it("club remix: a Poster in Unbounded capitals", () => {
     const look = get("club remix chant");
-    expect(look.style).toBe("lens");
+    expect(look.style).toBe("poster");
     expect(look.font.family).toBe("Unbounded");
     expect(look.textCase).toBe("upper");
   });
@@ -686,7 +688,7 @@ describe("determinism and stability", () => {
 describe("the look as the stage takes it", () => {
   /** PickedLook in src/overlay/look.ts, restated: every SongLook must be one. */
   interface PickedLook {
-    style: Mode;
+    style: Style;
     font: { family: string; weight: number };
     curve: number;
     energy: number;
@@ -770,8 +772,9 @@ describe("legibility invariants over a feature grid", () => {
     }
   });
 
-  it("never picks anything but the contract's four modes", () => {
-    expect(CONTRACT_STYLES).toEqual(MODES);
+  it("picks only the six styles: the contract's four modes, Poster and Spotlight", () => {
+    expect(STYLES).toEqual(MODES);
+    expect(STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
     const looks = [...grid.map((f) => pickLook(f)), ...looksOf([...SYNTHETIC.map((make) => make()), ...mockInputs()]).values()];
     const picked = new Set<string>();
     for (const look of looks) {
