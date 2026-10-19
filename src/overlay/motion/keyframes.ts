@@ -201,3 +201,8 @@ export function num(v: number, digits = 3): string {
 export function liftScale(x: number, y: number, s: number): string {
   return `translate(${num(x, 2)}px, ${num(y, 2)}px) scale(${num(s, 4)})`;
 }
+
+/** translate(0, y) rotate(r) scale(s): liftScale with a tilt (a swaying word), one function list for every keyframe. */
+export function liftTiltScale(y: number, deg: number, s: number): string {
+  return `translate(0px, ${num(y, 2)}px) rotate(${num(deg, 3)}deg) scale(${num(s, 4)})`;
+}

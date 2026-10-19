@@ -1,4 +1,5 @@
 import type { Mode, Settings } from "../../contract/contract";
+import { isMove, isSplash, PLAIN_FLAIR, saneFlair, type Flair } from "../core/flair";
 import type { Palette } from "../core/palette";
 import { FONTS, fontFor, stackFor, type CjkLang } from "./fonts";
 import type { TextCase } from "./motion/letters";
@@ -32,6 +33,8 @@ export interface PickedLook {
   /** em */
   letterSpacing: number;
   textCase: "as-is" | "upper";
+  /** Effects mode's flair: how the words move, and the splash (core/flair.ts) */
+  flair: Flair;
 }
 
 /** The house look, for a song nothing is known about yet (SPEC §2.2). */
@@ -46,6 +49,7 @@ export const DEFAULT_PICK: PickedLook = Object.freeze({
   scale: 1,
   letterSpacing: 0,
   textCase: "as-is" as const,
+  flair: PLAIN_FLAIR,
 });
 
 /** Everything a mode needs to draw, resolved to concrete px and colors for the current stage. */
@@ -93,6 +97,13 @@ export interface Look {
   /** em */
   letterSpacing: number;
   textCase: TextCase;
+  /** the song's flair (PickedLook.flair) */
+  flair: Flair;
+  /**
+   * Settings.effectsMode (effectsModeOf): the song's flair, splashes and word pictures. Off, every word
+   * rises and nothing else is added.
+   */
+  effectsMode: boolean;
 }
 
 export interface Frame {
@@ -138,12 +149,21 @@ export function effectsOf(settings: Settings): number {
 }
 
 /**
+ * Settings.effectsMode (contract v5): each song's own motion, its splashes and the tiny pictures beside
+ * words. A store from before v5 has none, which counts as on.
+ */
+export function effectsModeOf(settings: Settings): boolean {
+  const value: unknown = "effectsMode" in settings ? settings.effectsMode : undefined;
+  return value !== false;
+}
+
+/**
  * Only the PickedLook fields of a look: what the stage draws with. A song's look (core/songlook's
  * SongLook) also carries why it was picked (traits, reason, scores), which no drawing depends on.
  */
 export function pickedOf(look: PickedLook): PickedLook {
-  const { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase } = look;
-  return { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase };
+  const { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase, flair } = look;
+  return { style, font, curve, energy, snap, glow, emphasis, scale, letterSpacing, textCase, flair };
 }
 
 /** A pick made safe to draw: a known style, every number finite and in range (an unknown face falls back in fontFor). */
@@ -162,6 +182,7 @@ export function sanePick(look: PickedLook): PickedLook {
     scale: clamp(finiteOr(look.scale, 1), 0.82, 1.2),
     letterSpacing: clamp(finiteOr(look.letterSpacing, 0), -0.1, 0.2),
     textCase: look.textCase === "upper" ? "upper" : "as-is",
+    flair: saneFlair(look.flair),
   };
 }
 
@@ -201,6 +222,8 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
     power: frame.power ?? "full",
     letterSpacing: pick.letterSpacing,
     textCase: pick.textCase,
+    flair: pick.flair,
+    effectsMode: effectsModeOf(settings),
   };
   return withBloom(look, bloomOf(pick.glow, settings.glow));
 }
@@ -213,13 +236,15 @@ export function withBloom(look: Omit<Look, "bloom">, bloom: number): Look {
 
 // ---------- QA overrides (SPEC §4.10): never stored ----------
 
-/** Forces parts of the picked look: `?look=`, `--look`, the mock's `mode`/`font`/`curve`, the console. */
+/** Forces parts of the picked look: `?look=`, `--look`, `?flair=`, the mock's `mode`/`font`/`curve`, the console. */
 export interface LookOverride {
   style?: Mode;
   /** a face's family name */
   font?: string;
   /** -100..100 */
   curve?: number;
+  /** parts of the song's flair (Effects mode): `?flair=move[,accent[,splash]]` */
+  flair?: Partial<Flair>;
 }
 
 /** The bundled face named `name` (family or label, any case), if any. */
@@ -237,7 +262,12 @@ export function cleanOverride(o: LookOverride | null | undefined): LookOverride 
   const face = typeof o.font === "string" ? faceNamed(o.font) : null;
   if (face) out.font = face;
   if (typeof o.curve === "number" && Number.isFinite(o.curve)) out.curve = clamp(o.curve, -100, 100);
-  return out.style !== undefined || out.font !== undefined || out.curve !== undefined ? out : null;
+  const flair: Partial<Flair> = {};
+  if (isMove(o.flair?.move)) flair.move = o.flair.move;
+  if (isMove(o.flair?.accent)) flair.accent = o.flair.accent;
+  if (isSplash(o.flair?.splash)) flair.splash = o.flair.splash;
+  if (Object.keys(flair).length > 0) out.flair = flair;
+  return out.style !== undefined || out.font !== undefined || out.curve !== undefined || out.flair !== undefined ? out : null;
 }
 
 /** `style[,family[,curve]]` (`?look=lens`, `?look=lens,Syne`, `?look=arc,,-50`): empty parts keep the pick. */
@@ -249,6 +279,16 @@ export function parseLookOverride(value: unknown): LookOverride | null {
     ...(font ? { font } : {}),
     ...(curve ? { curve: Number(curve) } : {}),
   });
+}
+
+/**
+ * `move[,accent[,splash]]` (`?flair=bounce`, `?flair=sway,pulse,confetti`, `?flair=,,drops`): forces
+ * the song's flair for QA; empty parts keep the pick. An accent left out follows the move.
+ */
+export function parseFlairOverride(value: unknown): LookOverride | null {
+  if (typeof value !== "string") return null;
+  const [move = "", accent = "", splash = ""] = value.split(",").map((s) => s.trim().toLowerCase());
+  return cleanOverride({ flair: { ...(move ? { move: move as Flair["move"] } : {}), ...(accent || move ? { accent: (accent || move) as Flair["accent"] } : {}), ...(splash ? { splash: splash as Flair["splash"] } : {}) } });
 }
 
 /** The `mode`, `font` and `curve` of a `?settings=` patch (the mock's QA tools set the look that way). */
@@ -271,7 +311,8 @@ export function overrideFromSettings(json: string | null): LookOverride | null {
 
 /** Two overrides as one, `b`'s parts over `a`'s. */
 export function mergeOverrides(a: LookOverride | null, b: LookOverride | null): LookOverride | null {
-  return cleanOverride({ ...(a ?? {}), ...(b ?? {}) });
+  const flair = { ...(a?.flair ?? {}), ...(b?.flair ?? {}) };
+  return cleanOverride({ ...(a ?? {}), ...(b ?? {}), flair });
 }
 
 /** `look` with an override's parts in place of the pick's (a forced face at its bundled weight). */
@@ -284,6 +325,7 @@ export function withOverride(look: PickedLook, override: LookOverride | null): P
     ...(o.style ? { style: o.style } : {}),
     ...(face ? { font: { family: face.family, weight: face.weight } } : {}),
     ...(o.curve !== undefined ? { curve: o.curve } : {}),
+    ...(o.flair ? { flair: { ...look.flair, ...o.flair } } : {}),
   };
 }
 

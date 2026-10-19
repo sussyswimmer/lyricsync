@@ -1,9 +1,11 @@
+import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
 import { karaokeWords } from "../../core/timing";
 import { h, put } from "../dom";
 import { MIN_TEXT_PX, rgba, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
+import { picturesOf, songDecor } from "../motion/decor";
 import { InterludeDots } from "../motion/dots";
 import { findInterludes, type Interlude } from "../motion/interlude";
 import { compositorSteps, HOLD, holds, keyframesAt, num, SAMPLE_MS, thin } from "../motion/keyframes";
@@ -21,6 +23,7 @@ import {
   LEAVE_MS,
   LITE_FADE_STEPS,
   LITE_SCROLL_MS,
+  LineMoves,
   MAX_GLIDE_LINES,
   motionParams,
   paramsKey,
@@ -35,6 +38,7 @@ import {
 import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, WallGlide } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
+import { warmPictures } from "../pictures";
 import type { Cue, ModeRenderer } from "./types";
 
 /** Line box height in font sizes (`.drift-row` in styles/stage.css). */
@@ -280,6 +284,9 @@ export class DriftMode implements ModeRenderer {
   private box: HTMLDivElement | null = null;
   /** the lyric lines, in the look's case */
   private lines: Line[] = [];
+  /** each line's flair (Effects mode), by line index */
+  private decor: LineDecor[] = [];
+  private readonly moves = new LineMoves();
   private rows: Row[] = [];
   private breaks: Break[] = [];
   private slots: Slot[] = [];
@@ -361,6 +368,8 @@ export class DriftMode implements ModeRenderer {
     if (look.unsynced) box.classList.add("is-calm");
     const sung = casedLines(lines, look.textCase);
     this.lines = sung;
+    this.decor = songDecor(sung, look);
+    warmPictures(picturesOf(this.decor));
     this.interludes = look.unsynced ? [] : findInterludes(sung);
     this.leads = leadTimes(sung);
     this.rows = sung.map((line, index) => {
@@ -535,6 +544,7 @@ export class DriftMode implements ModeRenderer {
     this.slots = [];
     this.specs = [];
     this.lines = [];
+    this.decor = [];
     this.leads = [];
   }
 
@@ -846,6 +856,7 @@ export class DriftMode implements ModeRenderer {
   }
 
   private karaokeFor(row: Row, look: Look): KaraokeLine {
+    const decor = this.decor[row.index];
     return new KaraokeLine(
       karaokeWords(row.line),
       row.words,
@@ -854,8 +865,9 @@ export class DriftMode implements ModeRenderer {
         font: `${look.weight} ${row.size.toFixed(2)}px ${look.font}`,
         letterSpacingPx: look.letterSpacing * row.size,
         lineHeight: LINE_HEIGHT,
-        params: this.params ?? motionParams(look),
+        params: this.moves.paramsFor(look, this.params ?? motionParams(look), decor?.move ?? "rise"),
         steps: this.steps,
+        ...(decor ? { decor: decor.words } : {}),
       },
       this.timeline,
       `kw${row.index}`,

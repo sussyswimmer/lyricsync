@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 4;
+pub const CONTRACT_VERSION: u8 = 5;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`, and
-/// contracts v3 and v4 only added fields, which stored settings without them get as defaults.
+/// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults.
 pub const SETTINGS_VERSION: u8 = 1;
 pub static DEFAULT_SETTINGS: std::sync::LazyLock<Settings> =
     std::sync::LazyLock::new(Settings::default);
@@ -183,10 +183,19 @@ pub struct Settings {
     /// contract v4: settings saved without it read as 50.
     #[serde(default = "default_effects")]
     pub effects: f64,
+    /// Effects mode: each song moves its own way, big moments splash, and words that name something
+    /// get a tiny picture; false keeps every song's words rising alike. Added in contract v5:
+    /// settings saved without it read as true.
+    #[serde(default = "default_effects_mode")]
+    pub effects_mode: bool,
 }
 /// `Settings.effects` when it is missing (settings saved before contract v4).
 fn default_effects() -> f64 {
     50.0
+}
+/// `Settings.effectsMode` when it is missing (settings saved before contract v5).
+fn default_effects_mode() -> bool {
+    true
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -222,6 +231,7 @@ impl Default for Settings {
                 nudge_later: "CmdOrCtrl+Alt+Shift+[".into(),
             },
             effects: default_effects(),
+            effects_mode: default_effects_mode(),
         }
     }
 }
@@ -523,11 +533,27 @@ mod tests {
                     "nudgeEarlier": "CmdOrCtrl+Alt+Shift+]",
                     "nudgeLater": "CmdOrCtrl+Alt+Shift+["
                 },
-                "effects": 50.0
+                "effects": 50.0,
+                "effectsMode": true
             })
         );
-        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level.
+        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level and Effects mode.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
+        assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
+    }
+    #[test]
+    fn settings_saved_before_contract_v5_read_as_effects_mode_on() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["effectsMode"] = json!(false);
+        assert!(
+            !serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .effects_mode
+        );
+        saved.as_object_mut().unwrap().remove("effectsMode");
+        let v4: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v4, *DEFAULT_SETTINGS);
+        assert!(v4.effects_mode);
     }
     #[test]
     fn settings_saved_before_contract_v4_read_as_effects_50() {
@@ -622,7 +648,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 4);
+        assert_eq!(CONTRACT_VERSION, 5);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

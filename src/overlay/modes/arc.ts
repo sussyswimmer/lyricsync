@@ -1,4 +1,5 @@
 import "../../styles/arc.css";
+import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
 import { karaokeWords } from "../../core/timing";
 import { h, put, s } from "../dom";
@@ -6,15 +7,17 @@ import { whenFaceLoads } from "../fonts";
 import { dropShadow, MIN_TEXT_PX, snap, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
+import { picturesOf, songDecor } from "../motion/decor";
 import { InterludeDots } from "../motion/dots";
 import { findInterludes, type Interlude } from "../motion/interlude";
 import { compositorSteps, HOLD, holds, keyframesAt, num, SAMPLE_MS, sampleTimes, thin } from "../motion/keyframes";
 import { canvasMeasure, casedLines, graphemes, isRtl as hasRtl, roughMeasure, type Measure } from "../motion/letters";
 import { KaraokeLine, nextFrame, SLICE_MS } from "../motion/line";
-import { CALM_SCROLL_SPRING, DOTS, LITE_SCROLL_MS, motionParams, paramsKey, SCROLL_SPRING, SUNG_LEVEL, type MotionParams } from "../motion/params";
+import { CALM_SCROLL_SPRING, DOTS, LineMoves, LITE_SCROLL_MS, motionParams, paramsKey, SCROLL_SPRING, SUNG_LEVEL, type MotionParams } from "../motion/params";
 import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, WallGlide } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
+import { warmPictures } from "../pictures";
 import { arcLength, arcPlacer, frameTransform, reach, visualOffsets, wordFrames, type ArcCurve, type ArcWord, type WordFrame, type WordRun } from "./arc-place";
 import type { Cue, ModeRenderer } from "./types";
 
@@ -403,6 +406,9 @@ export class ArcMode implements ModeRenderer {
   private motionKey = "";
   /** the lyric lines, in the look's case */
   private lines: Line[] = [];
+  /** each line's flair (Effects mode), by line index */
+  private decor: LineDecor[] = [];
+  private readonly moves = new LineMoves();
   private box: HTMLDivElement | null = null;
   /** the shared curve, resolved per build */
   private geo: ArcGeometry = { bend: 0, mid: 0, minFit: MIN_FIT };
@@ -475,6 +481,8 @@ export class ArcMode implements ModeRenderer {
     host.append(box);
     this.box = box;
     this.lines = casedLines(lines, look.textCase);
+    this.decor = songDecor(this.lines, look);
+    warmPictures(picturesOf(this.decor));
     this.interludes = look.unsynced ? [] : findInterludes(this.lines);
     this.leads = leadTimes(this.lines);
     // views in song order: each break just before the line it leads into
@@ -603,6 +611,7 @@ export class ArcMode implements ModeRenderer {
     this.box = null;
     this.lastCue = null;
     this.lines = [];
+    this.decor = [];
     this.lengths = [];
     this.leads = [];
     this.views = [];
@@ -1260,6 +1269,7 @@ export class ArcMode implements ModeRenderer {
     const line = this.lines[g.i] as Line;
     const curve = this.curveOf(look, this.geo.mid, this.geo.bend);
     const metrics = { baseline: this.baseline * g.size, lineHeight: LINE_HEIGHT * g.size, spacing: look.letterSpacing * g.size };
+    const decor = this.decor[g.i];
     return new KaraokeLine(
       karaokeWords(line),
       g.boxes,
@@ -1268,9 +1278,10 @@ export class ArcMode implements ModeRenderer {
         font: this.fontAt(look, g.size),
         letterSpacingPx: look.letterSpacing * g.size,
         lineHeight: LINE_HEIGHT,
-        params: this.params ?? motionParams(look),
+        params: this.moves.paramsFor(look, this.params ?? motionParams(look), decor?.move ?? "rise"),
         place: arcPlacer(curve, g.shape.words, g.frames, g.shape.total, metrics),
         steps: this.steps,
+        ...(decor ? { decor: decor.words } : {}),
       },
       this.timeline,
       `kw${g.i}.${++this.serial}`,

@@ -5,7 +5,7 @@ import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
-import type { MotionQuery, PanelState, SettingsPanel as Panel } from "../src/settings/panel";
+import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
 import { resetDom, stubDom, type FakeElement } from "./fake-dom";
 
@@ -471,6 +471,34 @@ describe("the settings panel since contract v4", () => {
     expect(reduced.root.all("hint").some((h) => h.textContent.endsWith("words fade instead of moving."))).toBe(true);
     const none = mountPanel({}, null);
     expect(none.root.all("hint").some((h) => h.textContent === "How much words rise, swell and ripple as they're sung.")).toBe(true);
+  });
+
+  it("Effects mode: a switch at the top of Look, on by default, saved as `effectsMode`, saying what it does", () => {
+    const p = mountPanel();
+    const look = p.group("Look");
+    const row = look.all("toggle")[0] as FakeElement;
+    expect(row.one("row-label").textContent).toBe("Effects mode");
+    const input = row.one("switch");
+    expect(input.getAttribute("role")).toBe("switch");
+    expect(input.checked).toBe(true);
+    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
+    expect(caption?.textContent).toBe(EFFECTS_MODE_ON);
+    input.checked = false;
+    input.dispatch("change");
+    expect(p.edits).toEqual([{ effectsMode: false }]);
+    expect(input.checked).toBe(false);
+    expect(caption?.textContent).toBe(EFFECTS_MODE_OFF);
+    // the sliders come after it, in the same order as before
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Size", "Height", "Effects", "Glow", "Opacity"]);
+  });
+
+  it("Effects mode: shows the saved state, and an older core's settings as on", () => {
+    const off = mountPanel({ effectsMode: false });
+    expect((off.group("Look").all("switch")[0] as FakeElement).checked).toBe(false);
+    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+    delete old.effectsMode;
+    const p = mountPanel(old);
+    expect((p.group("Look").all("switch")[0] as FakeElement).checked).toBe(true);
   });
 
   it("Glow says what it does now: the sung word's glow, never quite off", () => {

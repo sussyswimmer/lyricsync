@@ -10,6 +10,7 @@ A desktop app for **macOS and Windows** that shows the synced lyrics of whatever
 - A look picked for each song: the style (Arc / Lens / Drift / Stack), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
 - Default colors come from the album cover: its most vivid color highlights, its overall tone tints the lyrics and the other lines, and gray covers get grays (`core/palette.ts`). The user can override every color.
 - Customizable: size, height, effects (how much the words move), glow, opacity and colors.
+- Effects mode (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop), its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable get a tiny bundled picture as they're sung (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`).
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
@@ -77,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v4 today: `contract/contract.ts` is authoritative, and v2, v3 and v4 below only add to v1.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v5 today: `contract/contract.ts` is authoritative, and v2, v3, v4 and v5 below only add to v1.
 
 ```ts
 // contract/contract.ts
@@ -231,6 +232,17 @@ glow: number;
 ```
 
 Undertone picks each song's look itself: the style, the face, Arc's curve and the motion's character, from the lyrics and their timing, the title and the cover (`src/core/songlook.ts`). The user scales it with Size, **Effects** and Glow, and doesn't choose it. Settings' Effects slider and the tray's **Effects ▸** Calm (20) / Balanced (50) / Lively (85) both write `effects` through `update_settings`. For QA, `--look=<style>[,<family>[,<curve>]]` on the app's command line and `?look=` on the overlay page force a look; neither is ever stored.
+
+**Contract v5 (additive, 2026-10-19).** `CONTRACT_VERSION = 5`. `Settings.version` stays 1; stored settings without `effectsMode` read as `true`. No event or command changed.
+
+```ts
+// Settings gains:
+/** Effects mode: each song moves its own way, big moments splash, and words that name something
+ *  get a tiny picture. false: every word rises, nothing else is added. */
+effectsMode: boolean;    // default true
+```
+
+Effects mode adds a **flair** to each song's picked look (`SongLook.flair`, chosen in `src/core/songlook.ts` from the same features as the rest of the look, plus what the lyrics mention): a `move` for most lines and an `accent` move for the hooks (lines sung more than once), each one of `rise` (the v4 motion), `bounce`, `sway`, `wave`, `pulse` or `drop` (`overlay/motion/params.ts` moveTuning), and a `splash` of `drops`, `sparks`, `confetti`, `ripple` or `glints`. `core/flair.ts` plans each line's decor: a splash on a held note, a hook's last word or a shouted line's (at most one a line, 5 s apart), and the pictures `core/wordpics.ts` matches (49 pictures, each called by its own list of English words and phrases; one a line at most, 6 s apart, the same one 25 s apart). The pictures are bundled WebP files in `src/overlay/pictures/`, made once with Higgsfield. Extras run on transform and opacity on the song timeline, each on its own window (`overlay/motion/line.ts`); none in the lite tier or for unsynced lyrics; without motion, pictures only fade and nothing splashes. Settings › Look's **Effects mode** switch and the tray's **Effects ▸ Effects mode** write `effectsMode`. For QA, `?flair=move[,accent[,splash]]` on the overlay page forces a flair; it is never stored.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

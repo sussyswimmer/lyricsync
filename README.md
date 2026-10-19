@@ -5,6 +5,7 @@ Undertone shows the synced lyrics of the song you're playing on your desktop, be
 - **Players:** Spotify on macOS 14+ and Windows 10/11, and the Music app (Apple Music) on macOS. On Windows, other players that show up in the Windows media controls work too.
 - **Lyrics:** fetched from [LRCLIB](https://lrclib.net), a free community lyrics database. No account and no API key.
 - **A look for each song:** Arc, Lens, Drift or Stack, in one of eight fonts, picked by Undertone for every song. You set the size, height, effects (how much the words move), glow, opacity and colors. [docs/USER_GUIDE.md](docs/USER_GUIDE.md) explains every setting.
+- **Effects mode** (on by default): each song moves its own way. Words rise, bounce, sway, wave, pulse or drop into place. A song's big moments splash: droplets, sparks, confetti, ripples or glints. A word that names something you can draw, such as *iced tea*, *rain*, *roses* or *the moon*, gets a tiny picture beside it as it's sung. The 49 pictures come with the app, so this works offline. Turn the switch off in **Settings › Look** or the tray's **Effects ▸** menu to give every song the same calm rise.
 
 **Not in v1:** the lock screen, Linux, mobile, playback controls (Undertone only reads what's playing) and bundled lyrics (lyrics are fetched when a song plays, never shipped with the app).
 
@@ -48,6 +49,7 @@ If you set a proxy by hand in your system's network settings, Undertone uses it.
 |---|---|
 | **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as **Lyrics on the desktop** in Settings. Undertone remembers it. |
 | **Effects ▸** Calm / Balanced / Lively | How much the words move as they're sung, the same as **Effects** in Settings › Look: Calm sets 20, Balanced 50 (the default), Lively 85. The checkmark follows the setting, also when you set it in Settings. |
+| **Effects ▸** Effects mode | Turns Effects mode on or off, the same as the switch in Settings › Look: each song's own motion, splashes and word pictures. |
 | **Sync ▸** Earlier 100 ms / Later 100 ms | Moves this song's lyrics earlier or later. Undertone remembers it for this song. |
 | **Sync ▸** Reset for this song | Clears this song's sync nudge. |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping the cache. |
@@ -73,7 +75,7 @@ If one of them clashes with another app (JetBrains IDEs use ⌥⇧⌘L / Ctrl+Al
 
 ### Settings
 
-The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **Picked for this song** names the style and font Undertone picked for that song, and why: you don't choose them. **General** turns the lyrics on or off and sets **Launch at login**; **Look** sets the size, height, **Effects** (from Calm to Lively: how much words rise, swell and ripple), glow and opacity; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
+The settings window has a live preview at the top that plays the current song, or a short demo when nothing is playing. Under it, **Picked for this song** names the style and font Undertone picked for that song, and why: you don't choose them. **General** turns the lyrics on or off and sets **Launch at login**; **Look** has the **Effects mode** switch (each song's own motion, splashes and word pictures) and sets the size, height, **Effects** (from Calm to Lively: how much words rise, swell and ripple), glow and opacity; **Shortcuts**, near the bottom, changes the keyboard shortcuts. Every change applies right away, on the desktop and in the preview. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for what each setting does.
 
 ## Troubleshooting
 
@@ -195,13 +197,14 @@ URL parameters (combine them with `&`):
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22effects%22%3A80%7D` for `{"effects":80}`. In the mock, `mode`, `font` and `curve` in it force a look like `?look=` (the app no longer reads them). |
 | `?look=STYLE[,FAMILY[,CURVE]]` | On the overlay page, with either bridge: draw every song in that style (`arc`, `lens`, `drift` or `stack`), optionally in that font family and, for Arc, with that curve (−100 to 100), instead of the look Undertone picks. An empty part keeps the pick: `?look=lens`, `?look=lens,Syne`, `?look=arc,,-50`. Never saved. |
-| `?power=full\|lite` | On the overlay page: force the full motion, or the lighter drawing Undertone uses on computers without graphics acceleration (detected otherwise). |
+| `?power=full\|lite` | On the overlay page: force the full motion, or the lighter drawing Undertone uses on computers without graphics acceleration (detected otherwise). Effects mode's splashes and pictures need the full motion. |
+| `?flair=MOVE[,ACCENT[,SPLASH]]` | On the overlay page, with either bridge: force the song's Effects mode flair instead of the one Undertone picks. MOVE and ACCENT are each `rise`, `bounce`, `sway`, `wave`, `pulse` or `drop`; ACCENT is how the song's repeated lines (its hooks) move, and follows MOVE when left out. SPLASH is `drops`, `sparks`, `confetti`, `ripple` or `glints`. An empty part keeps the pick: `?flair=bounce`, `?flair=sway,pulse,confetti`, `?flair=,,drops`. Never saved. |
 | `?shortcutConflict=toggleLyrics,nudgeLater` | Act as if another app held the combinations those actions start with: they report `"unavailable"` in `shortcuts-status`, and Settings warns under them. Recording a different combination clears the warning. Actions: `toggleLyrics`, `nudgeEarlier`, `nudgeLater`. |
 | `?media=automation-denied\|no-player` | Act like a core that can't see the player: nothing playing, and `media-status` says why (`automation-denied` names Spotify). The settings window then shows its Automation notice, or **No music app open** under This song, and its preview plays the demo song as the app does. |
 | `?loginItem=refuse` | Act like a core whose system refuses the login item: a **Launch at login** change fails, the rest of the change applies, and Settings shows its note under the switch. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 
-For example, <http://localhost:1420/?mock&track=1&t=4900&look=arc> opens Paper Lanterns mid-line in Arc, whatever Undertone would pick for it, and <http://localhost:1420/?mock&track=8> plays Strobe Hearts in the look Undertone picks (Lens, in Unbounded).
+For example, <http://localhost:1420/?mock&track=1&t=4900&look=arc> opens Paper Lanterns mid-line in Arc, whatever Undertone would pick for it, and <http://localhost:1420/?mock&track=8> plays Strobe Hearts in the look Undertone picks (Lens, in Unbounded). <http://localhost:1420/?mock&track=9&t=7000&flair=,,drops> plays Glacier Nocturne just before its snowflake picture and its first splash.
 
 `?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is applied like `update_settings`: inside `colors`, `font` or `shortcuts` only the keys you give change, and the rest keep their saved values. `trackOffsetsMs` replaces the whole map, and invalid values are ignored.
 
@@ -216,6 +219,7 @@ contract/contract.ts   shared types (mirrored in src-tauri/src/contract.rs)
 src/bridge/            Tauri bridge, mock bridge, and the switch between them
 src/core/              LRC parser, word timing, playback clock, album palette, the look picker (pure TS)
 src/overlay/           the lyric stage, controller, empty states and fonts
+src/overlay/pictures/  Effects mode's word pictures (WebP), matched to words by src/core/wordpics.ts
 src/overlay/modes/     arc, lens, drift (stack is drift without depth)
 src/settings/          settings window and its live preview
 src/styles/            CSS
@@ -224,10 +228,10 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v4. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
+[SPEC.md](SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v5. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](CLAUDE.md) and [AGENTS.md](AGENTS.md) are the original work orders for the frontend and the Rust core.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.
 
 ## Acknowledgements
 
-Lyrics come from [LRCLIB](https://lrclib.net). The lyric fonts (Fraunces, Instrument Serif, Syne, Unbounded, Bricolage Grotesque, Caveat and JetBrains Mono) and the settings window's font, Figtree, are bundled under the SIL Open Font License 1.1. **Settings › Licenses** shows the notices of every font and library Undertone includes, and `THIRD_PARTY_NOTICES.txt` next to the app holds the same text.
+Lyrics come from [LRCLIB](https://lrclib.net). The word pictures in `src/overlay/pictures/` were made for Undertone with [Higgsfield](https://higgsfield.ai) image generation and ship with the app. The lyric fonts (Fraunces, Instrument Serif, Syne, Unbounded, Bricolage Grotesque, Caveat and JetBrains Mono) and the settings window's font, Figtree, are bundled under the SIL Open Font License 1.1. **Settings › Licenses** shows the notices of every font and library Undertone includes, and `THIRD_PARTY_NOTICES.txt` next to the app holds the same text.

@@ -545,6 +545,7 @@ describe("mergeSettings", () => {
     launchAtLogin: true,
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
     effects: 80,
+    effectsMode: false,
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -559,8 +560,8 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled and launchAtLogin.
-      expect(next).toEqual(junk === true ? { ...custom, autoColor: true, enabled: true, launchAtLogin: true } : custom);
+      // A boolean is a valid autoColor, enabled, launchAtLogin and effectsMode.
+      expect(next).toEqual(junk === true ? { ...custom, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true } : custom);
     }
   });
 
@@ -579,6 +580,13 @@ describe("mergeSettings", () => {
       expect(mergeSettings(custom, { effects: junk }).effects).toBe(80);
     }
     expect(mergeSettings(custom, { effects: 20 })).toEqual({ ...custom, effects: 20 });
+  });
+
+  it("takes effectsMode as a boolean only, as the Rust store does (contract v5)", () => {
+    for (const junk of ["true", 1, 0, null, [true], { on: true }]) {
+      expect(mergeSettings(custom, { effectsMode: junk }).effectsMode).toBe(false);
+    }
+    expect(mergeSettings(custom, { effectsMode: true })).toEqual({ ...custom, effectsMode: true });
   });
 
   it("changes only the keys a partial colors or font object has", () => {
@@ -685,6 +693,13 @@ describe("migrateSettings", () => {
     delete v3["effects"];
     expect(migrateSettings(v3)).toEqual({ ...DEFAULT_SETTINGS, size: 70 });
     expect(migrateSettings(v3).effects).toBe(50);
+  });
+
+  it("gives contract v4 settings the v5 default: Effects mode on", () => {
+    const v4: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effects: 30 };
+    delete v4["effectsMode"];
+    expect(migrateSettings(v4)).toEqual({ ...DEFAULT_SETTINGS, effects: 30 });
+    expect(migrateSettings(v4).effectsMode).toBe(true);
   });
 
   it("keeps what it knows from a newer version", () => {

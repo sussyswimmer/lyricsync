@@ -6,9 +6,9 @@
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
-//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, and contract v4 `effects`, without a
-//! new settings version: a stored file without them loads with their defaults and is rewritten once
-//! with them (`load`).
+//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects` and contract
+//! v5 `effectsMode`, without a new settings version: a stored file without them loads with their
+//! defaults and is rewritten once with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -188,6 +188,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "launchAtLogin" => keep_or_set(&mut next.launch_at_login, value.as_bool()),
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
             "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
+            "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -830,7 +831,8 @@ mod tests {
                 "enabled": false, "toggleLyrics": "Alt+F1", "nudgeEarlier": "",
                 "nudgeLater": "Control+Shift+K"
             },
-            "effects": 80
+            "effects": 80,
+            "effectsMode": false
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -882,6 +884,7 @@ mod tests {
             }
         );
         assert_eq!(s.effects, 80.0);
+        assert!(!s.effects_mode);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -955,7 +958,8 @@ mod tests {
                 "mode": junk, "autoColor": junk, "colors": junk, "font": junk, "size": junk,
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
-                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk
+                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk,
+                "effectsMode": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -976,7 +980,7 @@ mod tests {
         // Numbers where a boolean or a string belongs, booleans where a number or a string does.
         let next = merge_patch(
             &current,
-            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" } }),
+            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0 }),
         );
         assert_eq!(next, current);
         let next = merge_patch(
@@ -1147,7 +1151,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 18);
+        assert_eq!(keys.len(), 19);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1638,6 +1642,26 @@ mod tests {
         // And Effects alone, from nothing: the default.
         assert_eq!(migrate(&json!({ "version": 1 })).effects, 50.0);
         assert_eq!(migrate(&json!({ "effects": 20 })).effects, 20.0);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v5_get_effects_mode_on_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("effectsMode");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                effects_mode: true,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["effectsMode"], json!(true));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        assert!(migrate(&json!({ "version": 1 })).effects_mode);
+        assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
     }
 
     #[test]

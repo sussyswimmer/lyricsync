@@ -19,13 +19,13 @@ export type Write =
   | { kind: "track"; trackKey: string; ms: number };
 
 /**
- * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`, and
- * from one older than v4, `effects`; the window shows their defaults. Complete settings come back as
- * the same object.
+ * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`, from
+ * one older than v4, `effects`, and from one older than v5, `effectsMode`; the window shows their
+ * defaults. Complete settings come back as the same object.
  */
 export function withDefaults(settings: Settings): Settings {
   const s: Partial<Settings> = settings;
-  if (s.enabled !== undefined && s.launchAtLogin !== undefined && s.shortcuts !== undefined && s.effects !== undefined) return settings;
+  if (s.enabled !== undefined && s.launchAtLogin !== undefined && s.shortcuts !== undefined && s.effects !== undefined && s.effectsMode !== undefined) return settings;
   const defaults = structuredClone(DEFAULT_SETTINGS);
   return { ...defaults, ...settings, shortcuts: { ...defaults.shortcuts, ...s.shortcuts } };
 }

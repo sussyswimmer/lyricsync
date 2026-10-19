@@ -15,8 +15,10 @@
  *   b = clamp(G·gain(W), 0, 1.3)     the bloom's strength (bloom.ts); never off
  *
  * Every number was re-derived by eye from Beautiful Lyrics' promo frames (behavior only, no code).
- * BL_REFERENCE holds the A = 1 values the tests pin.
+ * BL_REFERENCE holds the A = 1 values the tests pin. That is the "rise" move; Effects mode gives a song
+ * other moves (core/flair.ts), each its own reshaping of the same pop, ripple and springs (MOVE_TUNING).
  */
+import type { Move } from "../../core/flair";
 import type { EmphasisRule } from "../../core/songlook";
 import type { Key } from "./curve";
 import type { Power } from "./power";
@@ -42,9 +44,13 @@ export interface MotionInput {
   power: Power;
   /** the song's held-note rule, null for none */
   emphasis: EmphasisRule | null;
+  /** how words move (Effects mode); "rise" when absent */
+  move?: Move;
 }
 
 export interface MotionParams {
+  /** how words move (MotionInput.move) */
+  move: Move;
   /** A: amplitude against BL's (1), 0..A_MAX; 0 means no transforms at all */
   amp: number;
   /** f: spring frequency factor */
@@ -75,6 +81,13 @@ export interface MotionParams {
   rippleSwell: number;
   /** a letter starts its hop this long before the wipe has fully lit it */
   rippleLeadMs: number;
+  /**
+   * sway: the word tilts up to this many degrees as it's sung (alternating sides word by word) along
+   * swayKeys (0..1 of the tilt over the word's progress), and swings back on swaySpring. 0: no tilt.
+   */
+  swayDeg: number;
+  swayKeys: readonly Key[];
+  swaySpring: SpringSpec;
   /** held notes */
   emphasis: EmphasisRule | null;
   /** A held letter lifts this many times a word's lift keys, and swells on its own curve. */
@@ -117,43 +130,213 @@ export const GLOW_KEYS: readonly Key[] = [
 /** BL's own rule for held syllables, the look's default. */
 export const BL_EMPHASIS: EmphasisRule = { minMs: 1000, maxChars: 12, lastWordOnly: false };
 
-export function motionParams(input: MotionInput): MotionParams {
-  const k = clamp(finite(input.effects, 50), 0, 100) / 50;
-  const full = input.motion && input.power !== "lite";
-  const A = full ? clamp((clamp(finite(input.energy, 0.45), 0, 1) * k) / BL_ENERGY, 0, A_MAX) : 0;
-  const f = 0.8 + 0.5 * clamp(finite(input.snap, 0.4), 0, 1);
-  // Upcoming words wait no smaller than BL's 0.95: each shrinks about its own center, so a deeper
-  // rest opens visibly uneven gaps between the words still to come. Livelier songs hop higher instead.
-  const restScale = 1 - 0.05 * Math.min(A, 1);
-  const restLift = 0.01 * A;
-  const letterRest = 1 - 0.03 * Math.min(A, 1);
-  return {
-    amp: A,
-    pace: f,
-    karaoke: full ? "full" : "fade",
-    restScale,
-    restLift,
+/** The parts of the pop and the ripple a move reshapes (the rest is the same for every move). */
+type MoveTuning = Pick<
+  MotionParams,
+  | "restScale"
+  | "restLift"
+  | "scaleKeys"
+  | "liftKeys"
+  | "liftSpring"
+  | "scaleSpring"
+  | "glowPeak"
+  | "rippleHeight"
+  | "rippleSpring"
+  | "rippleHoldMs"
+  | "rippleSwell"
+  | "rippleLeadMs"
+  | "swayDeg"
+  | "swayKeys"
+  | "swaySpring"
+>;
+
+const NO_SWAY: Pick<MoveTuning, "swayDeg" | "swayKeys" | "swaySpring"> = {
+  swayDeg: 0,
+  swayKeys: [
+    [0, 0],
+    [1, 0],
+  ],
+  swaySpring: { hz: 1, damping: 1 },
+};
+
+/**
+ * Each move's pop and ripple at amplitude A and pace f. rise is BL's, as studied. The others keep its
+ * springs' character (they chase target curves over the word's progress) and reshape the targets:
+ *
+ * - bounce: rests on the line, hops up early in the word and lands past its rest, bouncing (a looser
+ *   lift spring); a quick swell with it, and small letter hops.
+ * - sway: barely lifts; tilts toward one side as it lights (alternating word by word) and swings back
+ *   through rest on a loose pendulum.
+ * - wave: the word itself hardly moves; its letters hop higher and slower as they light, a wave
+ *   running through the word.
+ * - pulse: no lift at all; a fast swell on the word's start and back, with a fuller bloom.
+ * - drop: waits a little above the line and drops into place, landing just below it.
+ */
+export function moveTuning(move: Move, A: number, f: number): MoveTuning {
+  const a1 = Math.min(A, 1);
+  const a2 = Math.min(A, 2);
+  const rise: MoveTuning = {
+    // Upcoming words wait no smaller than BL's 0.95: each shrinks about its own center, so a deeper
+    // rest opens visibly uneven gaps between the words still to come. Livelier songs hop higher instead.
+    restScale: 1 - 0.05 * a1,
+    restLift: 0.01 * A,
     scaleKeys: [
-      [0, restScale],
-      [0.7, 1 + 0.026 * Math.min(A, 2)],
+      [0, 1 - 0.05 * a1],
+      [0.7, 1 + 0.026 * a2],
       [1, 1],
     ],
     liftKeys: [
-      [0, restLift],
+      [0, 0.01 * A],
       [0.9, -0.018 * A],
       [1, 0],
     ],
     liftSpring: { hz: 1.3 * f, damping: clamp(0.48 - 0.08 * A, 0.32, 0.48) },
     scaleSpring: { hz: 0.8 * f, damping: 0.6 },
-    glowKeys: GLOW_KEYS,
-    glowSpring: { hz: 2 * f, damping: 0.62 },
     glowPeak: 0.92,
-    glowPeakHeld: 1,
     rippleHeight: Math.min(0.14, 0.06 * A),
     rippleSpring: { hz: 3.1 * f, damping: 0.4 },
     rippleHoldMs: [130, 260],
     rippleSwell: 0.9,
     rippleLeadMs: 20,
+    ...NO_SWAY,
+  };
+  switch (move) {
+    case "bounce": {
+      const restScale = 1 - 0.035 * a1;
+      return {
+        ...rise,
+        restScale,
+        restLift: 0,
+        scaleKeys: [
+          [0, restScale],
+          [0.22, 1 + 0.035 * a2],
+          [1, 1],
+        ],
+        liftKeys: [
+          [0, 0],
+          [0.25, -0.05 * A],
+          [0.55, 0.006 * A],
+          [1, 0],
+        ],
+        liftSpring: { hz: 2.2 * f, damping: 0.3 },
+        scaleSpring: { hz: 1.5 * f, damping: 0.45 },
+        rippleHeight: Math.min(0.08, 0.03 * A),
+      };
+    }
+    case "sway": {
+      const restScale = 1 - 0.03 * a1;
+      return {
+        ...rise,
+        restScale,
+        restLift: 0.005 * A,
+        scaleKeys: [
+          [0, restScale],
+          [0.7, 1 + 0.015 * a2],
+          [1, 1],
+        ],
+        liftKeys: [
+          [0, 0.005 * A],
+          [0.9, -0.008 * A],
+          [1, 0],
+        ],
+        rippleHeight: Math.min(0.08, 0.035 * A),
+        swayDeg: 2.6 * Math.min(A, 1.8),
+        swayKeys: [
+          [0, 0],
+          [0.25, 1],
+          [1, 0],
+        ],
+        swaySpring: { hz: 0.9 * f, damping: 0.22 },
+      };
+    }
+    case "wave": {
+      const restScale = 1 - 0.02 * a1;
+      return {
+        ...rise,
+        restScale,
+        restLift: 0.004 * A,
+        scaleKeys: [
+          [0, restScale],
+          [0.7, 1.01],
+          [1, 1],
+        ],
+        liftKeys: [
+          [0, 0.004 * A],
+          [0.9, -0.006 * A],
+          [1, 0],
+        ],
+        rippleHeight: Math.min(0.2, 0.11 * A),
+        rippleSpring: { hz: 2.3 * f, damping: 0.5 },
+        rippleHoldMs: [170, 320],
+        rippleSwell: 0.5,
+        rippleLeadMs: 40,
+      };
+    }
+    case "pulse": {
+      const restScale = 1 - 0.04 * a1;
+      return {
+        ...rise,
+        restScale,
+        restLift: 0,
+        scaleKeys: [
+          [0, restScale],
+          [0.12, 1 + 0.05 * a2],
+          [0.5, 1.008],
+          [1, 1],
+        ],
+        liftKeys: [
+          [0, 0],
+          [1, 0],
+        ],
+        scaleSpring: { hz: 2.6 * f, damping: 0.42 },
+        glowPeak: 1,
+        rippleHeight: 0,
+      };
+    }
+    case "drop": {
+      const restScale = 1 - 0.04 * a1;
+      return {
+        ...rise,
+        restScale,
+        restLift: -0.045 * A,
+        scaleKeys: [
+          [0, restScale],
+          [0.3, 1.02],
+          [1, 1],
+        ],
+        liftKeys: [
+          [0, -0.045 * A],
+          [0.3, 0.01 * A],
+          [0.6, 0],
+          [1, 0],
+        ],
+        liftSpring: { hz: 1.9 * f, damping: 0.36 },
+        scaleSpring: { hz: 1.2 * f, damping: 0.55 },
+        rippleHeight: Math.min(0.06, 0.02 * A),
+      };
+    }
+    default:
+      return rise;
+  }
+}
+
+export function motionParams(input: MotionInput): MotionParams {
+  const k = clamp(finite(input.effects, 50), 0, 100) / 50;
+  const full = input.motion && input.power !== "lite";
+  const A = full ? clamp((clamp(finite(input.energy, 0.45), 0, 1) * k) / BL_ENERGY, 0, A_MAX) : 0;
+  const f = 0.8 + 0.5 * clamp(finite(input.snap, 0.4), 0, 1);
+  const move = input.move ?? "rise";
+  const tuning = moveTuning(move, A, f);
+  const letterRest = 1 - 0.03 * Math.min(A, 1);
+  return {
+    move,
+    amp: A,
+    pace: f,
+    karaoke: full ? "full" : "fade",
+    ...tuning,
+    glowKeys: GLOW_KEYS,
+    glowSpring: { hz: 2 * f, damping: 0.62 },
+    glowPeakHeld: 1,
     emphasis: input.emphasis,
     letterLiftGain: 2.2,
     letterScaleKeys: [
@@ -170,9 +353,42 @@ export function motionParams(input: MotionInput): MotionParams {
   };
 }
 
+/**
+ * Each line's parameters by its move (Effects mode moves a song's hooks differently from its other
+ * lines), worked out once per move for the song's parameters of the moment.
+ */
+export class LineMoves {
+  private base: MotionParams | null = null;
+  private readonly byMove = new Map<Move, MotionParams>();
+  /**
+   * `riseSwell`: every move swells (scales) no more than rise does, and as slowly. Lens magnifies the
+   * sung word itself; a move's own swell on top would push it into its neighbors.
+   */
+  constructor(private readonly options: { riseSwell?: boolean } = {}) {}
+
+  /** The parameters for a line that moves `move`: the song's own (`base`, from `input`), reshaped. */
+  paramsFor(input: MotionInput, base: MotionParams, move: Move): MotionParams {
+    if (move === base.move) return base;
+    if (base !== this.base) {
+      this.base = base;
+      this.byMove.clear();
+    }
+    let params = this.byMove.get(move);
+    if (!params) {
+      params = motionParams({ ...input, move });
+      if (this.options.riseSwell) {
+        const { restScale, scaleKeys, scaleSpring } = moveTuning("rise", params.amp, params.pace);
+        params = { ...params, restScale, scaleKeys, scaleSpring };
+      }
+      this.byMove.set(move, params);
+    }
+    return params;
+  }
+}
+
 /** A key for "the parameters changed": a restyle re-plans the focus line only then. */
 export function paramsKey(p: MotionParams): string {
-  return JSON.stringify([p.amp, p.pace, p.karaoke, p.fadeSteps, p.emphasis]);
+  return JSON.stringify([p.amp, p.pace, p.karaoke, p.fadeSteps, p.emphasis, p.move]);
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   REFERENCE_HEIGHT,
   cleanOverride,
   dropShadow,
+  effectsModeOf,
   effectsOf,
   mergeOverrides,
   overrideFromSettings,
@@ -249,6 +250,7 @@ describe("the picked look", () => {
       scale: 1,
       letterSpacing: 0,
       textCase: "as-is",
+      flair: { move: "rise", accent: "rise", splash: "ripple" },
     });
     expect(Object.isFrozen(DEFAULT_PICK)).toBe(true);
   });
@@ -321,6 +323,25 @@ describe("the picked look", () => {
     expect(effectsOf({ ...settings(), effects: 180 } as Settings)).toBe(100);
     expect(effectsOf({ ...settings(), effects: "lots" } as unknown as Settings)).toBe(50);
     expect(look({ effects: 20 } as Partial<Settings>).effects).toBe(20);
+  });
+
+  it("reads Effects mode from a store that has it, and on from one older than contract v5", () => {
+    expect(effectsModeOf(settings())).toBe(true);
+    expect(effectsModeOf(settings({ effectsMode: false }))).toBe(false);
+    const v4: Record<string, unknown> = { ...settings() };
+    delete v4["effectsMode"];
+    expect(effectsModeOf(v4 as unknown as Settings)).toBe(true);
+    expect(look({ effectsMode: false }).effectsMode).toBe(false);
+    expect(look().effectsMode).toBe(true);
+  });
+
+  it("carries the song's flair to the stage, and makes any flair safe to draw", () => {
+    const flair = { move: "sway", accent: "pulse", splash: "glints" } as const;
+    expect(resolveLook(settings(), null, FRAME, pick({ flair })).flair).toEqual(flair);
+    expect(look().flair).toEqual(DEFAULT_PICK.flair);
+    const wild = sanePick({ ...pick(), flair: { move: "spin", accent: 3, splash: null } as unknown as PickedLook["flair"] });
+    expect(wild.flair).toEqual({ move: "rise", accent: "rise", splash: "ripple" });
+    expect(pickedOf({ ...pick({ flair }) }).flair).toEqual(flair);
   });
 });
 

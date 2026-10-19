@@ -32,13 +32,21 @@
  * is sliced: `prepare` builds and plans the next line in short idle slices ahead of time, `mount` runs
  * a first slice (the words sung by now or within 400 ms) and the rest on the next frames, earliest
  * first. Words not mounted yet hold their pose inline.
+ *
+ * Effects mode adds a word's extras (decor.ts) to its overlay, each on its own song-time window: a
+ * splash under the copies (`.kw-splash`, its pieces `.kw-sp`) and a picture above the word (`.kw-pic`).
+ * They rest invisible; a line leaving focus once sung stops them where they are, to fade out with it.
  */
+import type { WordDecor } from "../../core/flair";
 import type { Word } from "../../core/lrc";
 import { h, put } from "../dom";
+import { pictureUrl } from "../pictures";
+import { PICTURE_EM, picturePose, planPicture, planSplash, seedOf, type Particle } from "./decor";
 import {
   closedWindow,
   FEATHER,
   FULL_TRANSFORM,
+  fullTransform,
   heldParts,
   leadOf,
   letterRest,
@@ -77,6 +85,8 @@ export interface KaraokeLook {
   place?: LetterPlacer;
   /** slow stretches step on the song-time beat (PlanOptions.steps); compositorSteps() when absent */
   steps?: boolean;
+  /** Effects mode: the words with a picture or a splash, by word index (core/flair.ts LineDecor.words) */
+  decor?: ReadonlyMap<number, WordDecor>;
 }
 
 /**
@@ -149,6 +159,14 @@ interface Overlay {
   letterRest: string[];
 }
 
+/** A word's extras (Effects mode): its picture and splash pieces, and their motion. */
+interface Extras {
+  pic: HTMLElement | null;
+  picTrack: Track | null;
+  pieces: HTMLElement[];
+  particles: Particle[];
+}
+
 interface WordView {
   index: number;
   word: Word;
@@ -164,6 +182,9 @@ interface WordView {
   txt: { el: HTMLElement; text: string } | null;
   /** the word box carries a bleed (--kb-x, --kb-y) for its runs of text */
   bled: boolean;
+  /** what Effects mode adds to it, and the elements and motion built for that */
+  decor: WordDecor | undefined;
+  extras: Extras | null;
   mounted: boolean;
 }
 
@@ -196,12 +217,16 @@ export class KaraokeLine {
   private readonly views: WordView[] = [];
   private readonly timeline: SongTimeline;
   private readonly group: string;
+  /** the extras' animations: each on its own window, kept apart from the line's shared one */
+  private readonly extrasGroup: string;
   private readonly look: KaraokeLook;
   private readonly steps: boolean;
   private measure: Measure | null = null;
   private ink: InkMeasure | null | undefined;
   private origin = 0;
   private end = 0;
+  /** the song time the line was last mounted at: extras over by then aren't started */
+  private mountedAt = 0;
   private settleIn = false;
   private readonly plans = new Map<string, WordMotion>();
   private cancelSlice: (() => void) | null = null;
@@ -213,6 +238,7 @@ export class KaraokeLine {
   constructor(words: readonly Word[], els: readonly HTMLElement[], look: KaraokeLook, timeline: SongTimeline, group: string) {
     this.timeline = timeline;
     this.group = group;
+    this.extrasGroup = `${group}+fx`;
     this.look = look;
     this.steps = look.steps ?? compositorSteps();
     const last = words.length - 1;
@@ -231,6 +257,8 @@ export class KaraokeLine {
         ov: null,
         txt: null,
         bled: false,
+        decor: look.decor?.get(i),
+        extras: null,
         mounted: false,
       });
     });
@@ -300,6 +328,8 @@ export class KaraokeLine {
     if (this.destroyed) return;
     this.stopSlices();
     this.timeline.cancel(this.group);
+    this.timeline.cancel(this.extrasGroup);
+    this.mountedAt = t;
     const { params } = this.look;
     const origin = Math.min(t, this.views[0]?.word.start ?? t);
     let end = origin + 1;
@@ -329,6 +359,8 @@ export class KaraokeLine {
    */
   finish(): void {
     this.stopSlices();
+    // the extras stop where they are, and fade out with the overlay
+    this.timeline.freeze(this.extrasGroup);
     this.timeline.cancel(this.group);
     for (const v of this.views) {
       if (v.ov) this.finalStyle(v, v.ov);
@@ -357,6 +389,7 @@ export class KaraokeLine {
   freeze(): void {
     this.stopSlices();
     this.timeline.freeze(this.group);
+    this.timeline.freeze(this.extrasGroup);
     for (const f of this.fades.splice(0)) commit(f.anim, f.el);
   }
 
@@ -365,6 +398,7 @@ export class KaraokeLine {
     this.stopSlices();
     this.destroyed = true;
     this.timeline.cancel(this.group);
+    this.timeline.cancel(this.extrasGroup);
     for (const f of this.fades.splice(0)) {
       try {
         f.anim.cancel();
@@ -384,6 +418,7 @@ export class KaraokeLine {
       }
       if (v.txt) v.txt.el.textContent = v.txt.text;
       v.txt = null;
+      v.extras = null;
     }
     this.views.length = 0;
   }
@@ -432,6 +467,7 @@ export class KaraokeLine {
         from: this.fromOf(v, origin, settleIn),
         isLast: v.index === this.views.length - 1,
         steps: this.steps,
+        index: v.index,
       });
       this.plans.set(key, plan);
     }
@@ -456,7 +492,7 @@ export class KaraokeLine {
     this.finalStyle(v, ov);
     const lead = this.settles(v)
       ? [
-          { at: this.origin, frame: { transform: FULL_TRANSFORM } },
+          { at: this.origin, frame: { transform: fullTransform(params) } },
           { at: this.origin + SETTLE_IN_MS, frame: { transform: restTransform(size, params) } },
         ]
       : [];
@@ -474,13 +510,33 @@ export class KaraokeLine {
       const g = ov.letterGlows[j];
       if (g && track) this.play(g, track);
     });
+    this.playExtras(v);
     v.mounted = true;
+  }
+
+  /**
+   * Starts a word's extras on their own windows (not the line's: a picture outlasts its line's motion),
+   * from a clean inline style: a line that left focus froze them there. Those already over are left be.
+   */
+  private playExtras(v: WordView): void {
+    const x = v.extras;
+    if (!x) return;
+    const start = (el: HTMLElement, track: Track): void => {
+      put(el, "opacity", "");
+      put(el, "transform", "");
+      if (track.t0 + track.duration > this.mountedAt) this.timeline.play(el, track.frames, track.t0, track.duration, this.extrasGroup);
+    };
+    if (x.pic && x.picTrack) start(x.pic, x.picTrack);
+    x.pieces.forEach((el, i) => {
+      const p = x.particles[i];
+      if (p) start(el, p.track);
+    });
   }
 
   /** A word waiting for its slice: at rest, nothing lit; still at full size if its line settles in. */
   private hold(v: WordView): void {
     if (v.ov) this.restStyle(v, v.ov);
-    const pose = !this.moves() ? "none" : this.settles(v) ? FULL_TRANSFORM : restTransform(this.look.size, this.look.params);
+    const pose = !this.moves() ? "none" : this.settles(v) ? fullTransform(this.look.params) : restTransform(this.look.size, this.look.params);
     put(v.el, "transform", pose);
     this.layer(v);
   }
@@ -610,7 +666,9 @@ export class KaraokeLine {
     const base = (held && moves) || placed ? letterSpans(baseBox) : whole(baseBox);
     const lit = moves || placed ? letterSpans(litBox) : whole(litBox);
     track.append(bwin, win);
-    fx.append(dark, ...letterGlows, glow, track);
+    // a splash goes under every copy (a burst never covers the word), a picture over them
+    const { splash, pic } = this.extrasOf(v, shape);
+    fx.append(...(splash ? [splash] : []), dark, ...letterGlows, glow, track, ...(pic ? [pic] : []));
     v.el.append(fx);
     v.el.classList.add("kw-on");
     const ov: Overlay = {
@@ -630,6 +688,76 @@ export class KaraokeLine {
     if (placed) this.placeLetters(v, shape, ov);
     this.restStyle(v, ov);
     return ov;
+  }
+
+  /**
+   * Effects mode's extras for a word that has any (WordView.extras): the box of its splash's pieces,
+   * and its picture above the word. Each rests invisible (stage.css). Placed letters (Arc) carry them
+   * along with the word's middle letter.
+   */
+  private extrasOf(v: WordView, shape: WordShape): { splash: HTMLElement | null; pic: HTMLElement | null } {
+    const decor = v.decor;
+    if (!decor || (!decor.picture && !decor.splash)) return { splash: null, pic: null };
+    const { size, params, place } = this.look;
+    const seed = seedOf(`${v.index}|${v.text}|${Math.round(v.word.start)}`);
+    const mid = shape.letters[Math.floor(shape.letters.length / 2)];
+    const anchor = place && mid ? place(v.index, shape.letters.indexOf(mid), mid) : null;
+    const at = (el: HTMLElement, dx: number, dy: number, rotate: number): void => {
+      if (dx !== 0 || dy !== 0) el.style.setProperty("translate", `${px(dx)} ${px(dy)}`);
+      if (rotate !== 0) el.style.setProperty("rotate", `${rotate.toFixed(2)}deg`);
+    };
+    const x: Extras = { pic: null, picTrack: null, pieces: [], particles: [] };
+    let splash: HTMLElement | null = null;
+    if (decor.splash && params.karaoke === "full") {
+      x.particles = planSplash(decor.splash, v.word.start, size, shape.width, params.amp, seed);
+      if (x.particles.length > 0) {
+        const box = h("span", "kw-splash");
+        box.setAttribute("aria-hidden", "true");
+        at(box, anchor?.dx ?? 0, anchor?.dy ?? 0, anchor?.rotate ?? 0);
+        for (const p of x.particles) {
+          const piece = h("span", `kw-sp ${p.cls}`);
+          piece.style.width = px(p.w);
+          piece.style.height = px(p.h);
+          piece.style.marginLeft = px(-p.w / 2);
+          piece.style.marginTop = px(-p.h / 2);
+          box.append(piece);
+          x.pieces.push(piece);
+        }
+        splash = box;
+      }
+    }
+    const url = decor.picture ? pictureUrl(decor.picture) : null;
+    if (url) {
+      // Above the word, unless the line wraps and the word is on a later row: the row above is the
+      // line's own text then, so the picture goes under the word instead.
+      const below = this.onLaterRow(v);
+      const pic = h("img", below ? "kw-pic is-below" : "kw-pic");
+      pic.src = url;
+      pic.alt = "";
+      pic.decoding = "async";
+      pic.draggable = false;
+      const side = PICTURE_EM * size;
+      pic.style.width = px(side);
+      pic.style.height = px(side);
+      pic.style.marginLeft = px(-side / 2);
+      const pose = picturePose(size, seed, below);
+      at(pic, pose.dx + (anchor?.dx ?? 0), pose.dy + (anchor?.dy ?? 0), pose.tilt + (anchor?.rotate ?? 0));
+      x.pic = pic;
+      x.picTrack = planPicture(v.word.start, size, params.karaoke === "full" ? params.amp : 0, below);
+    }
+    v.extras = x.pic || x.pieces.length > 0 ? x : null;
+    return { splash, pic: x.pic };
+  }
+
+  /**
+   * Whether the word sits on a later row than the line's first word (the line wraps): one layout read,
+   * made only for a word that shows a picture. Unknown (no layout) counts as the first row.
+   */
+  private onLaterRow(v: WordView): boolean {
+    const first = this.views[0]?.el;
+    const top = v.el.offsetTop;
+    const firstTop = first?.offsetTop;
+    return typeof top === "number" && typeof firstTop === "number" && top - firstTop > 0.5 * this.look.size;
   }
 
   private restOf(v: WordView, shape: WordShape): string[] {

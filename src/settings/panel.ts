@@ -124,6 +124,8 @@ export function effectsWord(level: number): "Calm" | "Balanced" | "Lively" {
 }
 
 export const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
+export const EFFECTS_MODE_ON = "Each song moves its own way, big moments splash, and words like “rain” or “iced tea” get a tiny picture.";
+export const EFFECTS_MODE_OFF = "Off: every word rises the same way, with no splashes or pictures.";
 export const REDUCED_MOTION_NOTE = "Your system asks for less motion: words fade instead of moving.";
 export const GLOW_HINT = "How much the sung word glows. 0 keeps a faint glow.";
 
@@ -377,11 +379,20 @@ export class SettingsPanel {
   // ---------- look ----------
 
   /**
-   * How the picked look sits on this desktop: Size, Height, Effects, Glow and Opacity. Undertone picks
-   * the style and the face for each song (the card under the preview says which); these scale it.
+   * How the picked look sits on this desktop: Effects mode, Size, Height, Effects, Glow and Opacity.
+   * Undertone picks the style and the face for each song (the card under the preview says which), and
+   * with Effects mode its own motion, splashes and word pictures; these scale it.
    */
   private lookGroup(): HTMLElement {
     const edit = (patch: Partial<Settings>): void => this.actions.edit(patch);
+    const modeCaptionId = nextId("effects-mode-caption");
+    const mode = toggle({
+      label: "Effects mode",
+      describedBy: modeCaptionId,
+      onChange: (on) => this.actions.edit({ effectsMode: on }),
+    });
+    const modeCaption = hint("", "toggle-hint");
+    modeCaption.id = modeCaptionId;
     const size = slider({ label: "Size", min: 22, max: 140, format: String, speak: (v) => `${v} pixels`, onInput: (v) => edit({ size: v }) });
     const height = slider({
       label: "Height",
@@ -413,8 +424,12 @@ export class SettingsPanel {
     const glowHint = hint(GLOW_HINT);
     glowHint.id = glowHintId;
     const opacity = slider({ label: "Opacity", min: 20, max: 100, format: (v) => `${v}%`, onInput: (v) => edit({ opacity: v }) });
-    const { el } = group("Look", size.el, height.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
+    const { el } = group("Look", mode.el, modeCaption, size.el, height.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
     this.renderers.push(({ settings: s }) => {
+      // Settings without `effectsMode` (a core older than contract v5) have it on.
+      const on = s.effectsMode !== false;
+      mode.set(on);
+      setText(modeCaption, on ? EFFECTS_MODE_ON : EFFECTS_MODE_OFF);
       size.set(s.size);
       height.set(s.yPos);
       // Settings without `effects` (a core older than contract v4) show the level as picked.

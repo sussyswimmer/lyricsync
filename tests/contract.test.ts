@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v4", () => {
+describe("contract v5", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(4);
+    expect(CONTRACT_VERSION).toBe(5);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
@@ -17,7 +17,13 @@ describe("contract v4", () => {
         nudgeLater: "CmdOrCtrl+Alt+Shift+[",
       },
       effects: 50,
+      effectsMode: true,
     });
+  });
+
+  it("adds effectsMode, on by default, without touching the settings schema (v5)", () => {
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
+    expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
   it("adds effects, 0..100, at the level the picked look asks for, without touching the settings schema", () => {

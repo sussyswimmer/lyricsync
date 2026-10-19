@@ -198,6 +198,88 @@
   color: var(--ut-hl);
 }
 
+/* ---------- Effects mode's extras (overlay/motion/decor.ts) ----------
+   Inside a word's overlay, so they show only while its line is in focus and fade out with it. Each
+   rests invisible: its animation (transform and opacity, on the compositor) shows it. */
+
+/* A word's picture: centered above the word box (its size and centering margin are inline, its tilt and
+   offset in `translate` and `rotate`); a soft shadow keeps it apart from a busy or light wallpaper. */
+.kw-pic {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: 50% 85%;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+}
+
+/* On a wrapped line's later row the row above is the line's own text: the picture goes under the word. */
+.kw-pic.is-below {
+  bottom: auto;
+  top: 100%;
+  transform-origin: 50% 15%;
+}
+
+/* A splash: every piece starts from the middle of the word box, under every copy of the text. */
+.kw-splash {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  width: 0;
+  height: 0;
+}
+
+.kw-sp {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+}
+
+/* a droplet, its narrow end toward its tail */
+.sp-drop {
+  border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+  background: radial-gradient(circle at 38% 68%, rgba(255, 255, 255, 0.7) 0 16%, transparent 30%), var(--ut-hl);
+  box-shadow: 0 0 0.12em var(--ut-hl);
+}
+
+.sp-ring {
+  border-radius: 50%;
+  border: max(1.5px, 0.05em) solid var(--ut-hl);
+  box-sizing: border-box;
+}
+
+/* a streak, bright at its head (the end it travels toward) */
+.sp-spark {
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--ut-hl) 55%, #fff);
+}
+
+.sp-confetti {
+  border-radius: 1px;
+}
+
+.sp-c0 {
+  background: var(--ut-hl);
+}
+
+.sp-c1 {
+  background: var(--ut-lyric);
+}
+
+.sp-c2 {
+  background: color-mix(in srgb, var(--ut-hl) 50%, #fff);
+}
+
+/* a four-point star */
+.sp-glint {
+  background: radial-gradient(circle, #fff 0 22%, var(--ut-hl) 48%, transparent 72%);
+  clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+}
+
 /* ---------- instrumental breaks (overlay/motion/dots.ts) ---------- */
 .drift-break {
   display: flex;

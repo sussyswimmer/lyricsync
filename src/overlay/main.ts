@@ -2,7 +2,7 @@ import "../styles/overlay.css";
 import "./fonts";
 import { connect, type Bridge } from "../bridge";
 import { OverlayController } from "./controller";
-import { mergeOverrides, overrideFromSettings, parseLookOverride, workAreaReference } from "./look";
+import { mergeOverrides, overrideFromSettings, parseFlairOverride, parseLookOverride, workAreaReference } from "./look";
 import { detectPower } from "./motion/power";
 import { LyricStage } from "./stage";
 
@@ -35,9 +35,12 @@ if (host) {
   // listens for itself.
   controller = new OverlayController(bridge, stage, { gate: true });
   // QA overrides, never stored (SPEC §4.10): `mode`, `font` and `curve` inside the mock's ?settings=
-  // (so the harness tools keep working), ?look=style[,family[,curve]] on any bridge, and the app's
-  // --look hand-off, which can arrive after load.
-  const fromUrl = mergeOverrides(bridge.kind === "mock" ? overrideFromSettings(params.get("settings")) : null, parseLookOverride(params.get("look")));
+  // (so the harness tools keep working), ?look=style[,family[,curve]] and ?flair=move[,accent[,splash]]
+  // on any bridge, and the app's --look hand-off, which can arrive after load.
+  const fromUrl = mergeOverrides(
+    mergeOverrides(bridge.kind === "mock" ? overrideFromSettings(params.get("settings")) : null, parseLookOverride(params.get("look"))),
+    parseFlairOverride(params.get("flair")),
+  );
   let fromApp = parseLookOverride(win.__UNDERTONE_LOOK__);
   if (fromUrl || fromApp) controller.forceLook(mergeOverrides(fromUrl, fromApp));
   window.addEventListener("undertone-look", () => {

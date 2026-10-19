@@ -8,7 +8,9 @@
  *   its contents slide back the other way, so the text stays put and nothing repaints.
  * - pop: an upcoming word rests a little small and low; while sung it swells and rises past its rest,
  *   then settles to scale 1 and no lift. Springs carry it: the lift bouncy, the scale slow, so quick
- *   words barely move and held ones visibly rise, overshoot and settle.
+ *   words barely move and held ones visibly rise, overshoot and settle. That is the "rise" move; the
+ *   song's move (params.ts moveTuning) reshapes it: a bounce, a pulse, a drop, a wave in the letters,
+ *   or a sway, which adds a tilt that swings back through rest.
  * - glow: the word's bloom rises in the first 15 % of the word, holds, and fades by its end.
  * - letters: every letter hops in turn as the wipe has lit it (a ripple as tall as the song is
  *   lively); a held syllable (the look's emphasis rule) lights letter by letter along a sine ease-out,
@@ -20,7 +22,7 @@
  * onto one shared window so a whole line can start and end its animations together.
  */
 import { clamp01, sineOut, spline } from "./curve";
-import { framesOf, keyPoints, liftScale, num, sampleTimes, thin } from "./keyframes";
+import { framesOf, keyPoints, liftScale, liftTiltScale, num, sampleTimes, thin } from "./keyframes";
 import { graphemes } from "./letters";
 import type { EmphasisRule, MotionParams } from "./params";
 import { chase, type SpringSpec } from "./spring";
@@ -95,6 +97,8 @@ export interface PlanOptions {
    * where the engine still runs stepped keyframes on the compositor (compositorSteps).
    */
   steps?: boolean;
+  /** the word's place in its line: a swaying word tilts the other way from its neighbors */
+  index?: number;
 }
 
 /** A keyframe animation to run from song time `t0`. */
@@ -149,16 +153,16 @@ export function leadOf(shape: WordShape): number {
   const ink = shape.rtl ? shape.ink?.right : shape.ink?.left;
   return ink && ink > 0 ? ink + INK_MARGIN : 0;
 }
-/** Springs stop once they are this close to rest: px for lifts, scale units, opacity. */
-const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005 };
+/** Springs stop once they are this close to rest: px for lifts, scale units, opacity, degrees. */
+const SETTLED = { lift: 0.08, scale: 0.0008, opacity: 0.005, tilt: 0.03 };
 /** Keyframes are kept where straight lines between them would miss by more than this (all sub-pixel). */
-const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25 };
+const THIN = { lift: 0.15, scale: 0.0015, opacity: 0.01, x: 0.25, tilt: 0.05 };
 /**
  * A stretch that changes less than this per STEP_MS (px for lifts and the wipe, scale units, opacity)
  * steps on the beat: about a third of a pixel of lift, under half a pixel of a word's edge, a pixel of
  * a soft-edged wipe, 2 % of a glow, each 20 times a second.
  */
-const STEP_QUANTUM = { lift: 0.5, scale: 0.006, opacity: 0.04, x: 1.2 };
+const STEP_QUANTUM = { lift: 0.5, scale: 0.006, opacity: 0.04, x: 1.2, tilt: 0.15 };
 /** Plans are sampled this often; the compositor interpolates linearly in between. */
 export const PLAN_MS = 1000 / 30;
 /** The ripple's hop lasts its hold plus this long to settle back. */
@@ -170,12 +174,13 @@ interface Curves {
   scale: (x: number) => number;
   glow: (x: number) => number;
   letterScale: (x: number) => number;
+  sway: (x: number) => number;
 }
 const curveCache = new WeakMap<MotionParams, Curves>();
 function curvesOf(p: MotionParams): Curves {
   let c = curveCache.get(p);
   if (!c) {
-    c = { lift: spline(p.liftKeys), scale: spline(p.scaleKeys), glow: spline(p.glowKeys), letterScale: spline(p.letterScaleKeys) };
+    c = { lift: spline(p.liftKeys), scale: spline(p.scaleKeys), glow: spline(p.glowKeys), letterScale: spline(p.letterScaleKeys), sway: spline(p.swayKeys) };
     curveCache.set(p, c);
   }
   return c;
@@ -279,6 +284,14 @@ function transformTrack(t0: number, times: number[], lift: number[], scale: numb
   return { t0, duration, frames: framesOf(points, duration, ([y, s]) => ({ transform: liftScale(0, y ?? 0, s ?? 1) })) };
 }
 
+/** A swaying word's lift, tilt and scale track (liftTiltScale), like transformTrack's. */
+function tiltTrack(t0: number, times: number[], lift: number[], tilt: number[], scale: number[], steps = false): Track {
+  const keep = thin(times, [lift, tilt, scale], [THIN.lift, THIN.tilt, THIN.scale]);
+  const duration = times[times.length - 1] ?? 0;
+  const points = keyPoints(times, keep, [lift, tilt, scale], steps ? { t0, quantum: [STEP_QUANTUM.lift, STEP_QUANTUM.tilt, STEP_QUANTUM.scale] } : null);
+  return { t0, duration, frames: framesOf(points, duration, ([y, r, s]) => ({ transform: liftTiltScale(y ?? 0, r ?? 0, s ?? 1) })) };
+}
+
 function opacityTrack(t0: number, times: number[], values: number[], steps = false): Track {
   const keep = thin(times, [values], [THIN.opacity]);
   const duration = times[times.length - 1] ?? 0;
@@ -345,13 +358,19 @@ export function planWord(word: WordTiming, text: string, shape: WordShape, param
   const steps = options.steps === true;
   const moves = params.amp > 0;
 
-  // the pop
+  // the pop (and a swaying word's tilt, toward alternate sides word by word)
   let pop: Track | null = null;
   if (moves) {
     const fromFull = options.from === "full";
     const lift = springChannel((ms) => curves.lift(progress(ms)) * size, params.liftSpring, fromFull ? 0 : params.restLift * size, runMs, 0, SETTLED.lift);
     const scale = springChannel((ms) => curves.scale(progress(ms)), params.scaleSpring, fromFull ? 1 : params.restScale, runMs, 1, SETTLED.scale);
-    pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale, steps);
+    if (params.swayDeg > 0) {
+      const side = (options.index ?? 0) % 2 === 0 ? 1 : -1;
+      const tilt = springChannel((ms) => curves.sway(progress(ms)) * params.swayDeg * side, params.swaySpring, 0, runMs, 0, SETTLED.tilt);
+      pop = tiltTrack(word.start, align([lift, tilt, scale], [0, 0, 1]), lift, tilt, scale, steps);
+    } else {
+      pop = transformTrack(word.start, align([lift, scale], [0, 1]), lift, scale, steps);
+    }
   }
 
   // the bloom
@@ -453,13 +472,18 @@ export function letterRest(word: WordTiming, text: string, shape: WordShape, par
   return shape.letters.map((l) => (moves && held[l.part] === true ? liftScale(0, params.restLift * params.letterLiftGain * shape.size, scale0) : ""));
 }
 
-/** The word's transform before it is sung (upcoming), as a CSS transform. */
+/** The word's transform before it is sung (upcoming), as a CSS transform (with the tilt's place for a sway). */
 export function restTransform(size: number, params: MotionParams): string {
-  return liftScale(0, params.restLift * size, params.restScale);
+  return params.swayDeg > 0 ? liftTiltScale(params.restLift * size, 0, params.restScale) : liftScale(0, params.restLift * size, params.restScale);
 }
 
 /** The same transform function list at full size, no lift. */
 export const FULL_TRANSFORM = liftScale(0, 0, 1);
+
+/** A word's pose at full size, no lift, in its move's transform function list (a sway's has a tilt). */
+export function fullTransform(params: MotionParams): string {
+  return params.swayDeg > 0 ? liftTiltScale(0, 0, 1) : FULL_TRANSFORM;
+}
 
 /** Where the lit window rests before its word is sung: translated so nothing is lit, overhangs included. */
 export function closedWindow(shape: WordShape): number {

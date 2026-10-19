@@ -1,4 +1,5 @@
 import "../../styles/lens.css";
+import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
 import { karaokeWords } from "../../core/timing";
 import { h, put } from "../dom";
@@ -6,16 +7,18 @@ import { whenFaceLoads } from "../fonts";
 import { MIN_TEXT_PX, shadowLayers, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
+import { picturesOf, songDecor } from "../motion/decor";
 import { InterludeDots } from "../motion/dots";
 import { findInterludes, type Interlude } from "../motion/interlude";
 import { wordUntil } from "../motion/karaoke";
 import { compositorSteps, HOLD, holds, keyframesAt, num } from "../motion/keyframes";
 import { casedLines } from "../motion/letters";
 import { KaraokeLine, SLICE_MS } from "../motion/line";
-import { CALM_SCROLL_SPRING, DOTS, LEAD_MS, LITE_SCROLL_MS, motionParams, paramsKey, SCROLL_SPRING, type MotionParams } from "../motion/params";
+import { CALM_SCROLL_SPRING, DOTS, LEAD_MS, LineMoves, LITE_SCROLL_MS, motionParams, paramsKey, SCROLL_SPRING, type MotionParams } from "../motion/params";
 import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
+import { warmPictures } from "../pictures";
 import { fitRow, lensTransform, OPACITY_MIN, planLens, poseOf, smallestScale, zoomAt, type LensPlan, type LensPose, type RowFit, type Shape } from "./lens-plan";
 import type { Cue, ModeRenderer } from "./types";
 
@@ -225,6 +228,10 @@ export class LensMode implements ModeRenderer {
   private next: HTMLDivElement | null = null;
   /** the lyric lines, in the look's case */
   private lines: Line[] = [];
+  /** each line's flair (Effects mode), by line index */
+  private decor: LineDecor[] = [];
+  /** the lens swells the sung word itself: moves keep rise's swell */
+  private readonly moves = new LineMoves({ riseSwell: true });
   private metrics: Metrics[] = [];
   /** width of a space and the baseline's offset from the top of a 1-line-height box, px at the base size */
   private space = 0;
@@ -291,6 +298,8 @@ export class LensMode implements ModeRenderer {
     this.next = next;
     const sung = casedLines(lines, look.textCase);
     this.lines = sung;
+    this.decor = songDecor(sung, look);
+    warmPictures(picturesOf(this.decor));
     this.interludes = look.unsynced ? [] : findInterludes(sung);
     this.leads = leadTimes(sung);
     paintVars(box, look, look.size);
@@ -428,6 +437,7 @@ export class LensMode implements ModeRenderer {
     this.nextAt = null;
     this.current = null;
     this.lines = [];
+    this.decor = [];
     this.metrics = [];
     this.leads = [];
     this.interludes = [];
@@ -956,6 +966,7 @@ export class LensMode implements ModeRenderer {
 
   private karaokeFor(row: Row, look: Look): KaraokeLine {
     const line = this.lines[row.index];
+    const decor = this.decor[row.index];
     return new KaraokeLine(
       line ? karaokeWords(line) : [],
       row.words,
@@ -965,8 +976,10 @@ export class LensMode implements ModeRenderer {
         letterSpacingPx: look.letterSpacing * look.size,
         // styles/lens.css: rows and slots are set solid
         lineHeight: 1,
-        params: this.params ?? motionParams(look),
+        // the lens already swells the sung word: a pulse on top would push it into its neighbors
+        params: this.moves.paramsFor(look, this.params ?? motionParams(look), decor?.move === "pulse" ? "bounce" : (decor?.move ?? "rise")),
         steps: this.steps,
+        ...(decor ? { decor: decor.words } : {}),
       },
       this.timeline,
       `lens${++this.serial}`,

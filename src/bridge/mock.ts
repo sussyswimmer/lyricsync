@@ -375,6 +375,7 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
   next.effects = clamp(p.effects, 0, 100) ?? next.effects;
+  if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
   return next;
 }
 

@@ -398,3 +398,45 @@ Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 steps 9 and 10 have
 Needs from Codex: nothing.
 Contract: unchanged (v4).
 
+
+## 2026-10-19 · Claude Code · Effects mode: each song's own motion, splashes and word pictures (contract v5)
+Done: Maxwell asked for different effects for different songs ("not every text has to be a float up"), splash effects, tiny pictures near words that name something ("if a song is talking about ice tea, generate a graphic of ice tea… tiny, so it doesn't take up too much"), and an on/off switch for all of it.
+- **Contract v5:** `Settings.effectsMode` (default true; settings saved without it read as true). TS, the mock store and Rust (`contract.rs`, `merge_patch`, migration tests) agree. Settings › Look has an **Effects mode** switch at the top with a caption that says what it does. The tray's **Effects ▸** menu has an **Effects mode** check item under the three levels. Reset to defaults turns it back on.
+- **A flair per song** (`core/flair.ts`, picked in `core/songlook.ts` `flairOf` from the same axes as the look, with a trackKey-hash nudge so similar songs differ):
+  - a `move` for most lines and an `accent` move for the hooks (lines the song repeats, `hookLines`).
+  - Six moves (`overlay/motion/params.ts` `moveTuning`): **rise** (the v4 motion, unchanged), **bounce**, **sway** (a tilt that swings back through rest, alternating sides, in its own transform list `liftTiltScale`), **wave** (taller, slower letter hops), **pulse** (a quick swell, no lift) and **drop** (waits above the line and drops in).
+  - Each mode works a line's parameters out through `LineMoves`. Lens keeps rise's swell for every move (`riseSwell`) and turns a pulse into a bounce, because its fisheye already enlarges the sung word.
+  - A `splash` of **drops**, **sparks**, **confetti**, **ripple** or **glints**, chosen by what the lyrics mention (`themesOf`: water, fire, party, night) and the pace.
+- **Splashes** (`overlay/motion/decor.ts` `planSplash`):
+  - They mark a held note (the look's held-note rule, on word-timed lines only), a hook's last word, or a shouted line's last word. At most one a line, 5 s apart (`planDecor`).
+  - 2 to 12 pieces, seeded per word, sampled at 30 fps and thinned, on transform and opacity only.
+  - They sit under every copy of the word, so a burst never covers it.
+- **Word pictures:**
+  - **How they were made:** 49 small stickers generated with Higgsfield. The model was GPT Image 2.5 at medium quality with a transparent background, in one glossy-3D-emoji style; that style was picked from a four-way test on iced tea and cost about 26 credits.
+  - **Files:** trimmed and scaled to 160 px WebP (377 kB together) in `src/overlay/pictures/`, bundled with the app (`overlay/pictures.ts`).
+  - **Matching** (`core/wordpics.ts`):
+    - Literal English words and phrases of up to three words, plus plurals, possessives and a dropped g. The longest phrase wins ("broken heart" over "heart"), and the picture goes on the phrase's last word.
+    - Words with several meanings ("ring", "wave", "tear", "ice", "present") only count inside a phrase.
+    - At most one picture a line, 6 s apart, and the same picture 25 s apart.
+  - **On screen** (`KaraokeLine`):
+    - The picture pops in above the word as it's sung, floats about 2.4 s and fades. It sits under the word instead on a wrapped line's later row (one `offsetTop` read, only for that word).
+    - Without motion it only fades. Pictures are fetched and decoded when the song's lyrics are drawn.
+  - **Lifecycle:** extras run on their own song-timeline windows (group `<line>+fx`), so the line's shared window doesn't stretch. A sung line leaving focus freezes them, and they fade out with its overlay; a re-mount starts them over.
+  - **Off:** there is no decor with Effects mode off, for unsynced lyrics, or in the lite tier.
+- **QA:** `?flair=move[,accent[,splash]]` on the overlay page forces a flair (never stored). Each lyrics scene carries `data-flair`. Checked in Chromium with `?power=full`, in all four styles:
+  - Pictures above words (Drift, Stack, Lens and Arc) and under a wrapped second row (Stack).
+  - Every splash kind mid-burst; the first round was too small and too slow to read, and was retuned.
+  - Reduced motion: pictures still, no splash.
+  - Lens no longer pushes a swelling word into its neighbors.
+  - Settings in light and dark.
+  - Main-thread time over 20 s with Effects mode on against off, in headless Chromium with software compositing: +0.1 points for Strobe Hearts and +0.4 for Glacier Nocturne.
+Tests: 1186 vitest in 33 files. New: `wordpics.test.ts`, `flair.test.ts`, KaraokeLine extras and the sway tilt in `motion.test.ts`, the switch in `settings-look.test.ts`, the v5 contract and the mock store, and the look keys. Coverage is 98.6% of statements; flair.ts 99%, wordpics.ts 99%, decor.ts 99%. 267 Rust tests (1 ignored), including v5 migration, merge, the contract and the tray item. `pnpm build`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- Effects mode is on by default.
+- Only bundled pictures; nothing is generated while a song plays.
+- The pacing limits: `PICTURE_GAP_MS`, `SAME_PICTURE_GAP_MS` and `SPLASH_GAP_MS`.
+- Splashes on held notes, hooks and shouted lines.
+- Lens never pulses.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §12 has the checks, and §7 now notes that the CPU runs include Effects mode.
+Needs from Codex: nothing.
+Contract: v5 (`effectsMode`).

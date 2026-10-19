@@ -13,6 +13,7 @@
  */
 import type { Lyrics, Mode, NowPlaying } from "../../contract/contract";
 import { cjkLang, FONTS, fontFor, type CjkLang, type FontChoice } from "./faces";
+import { MOVES, PLAIN_FLAIR, SPLASHES, themesOf, type Flair, type Move, type SplashKind, type Themes } from "./flair";
 import type { Line } from "./lrc";
 import type { CoverStats } from "./palette";
 import { splitWords, syllables, type Timeline } from "./timing";
@@ -87,6 +88,8 @@ export interface SongFeatures {
   greek: boolean;
   hints: readonly Hint[];
   cover: CoverStats | null;
+  /** what the lyrics mention (water, fire, a party, the night sky), for the splash */
+  themes: Themes;
 }
 
 /** Perceptual axes, 0..1 each (warm is -1..1), the level the picker reasons at. */
@@ -140,6 +143,8 @@ export interface SongLook {
   /** em */
   letterSpacing: number;
   textCase: "as-is" | "upper";
+  /** Effects mode's flair: how the words move, and the splash (core/flair.ts) */
+  flair: Flair;
   /** the two or three things about the song that drove the pick, in plain words */
   traits: string[];
   /** e.g. "slow, long held notes → Arc with Instrument Serif" */
@@ -437,6 +442,7 @@ export function songFeatures(input: SongInput): SongFeatures {
     greek: share("greek") >= 0.1,
     hints: hintsOf(track.title, track.album),
     cover,
+    themes: themesOf(lyric),
   };
 }
 
@@ -673,6 +679,51 @@ function emphasisOf(f: SongFeatures, a: Axes): EmphasisRule | null {
   return { minMs: Math.round(clamp(Math.max(base, top), 750, 2000)), maxChars: 12, lastWordOnly: false };
 }
 
+/** How far the trackKey hash moves each move's and splash's score: similar songs don't all get the same flair. */
+const FLAIR_JITTER = 0.3;
+
+/** The best of `scores`, then the runner-up; equal scores rank in `order`. */
+function ranked<K extends string>(scores: Record<K, number>, order: readonly K[]): K[] {
+  return [...order].sort((x, y) => scores[y] - scores[x] || order.indexOf(x) - order.indexOf(y));
+}
+
+/**
+ * Effects mode's flair. Fast, punchy songs bounce and pulse; slow and intimate ones sway; long held
+ * notes wave through their letters; dark, heavy ones drop. The hooks move with the runner-up, so a
+ * chorus stands apart from the verses. The splash follows what the words are about (water, fire, a
+ * party, the night sky), else the pace. The trackKey hash stirs every score a little, so two similar
+ * songs needn't look alike. Lyrics without timing don't move (only their lines do).
+ */
+function flairOf(f: SongFeatures, a: Axes): Flair {
+  if (f.timing !== "word" && f.timing !== "line") return { ...PLAIN_FLAIR };
+  const jitter = (name: string): number => (stableHash(`${f.trackKey}#flair-${name}`) - 0.5) * FLAIR_JITTER;
+  const dance = has(f, "dance");
+  const dreamy = has(f, "dreamy");
+  const shout = smooth(f.shout, 0.05, 0.4);
+  const vocables = smooth(f.vocables, 0.05, 0.3);
+  const moves: Record<Move, number> = {
+    rise: 0.45,
+    bounce: 0.2 + 0.45 * a.pace + 0.25 * a.punch + 0.15 * dance - 0.25 * a.sustain,
+    sway: 0.15 + 0.45 * (1 - a.pace) + 0.25 * a.intimacy + 0.15 * dreamy - 0.2 * a.punch,
+    wave: 0.15 + 0.4 * a.sustain + 0.25 * vocables + 0.1 * (1 - a.density),
+    pulse: 0.1 + 0.4 * a.punch + 0.3 * shout + 0.15 * dance + 0.1 * a.pace,
+    drop: 0.15 + 0.3 * a.punch * (1 - a.light) + 0.2 * (1 - a.light) - 0.1 * a.intimacy,
+  };
+  for (const m of MOVES) moves[m] += jitter(m);
+  const [move = "rise", accent = "rise"] = ranked(moves, MOVES);
+  const t = f.themes;
+  const splashes: Record<SplashKind, number> = {
+    drops: 0.25 + 1.6 * t.water,
+    sparks: 0.2 + 1.6 * t.fire + 0.25 * a.punch * (1 - a.light) + 0.1 * dance,
+    confetti: 0.15 + 1.6 * t.party + 0.25 * a.pace * a.vivid + 0.15 * dance,
+    ripple: 0.2 + 0.3 * (1 - a.pace) * (0.5 + 0.5 * a.intimacy),
+    glints: 0.2 + 1.6 * t.night + 0.1 * (1 - a.pace),
+  };
+  for (const k of SPLASHES) splashes[k] += 0.5 * jitter(k);
+  const [splash = "ripple"] = ranked(splashes, SPLASHES);
+  return { move, accent, splash };
+}
+
 function traitsOf(f: SongFeatures, a: Axes): string[] {
   // the decisive ones first: what there is to read, and the script, which rules out faces
   const lead: string[] = [];
@@ -745,6 +796,7 @@ export function pickLook(f: SongFeatures): SongLook {
     scale: round(clamp((1 + 0.06 * (1 - a.density) - 0.06 * a.density) * m.scale, 0.82, 1.2)),
     letterSpacing: round(m.spacing + (upper ? 0.04 : 0), 3),
     textCase: upper ? "upper" : "as-is",
+    flair: flairOf(f, a),
     traits,
     // With no lyrics the style is moot (the stage shows a state); only the face shows, in the ♪.
     reason: f.timing === "none" ? `${traits.join(", ")} → ${face.label}` : `${traits.join(", ")} → ${STYLE_LABEL[style]} with ${face.label}`,

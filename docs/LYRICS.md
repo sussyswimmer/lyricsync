@@ -1,6 +1,6 @@
 # LRCLIB lyrics service (X3)
 
-The lyrics service (Codex, `codex/lyrics`, now merged) answers the lyrics commands and starts a lookup on every track change from either OS's now-playing adapter. The shared contract is v4. v2 added `media-status` ([NOW_PLAYING.md](NOW_PLAYING.md#media-status-contract-v2)), v3 added the on/off, launch-at-login and shortcut settings, and v4 the Effects setting, so the lyrics commands and events are unchanged from v1. Native end-to-end acceptance is still pending; M2 is not complete.
+The lyrics service (Codex, `codex/lyrics`, now merged) answers the lyrics commands and starts a lookup on every track change from either OS's now-playing adapter. The shared contract is v5. v2 added `media-status` ([NOW_PLAYING.md](NOW_PLAYING.md#media-status-contract-v2)), v3 added the on/off, launch-at-login and shortcut settings, v4 the Effects setting and v5 Effects mode, so the lyrics commands and events are unchanged from v1. Native end-to-end acceptance is still pending; M2 is not complete.
 
 ## Lookup and matching
 

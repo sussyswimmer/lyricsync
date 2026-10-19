@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 4;
+export const CONTRACT_VERSION = 5;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -71,8 +71,8 @@ export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
 export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
-  /** the settings schema, still 1: contracts v3 and v4 only added fields, and stored settings without
-   *  them get the defaults */
+  /** the settings schema, still 1: contracts v3, v4 and v5 only added fields, and stored settings
+   *  without them get the defaults */
   version: 1;
   /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
   mode: Mode;
@@ -102,6 +102,10 @@ export interface Settings {
   shortcuts: Shortcuts;
   /** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. Added in contract v4. */
   effects: number;
+  /** Effects mode: each song moves its own way (not every word floats up), big moments splash, and
+   *  words that name something get a tiny picture. false: every word rises, nothing else is added.
+   *  Added in contract v5. */
+  effectsMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -119,4 +123,5 @@ export const DEFAULT_SETTINGS: Settings = {
     nudgeLater: "CmdOrCtrl+Alt+Shift+[",
   },
   effects: 50,
+  effectsMode: true,
 };

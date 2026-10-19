@@ -107,6 +107,11 @@ describe("lookKeys", () => {
     expect(lookKeys(look({}, { motion: false }), "drift").shape).not.toBe(base.shape);
     expect(lookKeys(look(), "stack").shape).not.toBe(base.shape);
   });
+
+  it("rebuilds when Effects mode or the song's flair changes: the lines' moves, splashes and pictures are built in", () => {
+    expect(lookKeys(look({ effectsMode: false }), "drift").shape).not.toBe(base.shape);
+    expect(lookKeys({ ...look(), flair: { move: "bounce", accent: "pulse", splash: "drops" } }, "drift").shape).not.toBe(base.shape);
+  });
 });
 
 // Regression (small-text-shadow-floor): the dark legibility shadow shrank with the text to a

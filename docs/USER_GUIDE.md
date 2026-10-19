@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Size, Height, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song; Effects mode, Size, Height, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -49,7 +49,7 @@ Undertone picks how each song looks: its style (one of the four below) and its f
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
-The settings in the window's **Look** group, below, change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
+The settings in the window's **Look** group, below, turn each song's extra effects on or off ([Effects mode](#effects-mode)) and change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
 
 ### Picked for this song
 
@@ -86,6 +86,18 @@ Undertone picks one of eight fonts built into it, so they work offline:
 It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts aren't picked for long lines. In Syne or Unbounded, shouted lyrics may be set in capitals.
 
 Each font comes in one weight. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match the font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
+
+### Effects mode
+
+On by default. It gives each song effects of its own on top of its look:
+
+- **Its own motion.** Not every song's words float up. Depending on how the song is sung, its words **rise** and settle, **bounce** off the line, **sway** side to side, send a **wave** through their letters, **pulse** on the beat, or **drop** into place from just above. The lines a song repeats, such as its chorus, move a second way, so the chorus stands apart from the verses. Fast, punchy songs bounce and pulse; slow, intimate ones sway; songs with long held notes wave.
+- **Splashes.** At a song's big moments (a long held note, the end of a chorus line, a shouted line) a small burst comes off the word: **droplets** that leap and fall, **sparks**, **confetti** in the song's colors, **ripples** spreading under the word, or twinkling **glints**. Which one depends on what the song is about: rain and tears splash droplets, fire and lightning throw sparks, a party throws confetti, stars and dreams glint. There's never more than one burst per line, and they're at least 5 seconds apart.
+- **Tiny pictures.** When a word names something you can picture, a small picture of it pops up beside the word as it's sung, floats for about two seconds and fades away. Sing about *iced tea*, *rain*, *roses*, *the moon*, a *car*, *coffee* or a *broken heart*, and you'll see it. There are 49 pictures, built into Undertone, so they work offline. A picture shows at most once per line, at least 6 seconds after the last one, and the same picture again only after 25 seconds, so lyrics never fill up with them. The pictures sit above the word, or under it on the second row of a line that wraps. Only English words call them for now.
+
+Switch it off for the calm, even look: every song's words rise the same way, with no splashes or pictures. **Effects ▸ Effects mode** in the menu does the same.
+
+The same song always gets the same effects. With [Effects](#effects) at 0, the words don't move and nothing splashes, but pictures still fade in and out. If you've asked your system to reduce motion, the pictures fade in and out in place and there are no splashes (see [Reduced motion](#reduced-motion)). On computers without graphics acceleration, where Undertone draws everything lighter, Effects mode adds nothing.
 
 ### Size
 
@@ -244,7 +256,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts Effects, the colors, the size, height, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts Effects mode, Effects, the colors, the size, height, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 
@@ -258,6 +270,7 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 |---|---|
 | **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as [Lyrics on the desktop](#lyrics-on-the-desktop) in Settings |
 | **Effects ▸** Calm / Balanced / Lively | How much the words move: 20, 50 or 85, the same as [Effects](#effects) in Settings |
+| **Effects ▸** Effects mode | Turns each song's own motion, splashes and pictures on or off, the same as [Effects mode](#effects-mode) in Settings |
 | **Sync ▸** Earlier 100 ms / Later 100 ms / Reset for this song | Nudges this song's sync (see [This song](#this-song)) |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
@@ -294,6 +307,7 @@ Shortcuts that work from any app, by default (change or turn them off in [Settin
 If you've asked your system to reduce motion (macOS: System Settings → Accessibility → Display → **Reduce motion**; Windows: Settings → Accessibility → Visual effects → **Animation effects** off), Undertone keeps the lyrics still and changes lines with a short crossfade instead:
 
 - Words fade quickly to the highlight color as they're sung, instead of filling behind a moving edge, and nothing rises, swells or hops; the glow stays steady. [Effects](#effects) doesn't change this, and Settings says so under its slider.
+- With [Effects mode](#effects-mode) on, words still get their tiny pictures, but each one only fades in and out where it stands, and nothing splashes.
 - **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
 - **Lens** doesn't magnify. The line stays flat, and words still light up as they're sung.
 - **Arc** lines don't glide between their places; they crossfade.
