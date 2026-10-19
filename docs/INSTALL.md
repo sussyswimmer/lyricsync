@@ -4,12 +4,12 @@ Undertone runs on macOS 14 or later and on Windows 10 and 11. The builds aren't 
 
 ## Download
 
-Released versions will be on [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases). Open the latest release and look under **Assets**:
+Get the newest version from the [README's download buttons](../README.md) or [GitHub Releases](https://github.com/sussyswimmer/lyricsync/releases). Under a release's **Assets**:
 
-- **macOS:** `Undertone_<version>_universal.dmg`. One build covers Apple silicon and Intel Macs. (The `.app.tar.gz` next to it is the same app without the disk image; you don't need it.)
-- **Windows:** `Undertone_<version>_x64-setup.exe`.
+- **macOS:** `Undertone_universal.dmg`. One build covers Apple silicon and Intel Macs. (The `.app.tar.gz` next to it is the same app without the disk image; you don't need it.)
+- **Windows:** `Undertone_x64-setup.exe`.
 
-**Test builds:** nothing is released yet, so for now this is how to get Undertone. Every push to the repository builds both installers. Open the **Actions** tab, click a **CI** run, and download the `.dmg` or the `-setup.exe` from **Artifacts** at the bottom of the run's summary. You need to be signed in to GitHub, and test builds are deleted after 14 days. The steps below are the same for them.
+**Test builds:** every push to the repository builds both installers. Open the **Actions** tab, click a **CI** run, and download the `.dmg` or the `-setup.exe` from **Artifacts** at the bottom of the run's summary. You need to be signed in to GitHub, and test builds are deleted after 14 days. The steps below are the same for them.
 
 ## macOS
 
@@ -48,8 +48,8 @@ The first time Undertone reads Spotify or Music, macOS asks whether **Undertone*
 
 - macOS asks once for each player, so you may see the prompt again when you first use the other app.
 - Because these builds aren't signed with a developer certificate, macOS may ask again after you install a new version.
-- If you clicked **Don't Allow**, see [Permissions](../README.md#macos-automation) in the README to switch it back on.
-- If no prompt appears and no lyrics show, see [Nothing shows up](../README.md#nothing-shows-up) in the README.
+- If you clicked **Don't Allow**, see [macOS: Automation](#macos-automation) below to switch it back on.
+- If no prompt appears and no lyrics show, see [Nothing shows up](TROUBLESHOOTING.md#nothing-shows-up).
 
 ### Finding Undertone
 
@@ -71,6 +71,28 @@ Undertone draws its lyrics and settings with Microsoft Edge WebView2. Windows 11
 
 Start Undertone from the Start menu. The first time, the settings window opens. Undertone has no taskbar button (the settings window gets one while it's open); it shows up as an icon in the system tray, next to the clock. If you don't see it, click the **^** arrow to show hidden icons, and drag Undertone onto the taskbar to keep it in view. Start a song and the lyrics appear on your desktop.
 
+## Permissions
+
+### macOS: Automation
+
+The first time Undertone reads Spotify or Music, macOS asks whether **Undertone** may control **Spotify** (or **Music**). Click **OK**.
+
+- **Why it's needed:** macOS has no public way for an app to see what another app is playing. Undertone asks Spotify and Music directly, through Apple Events, for the title, artist, album, length, position, play state and cover art. It only reads. It never starts, pauses or skips anything, and it checks that the player is already running before asking, so it never launches Spotify or Music by itself.
+- **If you click Don't Allow:** Undertone can't see what that app is playing, so you get no lyrics for it. While that app is open, the settings window says so at the top ("Undertone can't see what Spotify is playing.") and names the switch to turn on. Nothing else breaks.
+- **To turn it back on:** open **System Settings → Privacy & Security → Automation**, find **Undertone**, and switch on **Spotify** and/or **Music**. Undertone notices within about 10 seconds, without a restart, and the notice in Settings goes away. If Undertone or the player is missing from that list, or switching it on doesn't help, reset Undertone's Automation permission in Terminal with `tccutil reset AppleEvents com.undertone.desktop`, quit and reopen Undertone, and play a song to get the prompt again.
+
+macOS asks once per player, so you may see the prompt a second time when you first use the other app.
+
+### Windows: nothing to grant
+
+Nothing to grant. Undertone reads the system media session, the same information Windows shows in its media controls next to the volume slider. When several apps are playing, it prefers Spotify.
+
+### Network
+
+Undertone sends the title, artist, album and length of the current song to `lrclib.net` to look up lyrics. For Spotify on macOS, it also downloads the cover art from Spotify's image server. Lyrics are cached on your computer so the same song loads instantly next time.
+
+If you set a proxy by hand in your system's network settings, Undertone uses it. A proxy set up automatically (a PAC script or WPAD) isn't supported.
+
 ## Updating
 
 Install the new version over the old one. Your settings, sync nudges and cached lyrics are kept.
@@ -85,4 +107,4 @@ Install the new version over the old one. Your settings, sync nudges and cached 
 
 ## Building it yourself
 
-To build the installers from source, set up the tools in the README's [Development](../README.md#development) section and run `pnpm tauri build`. The installers land in `src-tauri/target/release/bundle/`. On macOS, for one build that runs on both kinds of Mac, run `rustup target add aarch64-apple-darwin x86_64-apple-darwin` once, then `pnpm tauri build --target universal-apple-darwin`, and look in `src-tauri/target/universal-apple-darwin/release/bundle/`.
+To build the installers from source, set up the tools in [DEVELOPMENT.md](DEVELOPMENT.md) and run `pnpm tauri build`. The installers land in `src-tauri/target/release/bundle/`. On macOS, for one build that runs on both kinds of Mac, run `rustup target add aarch64-apple-darwin x86_64-apple-darwin` once, then `pnpm tauri build --target universal-apple-darwin`, and look in `src-tauri/target/universal-apple-darwin/release/bundle/`.

@@ -120,13 +120,13 @@ describe("doc links", () => {
   });
 });
 
-describe("README development notes", () => {
+describe("development notes (docs/DEVELOPMENT.md)", () => {
   it("names everything `pnpm coverage` measures", () => {
     // vite.config.ts's test.coverage.include
     const list = /coverage:\s*\{[\s\S]*?include:\s*\[([^\]]*)\]/.exec(read("vite.config.ts"))?.[1] ?? "";
     const includes = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(includes.length).toBeGreaterThan(0);
-    const line = read("README.md")
+    const line = read("docs/DEVELOPMENT.md")
       .split("\n")
       .find((l) => l.startsWith("pnpm coverage"));
     expect(line).toBeDefined();
@@ -139,7 +139,7 @@ describe("README development notes", () => {
   });
 
   it("lists the mock's demo tracks as the mock defines them", () => {
-    const readme = read("README.md");
+    const readme = read("docs/DEVELOPMENT.md");
     const rows = [...readme.matchAll(/^\| (\d+) \| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => [Number(m[1]), (m[2] ?? "").trim()]);
     expect(rows).toEqual(MOCK_TRACKS.map((t, i) => [i, t.title]));
     const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
@@ -183,9 +183,9 @@ describe("debug flags in the docs", () => {
   });
 
   // Contract v4: the forced look for QA (`--look`, any build) is spelled out where people look for it.
-  it("--look is explained in the README with its grammar and how to pass it", () => {
+  it("--look is explained in docs/DEVELOPMENT.md with its grammar and how to pass it", () => {
     expect([...appFlags()]).toContain("--look");
-    const readme = read("README.md");
+    const readme = read("docs/DEVELOPMENT.md");
     expect(readme).toContain("--look=<style>[,<family>[,<curve>]]");
     expect(readme).toContain("pnpm tauri dev -- -- --look=lens");
   });
@@ -242,7 +242,7 @@ describe("user guide", () => {
 describe("the look picked per song in the docs", () => {
   it("the guide explains the pick, the card and the Look group, and has no Style, Font or Curve to set", () => {
     const guide = read("docs/USER_GUIDE.md");
-    for (const heading of ["## Look", "### Picked for this song", "### The four styles", "### Effects", "### Glow"]) {
+    for (const heading of ["## Look", "### Picked for this song", "### The six styles", "### Effects", "### Glow"]) {
       expect(guide).toContain(`\n${heading}\n`);
     }
     for (const gone of ["## Style", "## Font", "## Layout", "### Curve"]) expect(guide).not.toContain(`\n${gone}\n`);
@@ -255,8 +255,6 @@ describe("the look picked per song in the docs", () => {
       expect(text, doc).not.toMatch(/Style ▸/);
       expect(text, doc).not.toMatch(/your choice of font|pick a font|Font group/i);
     }
-    const readme = read("README.md");
-    expect(readme).toContain("**Effects ▸** Calm / Balanced / Lively");
     expect(read("docs/USER_GUIDE.md")).toContain("**Effects ▸** Calm / Balanced / Lively");
   });
 });
@@ -268,7 +266,8 @@ describe("shortcuts and the General switches in the docs", () => {
   const defaults = [d.toggleLyrics, d.nudgeEarlier, d.nudgeLater];
 
   it("quote every default shortcut in the macOS and Windows notation Settings uses", () => {
-    for (const doc of ["README.md", "docs/USER_GUIDE.md"]) {
+    // the README is pictures and links since 2026-10-19; the user guide lists the shortcuts
+    for (const doc of ["docs/USER_GUIDE.md"]) {
       const text = read(doc);
       for (const binding of defaults) {
         expect(text, doc).toContain(displayAccelerator(binding, "mac"));
