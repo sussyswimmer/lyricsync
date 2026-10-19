@@ -1008,9 +1008,11 @@ export class LensMode implements ModeRenderer {
         host: row.el,
         spot: (j, t) => {
           const pose = row.plan ? row.plan.at(t) : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0);
-          const s = pose.scale[j] ?? 1;
-          const w = (row.shape.widths[j] ?? 0) * s;
-          return { x: (pose.x[j] ?? 0) + w / 2, y: row.slotY + (pose.y[j] ?? 0) + this.baseline * (1 - s), w };
+          const top = (k: number): number => row.slotY + (pose.y[k] ?? 0) + this.baseline * (1 - (pose.scale[k] ?? 1));
+          const w = (row.shape.widths[j] ?? 0) * (pose.scale[j] ?? 1);
+          // Poster: over the block's top row, so a word's picture doesn't sit on the row above its word
+          const y = this.layout.blocks ? Math.min(...row.shape.widths.map((_, k) => top(k))) : top(j);
+          return { x: (pose.x[j] ?? 0) + w / 2, y, w };
         },
         // as big as the word is drawn once the lens (or the spotlight, or its poster row) has it
         scaleOf: (j) => {

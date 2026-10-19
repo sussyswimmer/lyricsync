@@ -62,6 +62,8 @@ export interface SlotLayout {
   readonly rotates: boolean;
   /** the next line, drawn as one small row, can grow up into focus as is (one row at rest, like it) */
   readonly glides: boolean;
+  /** words sit in a block of rows: a word's picture travels over the block, not into the row above its word */
+  readonly blocks: boolean;
   /** fits line number `line`, measured at `size` px, to the stage; `baseline` is the baseline's depth in a 1 em box, as a share of the em */
   fit(shape: Shape, size: number, stage: Stage, moving: boolean, line: number, baseline: number): SlotFit;
   pose(shape: Shape, fit: SlotFit, width: number, dpr: number, lens: number, a: number, out?: LensPose): LensPose;
@@ -79,6 +81,7 @@ export const LENS_LAYOUT: SlotLayout = {
   kind: "lens",
   rotates: false,
   glides: true,
+  blocks: false,
   fit: (shape, size, stage, moving) => fitRow(shape, size, stage.width, moving),
   pose: (shape, fit, width, dpr, lens, a, out) => poseOf(shape, fit, width, dpr, lens, a, out),
   faintest: (fit, width, moving) => ({ scale: smallestScale(fit, width, moving), opacity: moving ? OPACITY_MIN : 1 }),
@@ -164,6 +167,7 @@ export const POSTER_LAYOUT: SlotLayout = {
   kind: "poster",
   rotates: true,
   glides: false,
+  blocks: true,
   fit(shape, size, stage, moving, line, baseline) {
     const spans = balancedRows(shape, posterRows(shape.order.length));
     const widest = Math.max(1, ...spans.map((s) => spanWidth(shape, s.from, s.to)));
@@ -260,6 +264,7 @@ export const SPOTLIGHT_LAYOUT: SlotLayout = {
   kind: "spotlight",
   rotates: false,
   glides: false,
+  blocks: false,
   fit(shape, size, stage, moving) {
     const rest = fitRow(shape, size, stage.width, false);
     if (!moving) return { ...rest, restFit: rest.fit, big: 1 };

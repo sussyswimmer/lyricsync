@@ -908,6 +908,21 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
     expect(String(slots[0]?.style.getPropertyValue("transform"))).toMatch(/^translate\(/u);
   });
 
+  it("Poster sends a word's picture over its block, not onto the row above its word", () => {
+    // "lanterns" opens the block's second row ("Paper / lanterns over / the river")
+    const routeY = (layout: SlotLayout): number => {
+      const { mode, row } = lens(look(), LINES, layout);
+      mode.paint(cue(0, 2000));
+      frames();
+      const route = everything(row()).find((e) => e.classList.contains("kw-route"));
+      const first = route?.getAnimations()[0]?.keyframes[0];
+      return Number(/translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(first?.transform))?.[1]);
+    };
+    const over = routeY(POSTER_LAYOUT);
+    expect(Number.isFinite(over)).toBe(true);
+    expect(over).toBeLessThan(routeY({ ...POSTER_LAYOUT, blocks: false }));
+  });
+
   it("Spotlight draws a word's picture as big as its word is once the light is on it", () => {
     const l = look();
     const { mode, row } = lens(l, LINES, SPOTLIGHT_LAYOUT);
