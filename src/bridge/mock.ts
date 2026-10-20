@@ -11,6 +11,7 @@ import {
   type ShortcutsStatus,
 } from "../../contract/contract";
 import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, recordKey, SHORTCUT_ACTIONS, type KeyLayout } from "../core/accelerator";
+import { nudgedAfter, songOffsetMs } from "../core/sync";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
 import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
@@ -334,9 +335,16 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
   if (!isObject(v)) return undefined;
   const entries = Object.entries(v).flatMap(([key, ms]): [string, number][] => {
     const clamped = clamp(ms, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);
-    return clamped === undefined || clamped === 0 ? [] : [[key, clamped]];
+    // 0 is a song's own offset since contract v7 (-0 reads as 0)
+    return clamped === undefined ? [] : [[key, clamped + 0]];
   });
   return Object.fromEntries(entries);
+};
+
+/** `nudgedTracks`: strings only, each once (its last place), the newest NUDGED_TRACKS_MAX. */
+const nudgedOf = (v: unknown): string[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((key): key is string => typeof key === "string").reduce<string[]>((list, key) => nudgedAfter(list, key), []);
 };
 
 /**
@@ -344,7 +352,7 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
  * validated field by field. Unknown keys are dropped, numbers are clamped to the SPEC ranges, and a
  * value of the wrong type or outside an enum keeps the current one. A partial `colors`, `font` or
  * `shortcuts` object changes only the keys it has; a shortcut that isn't usable or that another
- * action has keeps its current binding (`mergeShortcuts`); `trackOffsetsMs` replaces the whole map;
+ * action has keeps its current binding (`mergeShortcuts`); `trackOffsetsMs` and `nudgedTracks` replace the whole map and list;
  * `version` is ignored.
  */
 export function mergeSettings(current: Settings, patch: unknown): Settings {
@@ -371,6 +379,7 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.displays = oneOf(p.displays, DISPLAYS) ?? next.displays;
   next.globalOffsetMs = clamp(p.globalOffsetMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
   next.trackOffsetsMs = offsetsOf(p.trackOffsetsMs) ?? next.trackOffsetsMs;
+  next.nudgedTracks = nudgedOf(p.nudgedTracks) ?? next.nudgedTracks;
   if (typeof p.enabled === "boolean") next.enabled = p.enabled;
   if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
@@ -403,13 +412,21 @@ export function shortcutsStatusOf(shortcuts: Shortcuts, taken: ReadonlySet<strin
 /** How far the nudge shortcuts move the current song, as in the core (`shortcuts::SHORTCUT_NUDGE_MS`). */
 export const SHORTCUT_NUDGE_MS = 50;
 
-/** `set_track_offset` (`settings::with_track_offset`): clamped to ±2000 ms; zero removes the song. */
-export function withTrackOffset(current: Settings, trackKey: string, ms: number): Settings {
-  if (!Number.isFinite(ms)) throw new Error("offset must be finite");
+/**
+ * `set_track_offset` (`settings::with_track_offset`): the song's own offset, clamped to ±2000 ms (0
+ * included), and the song becomes the most recently nudged; `null` drops its own offset and its
+ * place among them, so it follows the learned offset again.
+ */
+export function withTrackOffset(current: Settings, trackKey: string, ms: number | null): Settings {
   const next = structuredClone(current);
-  const clamped = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms));
-  if (clamped === 0) delete next.trackOffsetsMs[trackKey];
-  else next.trackOffsetsMs[trackKey] = clamped;
+  if (ms === null) {
+    delete next.trackOffsetsMs[trackKey];
+    next.nudgedTracks = next.nudgedTracks.filter((key) => key !== trackKey);
+    return next;
+  }
+  if (!Number.isFinite(ms)) throw new Error("offset must be finite");
+  next.trackOffsetsMs[trackKey] = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms)) + 0;
+  next.nudgedTracks = nudgedAfter(next.nudgedTracks, trackKey);
   return next;
 }
 
@@ -654,7 +671,7 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
       // Like the core: a nudge needs a song, and moves its offset within the same ±2000 ms.
       const trackKey = trackKeyOf(player.current);
       const step = action === "nudgeEarlier" ? SHORTCUT_NUDGE_MS : -SHORTCUT_NUDGE_MS;
-      setSettings(withTrackOffset(settings, trackKey, (settings.trackOffsetsMs[trackKey] ?? 0) + step), true);
+      setSettings(withTrackOffset(settings, trackKey, songOffsetMs(settings, trackKey) + step), true);
     }
     return true;
   };

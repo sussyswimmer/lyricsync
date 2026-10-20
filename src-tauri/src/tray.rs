@@ -5,7 +5,7 @@
 //! Settings window's controls.
 //!
 //! There is no Style ▸ since contract v4: Undertone picks each song's style and face itself.
-use crate::contract::{NowPlaying, Settings};
+use crate::contract::NowPlaying;
 
 /// Tray sync step. Positive offsets show lyrics earlier, as in the settings window.
 pub const TRAY_NUDGE_MS: f64 = 100.0;
@@ -23,6 +23,8 @@ const SETTINGS: &str = "tray.settings";
 const LAUNCH_AT_LOGIN: &str = "tray.launch-at-login";
 const EFFECTS_MODE: &str = "tray.effects.mode";
 const QUIT: &str = "tray.quit";
+/// The build's line, shown greyed out: it does nothing.
+const BUILD: &str = "tray.build";
 /// Effects ▸ items, in menu order: the `effects` level a click sets, menu id, label.
 pub const EFFECT_LEVELS: [(f64, &str, &str); 3] = [
     (20.0, "tray.effects.calm", "Calm"),
@@ -71,6 +73,8 @@ pub fn action(id: &str) -> Option<Action> {
         LAUNCH_AT_LOGIN => Action::LaunchAtLogin,
         EFFECTS_MODE => Action::EffectsMode,
         QUIT => Action::Quit,
+        // greyed out: it only says which build this is
+        BUILD => return None,
         _ => EFFECT_LEVELS
             .iter()
             .find(|(_, item, _)| *item == id)
@@ -97,14 +101,16 @@ impl From<&NowPlaying> for Track {
     }
 }
 
-/// Everything the menu depends on. `offset_ms` is the current song's offset (0 without a song);
-/// `effects`, `effects_mode`, `enabled` and `launch_at_login` are the settings of those names.
+/// Everything the menu depends on. `offset_ms` is the current song's offset, its own or the
+/// learned one (0 without a song), and `own_offset` whether it has its own; `effects`,
+/// `effects_mode`, `enabled` and `launch_at_login` are the settings of those names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inputs {
     pub effects: f64,
     pub effects_mode: bool,
     pub track: Option<Track>,
     pub offset_ms: f64,
+    pub own_offset: bool,
     pub enabled: bool,
     pub launch_at_login: bool,
 }
@@ -125,7 +131,8 @@ pub struct MenuState {
     pub tooltip: String,
 }
 /// Sync and refetch act on the current song, playing or paused, so they need one. A nudge that
-/// can't move past the ±2000 ms bound is disabled, and so is a reset with nothing to reset.
+/// can't move past the ±2000 ms bound is disabled, and so is a reset for a song without an offset
+/// of its own (it follows the learned one already).
 pub fn menu_state(inputs: &Inputs) -> MenuState {
     let offset = inputs.track.as_ref().map(|_| inputs.offset_ms);
     MenuState {
@@ -138,12 +145,21 @@ pub fn menu_state(inputs: &Inputs) -> MenuState {
         effects_mode: inputs.effects_mode,
         earlier_enabled: offset.is_some_and(|ms| ms < MAX_OFFSET_MS),
         later_enabled: offset.is_some_and(|ms| ms > -MAX_OFFSET_MS),
-        reset_label: reset_label(offset.unwrap_or(0.0)),
-        reset_enabled: offset.is_some_and(|ms| ms != 0.0),
+        reset_label: reset_label(offset.filter(|_| inputs.own_offset).unwrap_or(0.0)),
+        reset_enabled: offset.is_some() && inputs.own_offset,
         refetch_enabled: inputs.track.is_some(),
         launch_at_login: inputs.launch_at_login,
         tooltip: tooltip(inputs.track.as_ref()),
     }
+}
+
+/// "Undertone 0.1.0 (build 78dead8)": the version and the commit it was built from.
+pub fn build_label() -> String {
+    format!(
+        "Undertone {} (build {})",
+        env!("CARGO_PKG_VERSION"),
+        crate::BUILD
+    )
 }
 
 /// "Reset for this song", with the current offset in the same words as the nudge items.
@@ -186,15 +202,6 @@ fn truncate_utf16(text: &str, max: usize) -> String {
     out
 }
 
-/// A song's offset; missing or unusable values count as 0.
-pub fn track_offset(settings: &Settings, key: &str) -> f64 {
-    settings
-        .track_offsets_ms
-        .get(key)
-        .copied()
-        .filter(|ms| ms.is_finite())
-        .unwrap_or(0.0)
-}
 /// The offset after one nudge, kept within ±2000 ms.
 pub fn nudged(current_ms: f64, delta_ms: f64) -> f64 {
     (current_ms + delta_ms).clamp(-MAX_OFFSET_MS, MAX_OFFSET_MS)
@@ -313,6 +320,9 @@ mod runtime {
             None::<&str>,
         )?;
         let quit = MenuItem::with_id(app, super::QUIT, "Quit Undertone", true, None::<&str>)?;
+        // Which build this is, so a new install can be told from an old one still running.
+        let build =
+            MenuItem::with_id(app, super::BUILD, super::build_label(), false, None::<&str>)?;
 
         let separator = PredefinedMenuItem::separator(app)?;
         let mut effect_items: Vec<&dyn IsMenuItem<Wry>> = effects
@@ -334,6 +344,7 @@ mod runtime {
                 &settings,
                 &launch_at_login,
                 &PredefinedMenuItem::separator(app)?,
+                &build,
                 &quit,
             ],
         )?;
@@ -384,9 +395,12 @@ mod runtime {
         Inputs {
             effects: settings.effects,
             effects_mode: settings.effects_mode,
-            offset_ms: track
-                .as_ref()
-                .map_or(0.0, |track| super::track_offset(&settings, &track.key)),
+            offset_ms: track.as_ref().map_or(0.0, |track| {
+                crate::settings::song_offset_ms(&settings, &track.key)
+            }),
+            own_offset: track.as_ref().is_some_and(|track| {
+                crate::settings::own_offset_ms(&settings, &track.key).is_some()
+            }),
             track,
             enabled: settings.enabled,
             launch_at_login: settings.launch_at_login,
@@ -477,7 +491,7 @@ mod runtime {
             }
             Action::Nudge(delta_ms) => nudge(app, delta_ms),
             Action::ResetOffset => current_key(app).and_then(|key| {
-                crate::settings::runtime::set_track_offset(app, &key, 0.0).map(drop)
+                crate::settings::runtime::set_track_offset(app, &key, None).map(drop)
             }),
             Action::Refetch => refetch(app),
             Action::Settings => crate::commands::show_settings(app),
@@ -533,6 +547,7 @@ pub use runtime::{install, nudge};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::Settings;
 
     fn track(playing: bool) -> Track {
         Track {
@@ -548,6 +563,7 @@ mod tests {
             effects_mode: true,
             track,
             offset_ms,
+            own_offset: offset_ms != 0.0,
             enabled: true,
             launch_at_login: false,
         }
@@ -571,6 +587,19 @@ mod tests {
         let state = menu_state(&inputs(Some(track(true)), -50.0));
         assert!(state.reset_enabled);
         assert_eq!(state.reset_label, "Reset for this song (50 ms later)");
+        // A song following the learned offset has nothing of its own to reset; one set to 0 does.
+        let learned = Inputs {
+            own_offset: false,
+            ..inputs(Some(track(true)), 150.0)
+        };
+        let state = menu_state(&learned);
+        assert!(!state.reset_enabled && state.earlier_enabled);
+        assert_eq!(state.reset_label, "Reset for this song");
+        let zero = Inputs {
+            own_offset: true,
+            ..inputs(Some(track(true)), 0.0)
+        };
+        assert!(menu_state(&zero).reset_enabled);
     }
     #[test]
     fn nudges_stop_at_the_offset_bounds() {
@@ -665,17 +694,18 @@ mod tests {
         assert_eq!(truncate_utf16("Tiếng Việt 歌词", 127), "Tiếng Việt 歌词");
     }
     #[test]
+    fn the_build_line_names_the_version_and_commit_and_does_nothing() {
+        let label = build_label();
+        assert!(label.starts_with(&format!("Undertone {} (build ", env!("CARGO_PKG_VERSION"))));
+        assert!(label.ends_with(&format!("{})", crate::BUILD)));
+        assert_eq!(action(BUILD), None);
+    }
+    #[test]
     fn nudge_arithmetic() {
         assert_eq!(nudged(0.0, TRAY_NUDGE_MS), 100.0);
         assert_eq!(nudged(30.0, -50.0), -20.0);
         assert_eq!(nudged(1950.0, TRAY_NUDGE_MS), MAX_OFFSET_MS);
         assert_eq!(nudged(-1990.0, -50.0), -MAX_OFFSET_MS);
-        let mut settings = Settings::default();
-        assert_eq!(track_offset(&settings, "a|b|c|1"), 0.0);
-        settings.track_offsets_ms.insert("a|b|c|1".into(), -250.0);
-        settings.track_offsets_ms.insert("bad".into(), f64::NAN);
-        assert_eq!(track_offset(&settings, "a|b|c|1"), -250.0);
-        assert_eq!(track_offset(&settings, "bad"), 0.0);
     }
     #[test]
     fn menu_ids_map_to_actions() {

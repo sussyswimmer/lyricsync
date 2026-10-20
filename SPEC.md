@@ -78,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v6 today: `contract/contract.ts` is authoritative, v2, v3, v4 and v5 below only add to v1, and v6 stops reading one field.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v7 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5 and v7 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts
@@ -157,11 +157,11 @@ export const DEFAULT_SETTINGS: Settings = {
 | Command | Returns |
 |---|---|
 | `get_settings()` | `Settings` |
-| `update_settings(patch: Partial<Settings>)` | `Settings`. Each field is validated and clamped on its own, and an invalid value keeps the current one. A partial `colors`, `font` or `shortcuts` changes only the keys it has; `trackOffsetsMs` replaces the whole map. |
+| `update_settings(patch: Partial<Settings>)` | `Settings`. Each field is validated and clamped on its own, and an invalid value keeps the current one. A partial `colors`, `font` or `shortcuts` changes only the keys it has; `trackOffsetsMs` and `nudgedTracks` replace the whole map and list. |
 | `get_now_playing()` | `NowPlaying \| null` |
 | `get_lyrics(trackKey: string)` | `Lyrics` |
 | `refetch_lyrics(trackKey: string)` | `()` (bypasses the cache; result arrives on the `lyrics` event) |
-| `set_track_offset(trackKey: string, ms: number)` | `Settings` (`ms` clamped to ±2000; 0 removes the song's entry) |
+| `set_track_offset(trackKey: string, ms: number \| null)` | `Settings` (`ms` clamped to ±2000 and kept, 0 included, and the song becomes the newest of `nudgedTracks`; `null` removes the song's entry and its place, since v7) |
 | `open_settings()` / `quit()` | `()` |
 
 **Contract v2 (additive, 2026-10-06).** `CONTRACT_VERSION = 2`. Nothing above changed; `Settings.version` stays 1.
@@ -252,6 +252,17 @@ yPos: number;            // the lyrics always sit in the middle of the display's
 ```
 
 The current line is centered on the overlay, which covers the display's work area: on macOS the screen below the menu bar and clear of the Dock, on Windows the monitor without the taskbar. In Arc the song's widest line is centered, its middle as far above the middle of the overlay as its ends below (`arcGeometry`'s `extent`), and shorter lines share its middle; in Lens the line coming next hangs below the centered one. Settings has no Height slider; Size sets how large the lyrics are.
+
+**Contract v7 (additive, 2026-10-20).** `CONTRACT_VERSION = 7`. `Settings.version` stays 1; stored settings without `nudgedTracks` read as `[]`. `set_track_offset` also takes `ms: null`.
+
+```ts
+// Settings gains:
+/** The songs whose sync was set most recently, oldest first, at most 9. */
+nudgedTracks: string[];  // default []
+// and trackOffsetsMs keeps a 0: it is a song's own offset now
+```
+
+**Learned sync.** A song you nudge keeps its own offset; any other song starts from what the songs you nudged last have in common (`src/core/sync.ts` `learnedOffsetMs`, `settings.rs` `learned_offset_ms`, the same rule): the middle of their own offsets, from two songs on, and with an even number the middle value nearer 0. So a correction you would make for every song (headphones that play late, say) is made once or twice, and one song with badly timed lyrics doesn't pull the others. A song's sync is `globalOffsetMs` plus its own offset or, without one, the learned one. "Reset this song" (`ms: null`) drops its own offset and its place among the nudged songs; Reset to defaults with "Also clear sync" empties both.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

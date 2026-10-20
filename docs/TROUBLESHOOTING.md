@@ -14,7 +14,7 @@ Positive offsets make lyrics appear **earlier**; negative offsets make them appe
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
 - **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌥⇧⌘[ / ⌥⇧⌘] (Ctrl+Alt+Shift+[ / ] on Windows, unless you've changed them) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
-The song's nudge is added on top of the All songs offset. Most songs' lyrics are timed by line only: Undertone then works out when each word is sung, at the pace the song is being sung, so judge the sync by when each line starts. Lyrics timed word by word follow every word exactly.
+The song's nudge is added on top of the All songs offset. A song you haven't nudged starts from what your last few nudged songs have in common, so after two or three nudges the same way, new songs start in time on their own. Most songs' lyrics are timed by line only: Undertone then works out when each word is sung, at the pace the song is being sung, so judge the sync by when each line starts. Lyrics timed word by word follow every word exactly.
 
 ## Nothing shows up
 
@@ -33,6 +33,10 @@ The song's nudge is added on top of the All songs offset. Most songs' lyrics are
 ## After an Explorer restart, sleep or a display change
 
 Undertone reattaches the lyrics to the desktop by itself when Windows Explorer restarts, when your computer wakes from sleep, and when displays are connected, removed or rearranged. It also picks up again when Spotify quits and relaunches. If the lyrics don't come back, quit Undertone from the menu and open it again, then report the problem with the diagnostics below.
+
+## A feature is missing after an update
+
+You may still be running the old build. The last line of the menu bar or tray menu, and the bottom of Settings, say which build is running: **Undertone 0.1.0 (build …)**. If it isn't the one you downloaded, quit Undertone from the menu and open it again from Applications (or the Start menu). Opening the new app while an old one runs restarts Undertone into the new one.
 
 ## Settings went back to the defaults
 

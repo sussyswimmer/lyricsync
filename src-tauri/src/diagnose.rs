@@ -305,8 +305,9 @@ pub fn header_section(header: &Header) -> Section {
             field(
                 "build",
                 format!(
-                    "{}, contract v{CONTRACT_VERSION}",
-                    if header.release { "release" } else { "debug" }
+                    "{}, contract v{CONTRACT_VERSION}, commit {}",
+                    if header.release { "release" } else { "debug" },
+                    crate::BUILD
                 ),
             ),
             field("executable", path(&header.executable)),
@@ -581,17 +582,16 @@ fn track_lines(track: &NowPlaying, settings: Option<&Settings>, now_ms: f64) -> 
         field("track key", &track.track_key),
     ];
     if let Some(settings) = settings {
-        let song = settings
-            .track_offsets_ms
-            .get(&track.track_key)
-            .copied()
-            .unwrap_or(0.0);
+        let song = crate::settings::song_offset_ms(settings, &track.track_key);
+        let learned =
+            crate::settings::own_offset_ms(settings, &track.track_key).is_none() && song != 0.0;
         lines.push(field(
             "sync offset",
             format!(
-                "{} ms global, {} ms for this song",
+                "{} ms global, {} ms for this song{}",
                 signed(settings.global_offset_ms, 0),
-                signed(song, 0)
+                signed(song, 0),
+                if learned { " (learned)" } else { "" }
             ),
         ));
     }
@@ -2627,7 +2627,10 @@ mod tests {
         .render();
         assert!(text.starts_with("\n== Undertone 0.1.0 diagnostics ==\n"));
         // The contract the build speaks, so a report says which frontend it goes with.
-        let build = format!("build:       release, contract v{CONTRACT_VERSION}");
+        let build = format!(
+            "build:       release, contract v{CONTRACT_VERSION}, commit {}",
+            crate::BUILD
+        );
         for expected in [
             "generated:   2023-11-14 22:13:20 UTC",
             "os:          Windows 11 24H2 (10.0.26100), x86_64",

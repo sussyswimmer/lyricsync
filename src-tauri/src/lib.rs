@@ -23,6 +23,33 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 const draw=()=>{frames++;app.textContent='Undertone desktop layer — drag a folder over this text\\n'\
 +'frame '+frames+' · hidden '+hidden+' times';requestAnimationFrame(draw);};requestAnimationFrame(draw);})();";
 
+/// The commit this build is from (`build.rs`): CI's, git's, or "dev".
+pub const BUILD: &str = env!("UNDERTONE_BUILD");
+
+/// The executable on disk as it was when it was read: its size and when it was written. A new
+/// Undertone installed over a running one changes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExeStamp {
+    len: u64,
+    modified: std::time::SystemTime,
+}
+
+pub fn exe_stamp(path: &std::path::Path) -> Option<ExeStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some(ExeStamp {
+        len: meta.len(),
+        modified: meta.modified().ok()?,
+    })
+}
+
+/// Whether the app on disk is no longer the one running: an update was installed over it. A
+/// second launch then restarts this instance into the new build, instead of only showing Settings
+/// (single-instance hands every second launch to the running one, so opening the new app would
+/// otherwise keep the old one running).
+pub fn replaced_on_disk(started: Option<ExeStamp>, now: Option<ExeStamp>) -> bool {
+    matches!((started, now), (Some(started), Some(now)) if started != now)
+}
+
 /// `--look=<style>[,<family>[,<curve>]]`, in debug and release builds: every overlay page draws with
 /// that style, and optionally that face and Arc's curve, instead of the look Undertone picks per
 /// song, as `?look=` does on the overlay page in a browser. For checking one style on purpose
@@ -109,7 +136,7 @@ fn start_log() {
 #[cfg(all(feature = "desktop", any(target_os = "windows", target_os = "macos")))]
 fn log_started() {
     applog!(
-        "Undertone {} started ({} {}, {} build)",
+        "Undertone {} ({BUILD}) started ({} {}, {} build)",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -136,9 +163,20 @@ pub fn run() {
         }
         None => None,
     };
+    let started_exe = std::env::current_exe()
+        .ok()
+        .and_then(|path| exe_stamp(&path));
     let app = tauri::Builder::default()
-        // First, so a second launch hands over before anything else starts: it opens Settings.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // First, so a second launch hands over before anything else starts: it opens Settings, or,
+        // when a new Undertone was installed over this one, restarts into it.
+        .plugin(tauri_plugin_single_instance::init(move |app, _args, _cwd| {
+            let now = std::env::current_exe()
+                .ok()
+                .and_then(|path| exe_stamp(&path));
+            if replaced_on_disk(started_exe, now) {
+                applog!("second launch: a new build was installed; restarting into it");
+                app.restart();
+            }
             if let Err(error) = commands::show_settings(app) {
                 applog!("second launch: {error}");
             }
@@ -301,6 +339,25 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::ffi::OsString;
+
+    #[test]
+    fn a_build_installed_over_the_running_one_is_seen_on_the_next_launch() {
+        let dir = std::env::temp_dir().join(format!("undertone-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("undertone");
+        std::fs::write(&exe, b"old build").unwrap();
+        let started = exe_stamp(&exe);
+        assert!(started.is_some());
+        assert!(!replaced_on_disk(started, exe_stamp(&exe)));
+        // the installer writes a new file in its place
+        std::fs::write(&exe, b"the new, longer build").unwrap();
+        assert!(replaced_on_disk(started, exe_stamp(&exe)));
+        // unknown either side: no restart, Settings as before
+        assert!(!replaced_on_disk(None, exe_stamp(&exe)));
+        assert!(!replaced_on_disk(started, exe_stamp(&dir.join("gone"))));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(!BUILD.is_empty());
+    }
 
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()

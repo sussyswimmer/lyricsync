@@ -193,7 +193,9 @@ The global offset, from −2000 to +2000 ms in 10 ms steps (default 0). Use it w
 
 A nudge for the song playing now, on top of **All songs**. The buttons move it −100, −50, +50 or +100 ms, and the current value shows at the right of **This song**, above the song's name. Undertone remembers the nudge for that song and applies it every time the song plays. A song's nudge can go up to 2000 ms either way.
 
-**Reset this song** sets the nudge back to 0.
+**Undertone learns from your nudges.** A song you haven't nudged starts from what your last few nudged songs have in common, and **This song** shows that value with **· learned** after it. So if your headphones play late and you nudge two or three songs the same way, the next songs start right without a nudge. It looks at the last 9 songs you nudged and takes the middle of their nudges, so one song with badly timed lyrics doesn't throw the others off. Nudge a song to give it its own value.
+
+**Reset this song** drops the song's own nudge, so it follows the learned value again (0 until you've nudged two songs).
 
 The buttons are grayed out when nothing is playing. If Undertone finds no music app open at all (Spotify or Music on a Mac; on Windows, any app in the Windows media controls), the song's name is replaced by **No music app open**. Between two songs the last song stays for a moment, so it doesn't flicker.
 
@@ -254,7 +256,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts Effects mode, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts Effects mode, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges, and what Undertone learned from them, are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 
@@ -273,6 +275,7 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
 | **Launch at login** | Starts Undertone when you log in, the same as [Launch at login](#launch-at-login) in Settings |
+| **Undertone 0.1.0 (build …)** | Grayed out: which build is running. Settings shows the same at the bottom |
 | **Quit Undertone** | Quits Undertone |
 
 Shortcuts that work from any app, by default (change or turn them off in [Settings › Shortcuts](#shortcuts)):

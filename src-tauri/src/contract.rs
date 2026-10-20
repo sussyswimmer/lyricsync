@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 6;
+pub const CONTRACT_VERSION: u8 = 7;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
 /// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
 /// v6 only stopped reading `yPos`.
@@ -172,7 +172,14 @@ pub struct Settings {
     pub show_when: ShowWhen,
     pub displays: Displays,
     pub global_offset_ms: f64,
+    /// Each nudged song's own offset on top of `global_offset_ms`, keyed by track key. Since v7, 0
+    /// is an offset of its own; a song without an entry follows the learned offset
+    /// (`settings::learned_offset_ms`).
     pub track_offsets_ms: BTreeMap<String, f64>,
+    /// The songs whose sync was set most recently, oldest first, at most
+    /// `settings::NUDGED_TRACKS_MAX`. Added in contract v7: settings saved without it read as none.
+    #[serde(default)]
+    pub nudged_tracks: Vec<String>,
     /// false hides the lyrics on every display (Settings, the tray and the toggle shortcut).
     /// Added in contract v3.
     pub enabled: bool,
@@ -223,6 +230,7 @@ impl Default for Settings {
             displays: Displays::Primary,
             global_offset_ms: 0.0,
             track_offsets_ms: BTreeMap::new(),
+            nudged_tracks: Vec::new(),
             enabled: true,
             launch_at_login: false,
             // Why every default includes Shift: `crate::shortcuts`.
@@ -528,6 +536,7 @@ mod tests {
                 "font": { "family": "Fraunces", "weight": 700.0 },
                 "size": 58.0, "curve": 38.0, "yPos": 46.0, "glow": 40.0, "opacity": 100.0,
                 "showWhen": "playing", "displays": "primary", "globalOffsetMs": 0.0, "trackOffsetsMs": {},
+                "nudgedTracks": [],
                 "enabled": true, "launchAtLogin": false,
                 "shortcuts": {
                     "enabled": true,
@@ -542,6 +551,16 @@ mod tests {
         // contract.ts's DEFAULT_SETTINGS spells out the same Effects level and Effects mode.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
         assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
+    }
+    #[test]
+    fn settings_saved_before_contract_v7_have_no_nudged_tracks() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved.as_object_mut().unwrap().remove("nudgedTracks");
+        saved["trackOffsetsMs"] = json!({ "a|b|c|1": 100.0 });
+        let read = serde_json::from_value::<Settings>(saved).unwrap();
+        assert!(read.nudged_tracks.is_empty());
+        assert_eq!(read.track_offsets_ms["a|b|c|1"], 100.0);
+        assert!(CONTRACT_TS.contains("nudgedTracks: [],"));
     }
     #[test]
     fn settings_saved_before_contract_v5_read_as_effects_mode_on() {
@@ -650,7 +669,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 6);
+        assert_eq!(CONTRACT_VERSION, 7);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

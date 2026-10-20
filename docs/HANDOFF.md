@@ -531,3 +531,15 @@ Tests: 1224 vitest in 35 files. New: `holdWeight`, `holdBudget` and held words i
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v6).
+
+
+## 2026-10-20 · Claude Code · Tighter sync on the Mac, learned sync, and updates that take over (contract v7)
+Done: Maxwell: "a lot of the time it still is slightly off … I also don't want to have to tweak it so often", then "the macbook build isn't the updated build".
+- **The Mac position, timed right** (`media/applescript.rs`, `media/macos.rs`): the read script asks for the player state and the track's details before its position, near the end of the call, but the reading was stamped with the call's midpoint, so lyrics ran early by about a third of the call, and by more, unevenly, on a busy Mac. Right after each read, on the same main-thread hop, a script that asks for `player position` alone is stamped with the middle of its own call (`SPOTIFY_POSITION`, `MUSIC_POSITION`, `timed_reading`). The read's own position stands in if it fails or takes over 250 ms.
+- **A steadier clock** (`core/clock.ts`): while playing, the clock follows the middle of the last five readings' phase (position minus read time) instead of each reading in turn, counts a repeated reading once, follows a real move (a stall) once two readings agree on it, and starts over on a pause, a resume or a seek.
+- **Learned sync** (`core/sync.ts`, `settings.rs`; contract v7): a song without its own nudge starts from what the last nudged songs have in common, the middle of their own offsets (from two songs on; of two, the one nearer 0). `Settings.nudgedTracks` keeps the last 9 nudged songs; `trackOffsetsMs` keeps a 0 now (a song's own offset); `set_track_offset` takes `ms: null` to drop a song's own offset (Reset this song, the tray's Reset). Settings shows "· learned" for a song following it. The shortcuts and the tray nudge from the learned value.
+- **Updates take over** (`lib.rs`): single-instance hands every second launch to the running Undertone, so opening a newly installed build left the old one running. A second launch now checks whether the executable on disk changed since this instance started and, if so, restarts into it (`replaced_on_disk`, `AppHandle::restart`). The build's commit (`build.rs` and `vite.config.ts`: CI's `GITHUB_SHA`, else git's HEAD) shows on the tray menu's last line, at the bottom of Settings, in the log's start line and in `--diagnose`.
+Tests: 1239 vitest in 36 files (new: `sync.test.ts`; the clock's phase window; Settings' learned value; v7 settings in the mock) and 283 Rust tests (position scripts and `timed_reading`, `learned_offset_ms` on the same cases as `sync.test.ts`, `nudged_tracks`, `with_track_offset(None)`, the tray's reset and build line, `replaced_on_disk`). `pnpm coverage` and `pnpm build` pass.
+Not verified: on a real Mac or PC, which the timing needs: compare the highlight with a song whose lyrics time every word, before and after.
+Needs from Codex: nothing.
+Contract: v7 (adds `Settings.nudgedTracks`; `set_track_offset` takes `ms: null`).

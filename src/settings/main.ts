@@ -148,7 +148,7 @@ async function boot(host: HTMLElement): Promise<void> {
     // One save either way. Forgetting every song's sync replaces the whole map, which is the intent, so
     // it goes in the same patch rather than as one set_track_offset (and one settings.json write) per song.
     reset: (forgetSongs) => {
-      sync.edit(forgetSongs ? { ...defaultsPatch(), trackOffsetsMs: {} } : defaultsPatch());
+      sync.edit(forgetSongs ? { ...defaultsPatch(), trackOffsetsMs: {}, nudgedTracks: [] } : defaultsPatch());
       sync.flush();
     },
     suspendShortcuts,

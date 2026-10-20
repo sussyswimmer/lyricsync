@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v6", () => {
+describe("contract v7", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(6);
+    expect(CONTRACT_VERSION).toBe(7);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
       font: { family: "Fraunces", weight: 700 }, size: 58, curve: 38,
       yPos: 46, glow: 40, opacity: 100, showWhen: "playing", displays: "primary",
-      globalOffsetMs: 0, trackOffsetsMs: {},
+      globalOffsetMs: 0, trackOffsetsMs: {}, nudgedTracks: [],
       enabled: true, launchAtLogin: false,
       shortcuts: {
         enabled: true,
@@ -19,6 +19,11 @@ describe("contract v6", () => {
       effects: 50,
       effectsMode: true,
     });
+  });
+
+  it("adds nudgedTracks, empty by default, without touching the settings schema (v7)", () => {
+    expect(DEFAULT_SETTINGS.nudgedTracks).toEqual([]);
+    expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
   it("adds effectsMode, on by default, without touching the settings schema (v5)", () => {

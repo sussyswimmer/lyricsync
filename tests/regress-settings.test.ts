@@ -67,9 +67,10 @@ const KEY = "artist|song|album|200000";
 const TRACK = { key: KEY, title: "Placeholder Song", artist: "Nobody" };
 
 /** A panel wired the way main.ts wires it: every action re-renders synchronously. */
-function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
-  let settings: Settings = applyWrite(structuredClone(DEFAULT_SETTINGS), { kind: "track", trackKey: KEY, ms: offsetMs });
-  const writes: { key: string; ms: number }[] = [];
+function mountPanel(offsetMs: number | null = null, track: PanelState["track"] = TRACK, start: Settings = DEFAULT_SETTINGS) {
+  const fresh = structuredClone(start);
+  let settings: Settings = offsetMs === null ? fresh : applyWrite(fresh, { kind: "track", trackKey: KEY, ms: offsetMs });
+  const writes: { key: string; ms: number | null }[] = [];
   let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } };
   const edit = (patch: Partial<Settings>): void => {
     settings = { ...settings, ...patch };
@@ -150,7 +151,7 @@ describe("settings-nudge-focus: the sync buttons keep focus and never act backwa
     (document.activeElement as unknown as FakeElement).click();
     (document.activeElement as unknown as FakeElement).click();
     expect(p.offset()).toBe(0);
-    expect(p.writes).toEqual([{ key: KEY, ms: 0 }]);
+    expect(p.writes).toEqual([{ key: KEY, ms: null }]);
     expect(document.activeElement).toBe(p.resetSong);
     expect(inert(p.resetSong)).toBe(true);
     expect(p.resetSong.disabled).toBe(false);
@@ -168,7 +169,7 @@ describe("settings-nudge-focus: the sync buttons keep focus and never act backwa
   });
 
   it("with nothing playing every sync button is inert but stays focusable, and comes back with a song", () => {
-    const p = mountPanel(0);
+    const p = mountPanel();
     p.plus50.focus();
     p.setTrack(null);
     expect(p.steps.every(inert)).toBe(true);
@@ -212,7 +213,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
   });
 
   it("each nudge says the new value with context; a reset says it once", () => {
-    const p = mountPanel(0);
+    const p = mountPanel();
     p.plus50.click();
     expect(spoken(p.root)).toBe("This song: +50 ms, lyrics earlier");
     p.minus100.click();
@@ -228,6 +229,27 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     const p = mountPanel(-1980);
     p.minus100.click();
     expect(spoken(p.root)).toBe("This song: minus 2000 ms, lyrics later");
+  });
+
+  it("a song without its own offset shows the learned one, nudges from it and has nothing to reset", () => {
+    // two other songs nudged to +100 and +150: the learned offset is +100 (of two, the one nearer 0)
+    const learned = [["x|1", 100], ["y|2", 150]].reduce(
+      (s, [trackKey, ms]) => applyWrite(s, { kind: "track", trackKey: trackKey as string, ms: ms as number }),
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const p = mountPanel(null, TRACK, learned);
+    expect(p.value.textContent).toBe("+100 ms · learned");
+    expect(inert(p.resetSong)).toBe(true);
+    expect(p.root.all("hint").some((el) => el.textContent.startsWith("Learned from the songs you nudged last."))).toBe(true);
+    p.plus50.click();
+    expect(p.writes).toEqual([{ key: KEY, ms: 150 }]);
+    expect(p.value.textContent).toBe("+150 ms");
+    expect(inert(p.resetSong)).toBe(false);
+    // the reset takes this song out of the nudged ones: back to the other two, +100
+    p.resetSong.click();
+    expect(p.writes[p.writes.length - 1]).toEqual({ key: KEY, ms: null });
+    expect(spoken(p.root)).toBe("This song follows your recent nudges again: +100 ms, lyrics earlier");
+    expect(p.value.textContent).toBe("+100 ms · learned");
   });
 
   it("a track change announces nothing", () => {
@@ -311,7 +333,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   const NO_PLAYER: MediaStatus = { source: null, problem: "no-player" };
 
   it("keeps an empty status region at the top of the panel while nothing is wrong", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const notice = p.root.one("notice");
     expect(p.root.children[0]).toBe(notice);
     expect(notice.getAttribute("role")).toBe("status");
@@ -323,7 +345,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("names the denied player and the Automation switch to turn on", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const card = p.root.one("notice-card");
     p.setMedia(DENIED_SPOTIFY);
     expect(card.hidden).toBe(false);
@@ -341,7 +363,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("hides once the player is readable again, and says nothing new on a repeat", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const card = p.root.one("notice-card");
     const title = card.one("notice-title");
     p.setMedia(DENIED_SPOTIFY);
@@ -357,7 +379,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("with no music app open, the song row says so instead of Nothing playing", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const title = p.root.one("song-title");
     expect(title.textContent).toBe("Nothing playing");
     p.setMedia(NO_PLAYER);
@@ -375,7 +397,7 @@ describe("media-status: Settings says why it can't see the song", () => {
 
   it("rides out a brief gap between songs as main.ts wires it: no flash of No music app open", () => {
     vi.useFakeTimers();
-    const p = mountPanel(0);
+    const p = mountPanel();
     const title = p.root.one("song-title");
     const held = new TrackHold<PanelState["track"]>(TRACK, (song) => p.setTrack(song));
     // The player went away for a moment: nothing playing, no player, then the next song.

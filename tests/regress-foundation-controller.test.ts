@@ -832,8 +832,9 @@ describe("quiet resyncs", () => {
     const [t, rate, target] = stage.retimes[0] ?? [0, 0, 0];
     const song = Date.now() - started;
     expect(t).toBeCloseTo(song, 6);
-    expect(target).toBeCloseTo(song + 60, 6);
-    expect(rate).toBeCloseTo(1 + 60 / 300, 6);
+    // the clock follows the middle of its readings: the first (on time) and this one, 60 ms ahead
+    expect(target).toBeCloseTo(song + 30, 6);
+    expect(rate).toBeCloseTo(1 + 30 / 300, 6);
     expect(stage.frames).toHaveLength(painted);
     expect(paintsIn(stage, 200)).toEqual([]);
     controller.destroy();
@@ -912,7 +913,8 @@ describe("quiet resyncs", () => {
     const { stage, controller, resync } = await playing(false);
     stage.next = Infinity;
     paintsIn(stage, 300);
-    resync(100);
+    // 200 ms ahead: the clock converges on 100 ms ahead, the middle of its two readings
+    resync(200);
     paintsIn(stage, 16);
     // the frame's target is where the clock is converging, ahead of the position it still slews from
     const target = stage.targets[stage.targets.length - 1] ?? 0;

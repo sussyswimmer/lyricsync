@@ -9,6 +9,7 @@ import {
 } from "../../contract/contract";
 import { detectPlatform, displayAccelerator, SHORTCUT_ACTIONS, type KeyLayout, type Platform } from "../core/accelerator";
 import type { Palette } from "../core/palette";
+import { hasOwnOffset, learnedOffsetMs, songOffsetMs } from "../core/sync";
 import { h } from "../overlay/dom";
 import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle } from "./controls";
 import { LookCard, type LookCardState } from "./look-card";
@@ -43,7 +44,8 @@ export interface PanelActions {
   edit(patch: Partial<Settings>): void;
   /** a switch with a side effect (Launch at login), saved at once on its own */
   editNow(patch: Partial<Settings>): void;
-  setTrackOffset(trackKey: string, ms: number): void;
+  /** `null` drops the song's own offset: it follows the learned one again */
+  setTrackOffset(trackKey: string, ms: number | null): void;
   reset(forgetSongs: boolean): void;
   /** true while a shortcut row listens for keys, so the current global shortcuts don't take them */
   suspendShortcuts(suspended: boolean): void;
@@ -520,11 +522,12 @@ export class SettingsPanel {
     stepper.setAttribute("aria-label", "Nudge this song's sync");
     stepper.setAttribute("aria-describedby", songValue.id);
 
-    /** This song and its offset, or null when nothing is playing. */
-    const current = (): { key: string; ms: number } | null => {
+    /** This song, its offset (its own, or the learned one) and whether it has its own; null when nothing is playing. */
+    const current = (): { key: string; ms: number; own: boolean } | null => {
       const state = this.state;
       if (!state?.track) return null;
-      return { key: state.track.key, ms: state.settings.trackOffsetsMs[state.track.key] ?? 0 };
+      const key = state.track.key;
+      return { key, ms: songOffsetMs(state.settings, key), own: hasOwnOffset(state.settings, key) };
     };
     // A press that would change nothing (a limit reached, nothing to reset, no song) leaves these buttons
     // inert (aria-disabled), never `disabled`: a disabled button drops keyboard focus, and handing it to
@@ -550,9 +553,10 @@ export class SettingsPanel {
     resetSong.type = "button";
     resetSong.addEventListener("click", () => {
       const now = current();
-      if (!now || now.ms === 0 || inert(resetSong)) return;
-      this.actions.setTrackOffset(now.key, 0);
-      this.announce("This song's sync is back to 0");
+      if (!now || !now.own || inert(resetSong)) return;
+      this.actions.setTrackOffset(now.key, null);
+      const learned = this.state ? learnedOffsetMs(this.state.settings) : 0;
+      this.announce(learned === 0 ? "This song's sync is back to 0" : `This song follows your recent nudges again: ${speakMs(learned)}`);
     });
     const songHint = hint("");
     song.append(head, songTitle, stepper, h("div", "song-foot"));
@@ -566,14 +570,23 @@ export class SettingsPanel {
       // Its click hands focus to the slider itself, so going away never strands keyboard focus.
       zero.disabled = g === 0;
       const track = s.track;
-      const ms = track ? (s.settings.trackOffsetsMs[track.key] ?? 0) : 0;
+      const ms = track ? songOffsetMs(s.settings, track.key) : 0;
+      const own = track ? hasOwnOffset(s.settings, track.key) : false;
+      const learned = learnedOffsetMs(s.settings);
       song.classList.toggle("is-disabled", !track);
-      setText(songValue, track ? formatMs(ms) : "");
+      setText(songValue, track ? (own || learned === 0 ? formatMs(ms) : `${formatMs(ms)} · learned`) : "");
       // The held song rides out a brief gap, so this only changes once the gap outlasts it.
       const idle = s.media?.problem === "no-player" ? "No music app open" : "Nothing playing";
       setText(songTitle, track ? `${track.title} · ${track.artist}` : idle);
       songTitle.title = track ? `${track.title} by ${track.artist}` : "";
-      setText(songHint, track ? "Added on top of All songs." : "Play a song to fine-tune its sync.");
+      setText(
+        songHint,
+        !track
+          ? "Play a song to fine-tune its sync."
+          : own || learned === 0
+            ? "Added on top of All songs. New songs start from what your last few nudges agree on."
+            : "Learned from the songs you nudged last. Nudge to give this song its own.",
+      );
       for (const [i, b] of buttons.entries()) {
         const delta = NUDGES[i] ?? 0;
         // Inert only when a press would change nothing; a step past the limit is clamped to it.
@@ -581,7 +594,7 @@ export class SettingsPanel {
         setAttr(b, "aria-disabled", !track || atLimit ? "true" : null);
         setAttr(b, "title", track && atLimit ? `This song is at the ${formatMs(delta > 0 ? TRACK_OFFSET_LIMIT_MS : -TRACK_OFFSET_LIMIT_MS)} limit` : null);
       }
-      setAttr(resetSong, "aria-disabled", !track || ms === 0 ? "true" : null);
+      setAttr(resetSong, "aria-disabled", !track || !own ? "true" : null);
     });
     return el;
   }
@@ -715,7 +728,7 @@ export class SettingsPanel {
       this.announce("Settings reset to defaults");
     });
     this.renderers.push((s) => {
-      const songs = Object.values(s.settings.trackOffsetsMs).filter((ms) => ms !== 0).length;
+      const songs = Object.keys(s.settings.trackOffsetsMs).length;
       forgetRow.hidden = songs === 0;
       setText(forgetText, `Also clear sync for ${songs} ${songs === 1 ? "song" : "songs"}`);
       if (songs === 0) forget.checked = false;
@@ -728,7 +741,10 @@ export class SettingsPanel {
     const licenses = h("button", "link-btn foot-link", "Licenses");
     licenses.type = "button";
     licenses.addEventListener("click", () => this.showLicenses(licenses));
-    el.append(h("span", "foot-brand", "Undertone"), h("span", "foot-item", "Lyrics from LRCLIB"), licenses);
+    // the version and the commit, as the tray's last line says them: an old build still running shows here
+    const build = h("span", "foot-item", `${__UNDERTONE_VERSION__} (${__UNDERTONE_BUILD__})`);
+    build.title = `Build ${__UNDERTONE_BUILD__}`;
+    el.append(h("span", "foot-brand", "Undertone"), build, h("span", "foot-item", "Lyrics from LRCLIB"), licenses);
     return el;
   }
 

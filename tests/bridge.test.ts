@@ -464,16 +464,22 @@ describe("mock bridge: settings", () => {
     expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: -9000 })).trackOffsetsMs).toEqual({ a: -2000, b: 2000 });
   });
 
-  it("removes a song's offset when it is set to zero", async () => {
+  it("keeps a song's own 0 and drops its offset (and its place among the nudged songs) for null", async () => {
     const { bridge, seen } = await mock();
     await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
     await bridge.invoke("set_track_offset", { trackKey: "b", ms: -50 });
-    expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: 0 })).trackOffsetsMs).toEqual({ b: -50 });
-    expect((await bridge.invoke("set_track_offset", { trackKey: "b", ms: -0 })).trackOffsetsMs).toEqual({});
+    expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: 0 })).trackOffsetsMs).toEqual({ a: 0, b: -50 });
+    const s = await bridge.invoke("set_track_offset", { trackKey: "b", ms: -0 });
+    expect(s.trackOffsetsMs).toEqual({ a: 0, b: 0 });
+    expect(Object.is(s.trackOffsetsMs["b"], 0)).toBe(true);
+    expect(s.nudgedTracks).toEqual(["a", "b"]);
+    const reset = await bridge.invoke("set_track_offset", { trackKey: "a", ms: null });
+    expect(reset.trackOffsetsMs).toEqual({ b: 0 });
+    expect(reset.nudgedTracks).toEqual(["b"]);
     await tick();
     seen.clear();
-    // Zero for a song without an offset changes nothing.
-    await bridge.invoke("set_track_offset", { trackKey: "c", ms: 0 });
+    // Dropping the offset of a song without one changes nothing.
+    await bridge.invoke("set_track_offset", { trackKey: "c", ms: null });
     await tick();
     expect(seen.settings).toEqual([]);
   });
@@ -487,12 +493,12 @@ describe("mock bridge: settings", () => {
     expect(seen.settings).toEqual([]);
   });
 
-  it("replaces trackOffsetsMs whole from update_settings, dropping zero and invalid entries", async () => {
+  it("replaces trackOffsetsMs whole from update_settings, keeping 0 and dropping invalid entries", async () => {
     const { bridge } = await mock();
     await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
     const offsets = { b: 50, c: 0, d: 5000, e: "x", f: Number.NaN } as unknown as Record<string, number>;
     const s = await bridge.invoke("update_settings", { patch: { trackOffsetsMs: offsets } });
-    expect(s.trackOffsetsMs).toEqual({ b: 50, d: 2000 });
+    expect(s.trackOffsetsMs).toEqual({ b: 50, c: 0, d: 2000 });
   });
 
   it("emits settings-changed only for a real change", async () => {
@@ -541,6 +547,7 @@ describe("mergeSettings", () => {
     displays: "all",
     globalOffsetMs: 250,
     trackOffsetsMs: { "a|b|c|1": -150 },
+    nudgedTracks: ["a|b|c|1"],
     enabled: false,
     launchAtLogin: true,
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
@@ -560,8 +567,10 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled, launchAtLogin and effectsMode.
-      expect(next).toEqual(junk === true ? { ...custom, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true } : custom);
+      // A boolean is a valid autoColor, enabled, launchAtLogin and effectsMode; an array a valid
+      // nudgedTracks, its entries that aren't strings dropped.
+      const kept = Array.isArray(junk) ? { ...custom, nudgedTracks: [] } : custom;
+      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true } : kept);
     }
   });
 
@@ -620,10 +629,19 @@ describe("mergeSettings", () => {
     for (const patch of [null, undefined, [{ size: 30 }], "size", 30]) expect(mergeSettings(custom, patch)).toEqual(custom);
   });
 
-  it("replaces track offsets whole: each clamped, zero and junk entries dropped", () => {
+  it("replaces track offsets whole: each clamped, 0 kept, junk entries dropped", () => {
     const s = mergeSettings(custom, { trackOffsetsMs: { a: 5000, b: -10, c: Number.NaN, d: "x", e: 0, f: -0, g: null } });
-    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10 });
+    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10, e: 0, f: 0 });
+    expect(Object.is(s.trackOffsetsMs["f"], 0)).toBe(true);
     expect(mergeSettings(custom, { trackOffsetsMs: [5] }).trackOffsetsMs).toEqual(custom.trackOffsetsMs);
+  });
+
+  it("replaces nudgedTracks whole: strings only, each once at its last place, the newest nine (contract v7)", () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
+    const s = mergeSettings(custom, { nudgedTracks: [...keys, 5, "k10", null] });
+    expect(s.nudgedTracks).toEqual(["k3", "k4", "k5", "k6", "k7", "k8", "k9", "k11", "k10"]);
+    expect(mergeSettings(custom, { nudgedTracks: "k1" }).nudgedTracks).toEqual(custom.nudgedTracks);
+    expect(mergeSettings(custom, { nudgedTracks: [] }).nudgedTracks).toEqual([]);
   });
 
   it("takes enabled and launchAtLogin as booleans only (contract v3)", () => {
@@ -675,7 +693,8 @@ describe("migrateSettings", () => {
       opacity: 55,
       displays: "all",
       globalOffsetMs: 120.5,
-      trackOffsetsMs: { "x|y|z|200": 90, far: -2000 },
+      // a 0 is a song's own offset since contract v7
+      trackOffsetsMs: { "x|y|z|200": 90, zero: 0, far: -2000 },
     });
   });
 
@@ -717,15 +736,20 @@ describe("migrateSettings", () => {
 });
 
 describe("withTrackOffset", () => {
-  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), trackOffsetsMs: { a: -150 } };
+  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), trackOffsetsMs: { a: -150 }, nudgedTracks: ["a"] };
 
-  it("sets, clamps and removes a song's offset without touching the others", () => {
-    expect(withTrackOffset(base, "k", 50).trackOffsetsMs).toEqual({ a: -150, k: 50 });
+  it("sets and clamps a song's own offset (0 included) without touching the others, and makes it the newest nudged", () => {
+    expect(withTrackOffset(base, "k", 50)).toMatchObject({ trackOffsetsMs: { a: -150, k: 50 }, nudgedTracks: ["a", "k"] });
     expect(withTrackOffset(base, "k", 5000).trackOffsetsMs).toEqual({ a: -150, k: 2000 });
     expect(withTrackOffset(base, "a", -9000).trackOffsetsMs).toEqual({ a: -2000 });
-    expect(withTrackOffset(base, "a", 0).trackOffsetsMs).toEqual({});
-    expect(withTrackOffset(base, "a", -0).trackOffsetsMs).toEqual({});
+    expect(withTrackOffset(base, "a", 0).trackOffsetsMs).toEqual({ a: 0 });
+    expect(Object.is(withTrackOffset(base, "a", -0).trackOffsetsMs["a"], 0)).toBe(true);
     expect(base.trackOffsetsMs).toEqual({ a: -150 });
+  });
+
+  it("drops the song's own offset and its place for null", () => {
+    expect(withTrackOffset(base, "a", null)).toMatchObject({ trackOffsetsMs: {}, nudgedTracks: [] });
+    expect(withTrackOffset(base, "other", null)).toEqual(base);
   });
 
   it("throws for a non-finite offset", () => {
