@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-20
+
+The first release. The builds aren't code-signed yet; [docs/INSTALL.md](docs/INSTALL.md) shows how to open them.
+
 ### Added
 
 - **Synced lyrics on the desktop.** Undertone shows the lyrics of the song you're playing between the wallpaper and your icons. Windows sit on top, clicks go straight through, and it lives in the menu bar on macOS and the system tray on Windows, with no Dock icon. ([#1](https://github.com/sussyswimmer/lyricsync/pull/1))
@@ -21,3 +25,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - A README with a banner, screenshots and a demo of the real renderer, plus [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
   - A contributing guide, security policy, code of conduct, issue forms and a pull request template.
   - The MIT license.
+
+[Unreleased]: https://github.com/sussyswimmer/lyricsync/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sussyswimmer/lyricsync/releases/tag/v0.1.0
