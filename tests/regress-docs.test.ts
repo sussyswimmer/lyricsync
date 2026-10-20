@@ -7,7 +7,7 @@ import { displayAccelerator } from "../src/core/accelerator";
  * Regressions from the docs QA pass:
  * - readme-install-coverage: README linked docs/INSTALL.md (not written yet) for the Gatekeeper and
  *   SmartScreen steps, and said `pnpm coverage` covers src/core when the script also covers the bridge
- *   and the overlay's pure modules.
+ *   and the overlay's pure modules. (The development notes have since moved to CONTRIBUTING.md.)
  * - handoff-log-missing: docs/HANDOFF.md stopped at C4, so C5–C8 and every request to Codex were missing
  *   from the only channel between the two halves.
  * - docs-drift (2026-10-15 audit): LYRICS.md still said "the contract is v2" at v3, `--overlay-probe` was
@@ -73,10 +73,12 @@ function anchors(md: string): Set<string> {
   return out;
 }
 
-/** Every `[text](target)` link outside code. */
+/** Every `[text](target)` link outside code, and every `href`, `src` and `srcset` of inline HTML (the README's images and badges). */
 function links(md: string): string[] {
   const text = prose(md).replace(/`[^`\n]*`/g, "");
-  return [...text.matchAll(/\[[^\]\n]*\]\(([^)\s]+)\)/g)].map((m) => m[1] ?? "");
+  const markdown = [...text.matchAll(/\[[^\]\n]*\]\(([^)\s]+)\)/g)].map((m) => m[1] ?? "");
+  const html = [...text.matchAll(/\b(?:href|src|srcset)="([^"\s]+)"/g)].map((m) => m[1] ?? "");
+  return [...markdown, ...html];
 }
 
 describe("slug", () => {
@@ -120,13 +122,13 @@ describe("doc links", () => {
   });
 });
 
-describe("README development notes", () => {
+describe("development notes in CONTRIBUTING.md", () => {
   it("names everything `pnpm coverage` measures", () => {
     // vite.config.ts's test.coverage.include
     const list = /coverage:\s*\{[\s\S]*?include:\s*\[([^\]]*)\]/.exec(read("vite.config.ts"))?.[1] ?? "";
     const includes = [...list.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(includes.length).toBeGreaterThan(0);
-    const line = read("README.md")
+    const line = read("CONTRIBUTING.md")
       .split("\n")
       .find((l) => l.startsWith("pnpm coverage"));
     expect(line).toBeDefined();
@@ -139,12 +141,12 @@ describe("README development notes", () => {
   });
 
   it("lists the mock's demo tracks as the mock defines them", () => {
-    const readme = read("README.md");
-    const rows = [...readme.matchAll(/^\| (\d+) \| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => [Number(m[1]), (m[2] ?? "").trim()]);
+    const notes = read("CONTRIBUTING.md");
+    const rows = [...notes.matchAll(/^\| (\d+) \| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => [Number(m[1]), (m[2] ?? "").trim()]);
     expect(rows).toEqual(MOCK_TRACKS.map((t, i) => [i, t.title]));
     const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
-    expect(readme).toContain(`The mock plays ${words[MOCK_TRACKS.length] ?? MOCK_TRACKS.length} demo tracks`);
-    expect(readme).toContain(`Start on demo track N (0–${MOCK_TRACKS.length - 1})`);
+    expect(notes).toContain(`The mock plays ${words[MOCK_TRACKS.length] ?? MOCK_TRACKS.length} demo tracks`);
+    expect(notes).toContain(`Start on demo track N (0–${MOCK_TRACKS.length - 1})`);
   });
 });
 

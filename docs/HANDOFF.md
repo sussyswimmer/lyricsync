@@ -286,3 +286,13 @@ Follow-ups, not done:
 5. macOS: detect clashes with system shortcuts (HIToolbox `CopySymbolicHotKeys`).
 Needs from Codex: nothing.
 Contract: unchanged (v3). Only the `yPos` comment changed, in both files.
+
+## 2026-10-20 · Claude Code · GitHub presentation
+Done: the repo now presents itself the way `sussyswimmer/bordervisualizer` does, at Maxwell's request.
+- `README.md` is a landing page: banner, badges, download buttons, a demo GIF, features, the four styles, Settings in light and dark, a three-step install, how it works (with a Mermaid chart), privacy and the Automation permission, an FAQ, build from source, roadmap, contributing, credits and license.
+- The README's troubleshooting moved to `docs/TROUBLESHOOTING.md` and its development notes (mock bridge, URL parameters, debug flags, layout) to `CONTRIBUTING.md`. Links in INSTALL and ACCEPTANCE follow them; `tests/regress-docs.test.ts` now checks the development facts in CONTRIBUTING.md and also checks `href`, `src` and `srcset` in the docs' inline HTML.
+- `assets/`: `banner.svg` and `banner.png` (written by `scripts/banner.py`, lettering outlined from the bundled Fraunces and Figtree), screenshots of the four styles and of Settings in both modes, and `demo.gif`. `scripts/readme-media.mjs` remakes all of them from the real pages on the mock bridge, with the page clock faked so every run draws the same frames.
+- New: `LICENSE` (MIT, as Maxwell chose), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `SECURITY.md`, `CHANGELOG.md`, `.github/ISSUE_TEMPLATE/` (bug report, feature request, private contact, config), `.github/PULL_REQUEST_TEMPLATE.md` and `.github/release.yml` (release-note sections by label). Workflows unchanged.
+For Maxwell, in the repo's settings (not files): description "Synced lyrics on your desktop for whatever you're playing, colored by the album art. macOS and Windows. Free & open source."; topics `lyrics`, `synced-lyrics`, `lrc`, `desktop-app`, `tauri`, `typescript`, `rust`, `spotify`, `apple-music`, `macos`, `windows`; social preview `assets/banner.png`; turn on private vulnerability reporting (Security tab), which SECURITY.md and the issue forms point to.
+Needs from Codex: nothing.
+Contract: unchanged (v3).
