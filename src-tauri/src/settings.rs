@@ -7,8 +7,9 @@
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
 //! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects`, contract
-//! v5 `effectsMode` and contract v7 `nudgedTracks`, without a new settings version: a stored file
-//! without them loads with their defaults and is rewritten once with them (`load`).
+//! v5 `effectsMode`, contract v7 `nudgedTracks` and contract v8 `graphics`, without a new settings
+//! version: a stored file without them loads with their defaults (`graphics` with its Effects mode,
+//! `migrate`) and is rewritten once with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -263,6 +264,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
             "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
             "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
+            "graphics" => keep_or_set(&mut next.graphics, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -274,7 +276,13 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
 /// fields, not even an object) into valid ones by the update rules, starting from the defaults.
 /// Settings v1 has no renamed fields to carry over; a future version adds its steps here.
 pub fn migrate(stored: &Value) -> Settings {
-    merge_patch(&Settings::default(), stored)
+    let mut settings = merge_patch(&Settings::default(), stored);
+    // Before contract v8 Effects mode also turned the pictures and splashes on and off: settings
+    // saved without `graphics` keep them as their Effects mode had them.
+    if stored.get("graphics").is_none() {
+        settings.graphics = settings.effects_mode;
+    }
+    settings
 }
 
 /// What startup (`open`) does with the stored value: the settings to use, and whether the file
@@ -919,7 +927,8 @@ mod tests {
                 "nudgeLater": "Control+Shift+K"
             },
             "effects": 80,
-            "effectsMode": false
+            "effectsMode": false,
+            "graphics": false
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -972,6 +981,7 @@ mod tests {
         );
         assert_eq!(s.effects, 80.0);
         assert!(!s.effects_mode);
+        assert!(!s.graphics);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -1046,7 +1056,7 @@ mod tests {
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
                 "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk,
-                "effectsMode": junk
+                "effectsMode": junk, "graphics": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -1067,7 +1077,7 @@ mod tests {
         // Numbers where a boolean or a string belongs, booleans where a number or a string does.
         let next = merge_patch(
             &current,
-            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0 }),
+            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0, "graphics": "on" }),
         );
         assert_eq!(next, current);
         let next = merge_patch(
@@ -1238,7 +1248,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 20);
+        assert_eq!(keys.len(), 21);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1837,6 +1847,32 @@ mod tests {
         assert_eq!(load(Some(&rewritten)), (settings, false));
         assert!(migrate(&json!({ "version": 1 })).effects_mode);
         assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v8_keep_graphics_as_their_effects_mode_had_them() {
+        // Effects mode turned the pictures and splashes off too: they stay off.
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("graphics");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(settings, custom());
+        assert!(!settings.graphics && rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["graphics"], json!(false));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // Effects mode on, or none saved: on.
+        assert!(migrate(&json!({ "version": 1 })).graphics);
+        assert!(migrate(&json!({ "effectsMode": true })).graphics);
+        assert!(!migrate(&json!({ "effectsMode": false })).graphics);
+        // Saved since v8: each its own.
+        let text_only = migrate(&json!({ "effectsMode": true, "graphics": false }));
+        assert!(text_only.effects_mode && !text_only.graphics);
+        let graphics_only = migrate(&json!({ "effectsMode": false, "graphics": true }));
+        assert!(!graphics_only.effects_mode && graphics_only.graphics);
+        // A patch changes one, never the other.
+        assert!(!merge_patch(&defaults(), &json!({ "effectsMode": false })).effects_mode);
+        assert!(merge_patch(&defaults(), &json!({ "effectsMode": false })).graphics);
+        assert!(merge_patch(&defaults(), &json!({ "graphics": false })).effects_mode);
     }
 
     #[test]

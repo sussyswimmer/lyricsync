@@ -676,13 +676,17 @@ function pickFont(f: SongFeatures, a: Axes, style: Style): { face: FontChoice; s
 
 // ─────────────────────────────────────────── look ───────────────────────────────────────────
 
+/** How far Arc bends a song's line, in Settings.curve units (before the trackKey's ±2 wobble). */
+export const CURVE_MIN = 8;
+export const CURVE_MAX = 32;
+
 function curveOf(f: SongFeatures, a: Axes): number {
-  // Deeper for held notes and slow songs, flatter for long lines; never past 60, where a long line's
-  // ends would start to read sideways.
-  const magnitude = clamp(18 + 42 * a.sustain + 18 * (1 - a.pace) - 40 * smooth(f.widthMedian, 24, 52), 12, 60);
+  // A gentle bend: a little deeper for held notes and slow songs, flatter for long lines, and never
+  // past CURVE_MAX, so a line reads as a line that bends, not as a bow.
+  const magnitude = clamp(10 + 18 * a.sustain + 8 * (1 - a.pace) - 18 * smooth(f.widthMedian, 24, 52), CURVE_MIN, CURVE_MAX);
   // Anthems and bright songs arch upward; intimate, dark ones cradle in a gentle valley.
   const sign = a.punch > 0.55 || a.light > 0.55 ? 1 : a.intimacy > 0.55 ? -1 : 1;
-  const wobble = Math.round((stableHash(`${f.trackKey}#curve`) - 0.5) * 8);
+  const wobble = Math.round((stableHash(`${f.trackKey}#curve`) - 0.5) * 4);
   return Math.round(sign * magnitude) + wobble;
 }
 

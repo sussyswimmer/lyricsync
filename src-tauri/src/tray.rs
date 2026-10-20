@@ -1,7 +1,7 @@
 //! X5 tray / menu bar. What the menu shows (labels, check marks, enabled items, tooltip) is a pure
 //! function of settings and now playing, tested on every OS; `runtime` builds the native menu,
 //! keeps it in step with `settings-changed` and `now-playing`, and runs clicks. Hide/Show lyrics,
-//! Effects ▸ (its levels and Effects mode) and Launch at login change the settings, like the
+//! Effects ▸ (its levels, Text effects and Graphics) and Launch at login change the settings, like the
 //! Settings window's controls.
 //!
 //! There is no Style ▸ since contract v4: Undertone picks each song's style and face itself.
@@ -21,7 +21,9 @@ const RESET: &str = "tray.sync.reset";
 const REFETCH: &str = "tray.refetch";
 const SETTINGS: &str = "tray.settings";
 const LAUNCH_AT_LOGIN: &str = "tray.launch-at-login";
+/// Text effects (`effectsMode`); its id is still Effects mode's, as before contract v8.
 const EFFECTS_MODE: &str = "tray.effects.mode";
+const GRAPHICS: &str = "tray.effects.graphics";
 const QUIT: &str = "tray.quit";
 /// The build's line, shown greyed out: it does nothing.
 const BUILD: &str = "tray.build";
@@ -51,8 +53,10 @@ pub enum Action {
     ToggleLyrics,
     /// Sets `effects` to this level.
     Effects(f64),
-    /// Turns Effects mode (`effectsMode`) on or off.
+    /// Turns Text effects (`effectsMode`) on or off.
     EffectsMode,
+    /// Turns Graphics (`graphics`) on or off.
+    Graphics,
     /// Adds this many ms to the current song's offset.
     Nudge(f64),
     ResetOffset,
@@ -72,6 +76,7 @@ pub fn action(id: &str) -> Option<Action> {
         SETTINGS => Action::Settings,
         LAUNCH_AT_LOGIN => Action::LaunchAtLogin,
         EFFECTS_MODE => Action::EffectsMode,
+        GRAPHICS => Action::Graphics,
         QUIT => Action::Quit,
         // greyed out: it only says which build this is
         BUILD => return None,
@@ -103,11 +108,12 @@ impl From<&NowPlaying> for Track {
 
 /// Everything the menu depends on. `offset_ms` is the current song's offset, its own or the
 /// learned one (0 without a song), and `own_offset` whether it has its own; `effects`,
-/// `effects_mode`, `enabled` and `launch_at_login` are the settings of those names.
+/// `effects_mode`, `graphics`, `enabled` and `launch_at_login` are the settings of those names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Inputs {
     pub effects: f64,
     pub effects_mode: bool,
+    pub graphics: bool,
     pub track: Option<Track>,
     pub offset_ms: f64,
     pub own_offset: bool,
@@ -120,8 +126,10 @@ pub struct MenuState {
     pub lyrics_label: &'static str,
     /// The one checked Effects ▸ item, an index into `EFFECT_LEVELS` (`effects_item`).
     pub effects: usize,
-    /// Effects ▸ Effects mode is checked.
+    /// Effects ▸ Text effects is checked.
     pub effects_mode: bool,
+    /// Effects ▸ Graphics is checked.
+    pub graphics: bool,
     pub earlier_enabled: bool,
     pub later_enabled: bool,
     pub reset_label: String,
@@ -143,6 +151,7 @@ pub fn menu_state(inputs: &Inputs) -> MenuState {
         },
         effects: effects_item(inputs.effects),
         effects_mode: inputs.effects_mode,
+        graphics: inputs.graphics,
         earlier_enabled: offset.is_some_and(|ms| ms < MAX_OFFSET_MS),
         later_enabled: offset.is_some_and(|ms| ms > -MAX_OFFSET_MS),
         reset_label: reset_label(offset.filter(|_| inputs.own_offset).unwrap_or(0.0)),
@@ -245,6 +254,7 @@ mod runtime {
         /// The Effects ▸ items, in `EFFECT_LEVELS` order.
         effects: Vec<CheckMenuItem<Wry>>,
         effects_mode: CheckMenuItem<Wry>,
+        graphics: CheckMenuItem<Wry>,
         earlier: MenuItem<Wry>,
         later: MenuItem<Wry>,
         reset: MenuItem<Wry>,
@@ -277,9 +287,17 @@ mod runtime {
         let effects_mode = CheckMenuItem::with_id(
             app,
             super::EFFECTS_MODE,
-            "Effects mode",
+            "Text effects",
             true,
             state.effects_mode,
+            None::<&str>,
+        )?;
+        let graphics = CheckMenuItem::with_id(
+            app,
+            super::GRAPHICS,
+            "Graphics",
+            true,
+            state.graphics,
             None::<&str>,
         )?;
         let earlier = MenuItem::with_id(
@@ -329,7 +347,7 @@ mod runtime {
             .iter()
             .map(|item| item as &dyn IsMenuItem<Wry>)
             .collect();
-        effect_items.extend([&separator as &dyn IsMenuItem<Wry>, &effects_mode]);
+        effect_items.extend([&separator as &dyn IsMenuItem<Wry>, &effects_mode, &graphics]);
         let effects_menu = Submenu::with_items(app, "Effects", true, &effect_items)?;
         let sync = Submenu::with_items(app, "Sync", true, &[&earlier, &later, &reset])?;
         let menu = Menu::with_items(
@@ -371,6 +389,7 @@ mod runtime {
             lyrics,
             effects,
             effects_mode,
+            graphics,
             earlier,
             later,
             reset,
@@ -395,6 +414,7 @@ mod runtime {
         Inputs {
             effects: settings.effects,
             effects_mode: settings.effects_mode,
+            graphics: settings.graphics,
             offset_ms: track.as_ref().map_or(0.0, |track| {
                 crate::settings::song_offset_ms(&settings, &track.key)
             }),
@@ -454,6 +474,7 @@ mod runtime {
                 self.refetch.set_enabled(next.refetch_enabled),
                 self.launch_at_login.set_checked(next.launch_at_login),
                 self.effects_mode.set_checked(next.effects_mode),
+                self.graphics.set_checked(next.graphics),
             ];
             // Radio-like: exactly the item that names the level is checked.
             for (index, item) in self.effects.iter().enumerate() {
@@ -487,6 +508,11 @@ mod runtime {
             Action::EffectsMode => {
                 let on = inputs(app).effects_mode;
                 crate::settings::runtime::update(app, &serde_json::json!({ "effectsMode": !on }))
+                    .map(drop)
+            }
+            Action::Graphics => {
+                let on = inputs(app).graphics;
+                crate::settings::runtime::update(app, &serde_json::json!({ "graphics": !on }))
                     .map(drop)
             }
             Action::Nudge(delta_ms) => nudge(app, delta_ms),
@@ -561,6 +587,7 @@ mod tests {
         Inputs {
             effects: 50.0,
             effects_mode: true,
+            graphics: true,
             track,
             offset_ms,
             own_offset: offset_ms != 0.0,
@@ -614,7 +641,7 @@ mod tests {
         let state = menu_state(&given);
         assert_eq!(state.lyrics_label, "Hide lyrics");
         assert_eq!(EFFECT_LEVELS[state.effects].2, "Balanced");
-        assert!(state.effects_mode);
+        assert!(state.effects_mode && state.graphics);
         assert!(!state.launch_at_login);
         given.enabled = false;
         given.effects = 85.0;
@@ -623,8 +650,13 @@ mod tests {
         let state = menu_state(&given);
         assert_eq!(state.lyrics_label, "Show lyrics");
         assert_eq!(EFFECT_LEVELS[state.effects].2, "Lively");
-        assert!(!state.effects_mode);
+        // Text effects and Graphics are checked each by their own setting.
+        assert!(!state.effects_mode && state.graphics);
         assert!(state.launch_at_login);
+        given.effects_mode = true;
+        given.graphics = false;
+        let state = menu_state(&given);
+        assert!(state.effects_mode && !state.graphics);
     }
     #[test]
     fn effects_items_set_their_level_and_check_the_one_settings_names_alike() {
@@ -715,6 +747,7 @@ mod tests {
         assert_eq!(action(RESET), Some(Action::ResetOffset));
         assert_eq!(action("tray.effects.calm"), Some(Action::Effects(20.0)));
         assert_eq!(action("tray.effects.mode"), Some(Action::EffectsMode));
+        assert_eq!(action("tray.effects.graphics"), Some(Action::Graphics));
         // There is no Style ▸ any more: Undertone picks the style for each song.
         for gone in ["arc", "lens", "drift", "stack"] {
             assert_eq!(action(&format!("tray.style.{gone}")), None);
@@ -729,6 +762,7 @@ mod tests {
             SETTINGS,
             LAUNCH_AT_LOGIN,
             EFFECTS_MODE,
+            GRAPHICS,
             QUIT,
         ];
         ids.extend(EFFECT_LEVELS.iter().map(|(_, id, _)| *id));

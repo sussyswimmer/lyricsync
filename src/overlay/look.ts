@@ -42,7 +42,7 @@ export interface PickedLook {
 export const DEFAULT_PICK: PickedLook = Object.freeze({
   style: "arc" as const,
   font: Object.freeze({ family: "Fraunces", weight: 700 }),
-  curve: 38,
+  curve: 22,
   energy: 0.45,
   snap: 0.4,
   glow: 0.6,
@@ -100,11 +100,10 @@ export interface Look {
   textCase: TextCase;
   /** the song's flair (PickedLook.flair) */
   flair: Flair;
-  /**
-   * Settings.effectsMode (effectsModeOf): the song's flair, splashes and word pictures. Off, every word
-   * rises and nothing else is added.
-   */
+  /** Settings.effectsMode, Text effects (effectsModeOf): the song's own moves. Off, every word rises. */
   effectsMode: boolean;
+  /** Settings.graphics (graphicsOf): the word pictures and the splashes. */
+  graphics: boolean;
 }
 
 export interface Frame {
@@ -151,12 +150,21 @@ export function effectsOf(settings: Settings): number {
 }
 
 /**
- * Settings.effectsMode (contract v5): each song's own motion, its splashes and the tiny pictures beside
- * words. A store from before v5 has none, which counts as on.
+ * Settings.effectsMode (contract v5), Text effects since v8: each song's own motion. A store from before
+ * v5 has none, which counts as on.
  */
 export function effectsModeOf(settings: Settings): boolean {
   const value: unknown = "effectsMode" in settings ? settings.effectsMode : undefined;
   return value !== false;
+}
+
+/**
+ * Settings.graphics (contract v8): the word pictures and the splashes. A store from before v8 has none,
+ * and its Effects mode turned them on and off.
+ */
+export function graphicsOf(settings: Settings): boolean {
+  const value: unknown = "graphics" in settings ? settings.graphics : undefined;
+  return typeof value === "boolean" ? value : effectsModeOf(settings);
 }
 
 /**
@@ -225,6 +233,7 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
     textCase: pick.textCase,
     flair: pick.flair,
     effectsMode: effectsModeOf(settings),
+    graphics: graphicsOf(settings),
   };
   return withBloom(look, bloomOf(pick.glow, settings.glow));
 }

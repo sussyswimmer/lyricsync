@@ -553,6 +553,7 @@ describe("mergeSettings", () => {
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
     effects: 80,
     effectsMode: false,
+    graphics: false,
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -567,10 +568,10 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled, launchAtLogin and effectsMode; an array a valid
-      // nudgedTracks, its entries that aren't strings dropped.
+      // A boolean is a valid autoColor, enabled, launchAtLogin, effectsMode and graphics; an array a
+      // valid nudgedTracks, its entries that aren't strings dropped.
       const kept = Array.isArray(junk) ? { ...custom, nudgedTracks: [] } : custom;
-      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true } : kept);
+      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true, graphics: true } : kept);
     }
   });
 
@@ -719,6 +720,21 @@ describe("migrateSettings", () => {
     delete v4["effectsMode"];
     expect(migrateSettings(v4)).toEqual({ ...DEFAULT_SETTINGS, effects: 30 });
     expect(migrateSettings(v4).effectsMode).toBe(true);
+  });
+
+  it("gives contract v7 settings Graphics as their Effects mode had it: it turned the pictures off too", () => {
+    for (const effectsMode of [true, false]) {
+      const v7: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode };
+      delete v7["graphics"];
+      expect(migrateSettings(v7)).toEqual({ ...DEFAULT_SETTINGS, effectsMode, graphics: effectsMode });
+    }
+    // saved since v8, each its own; and nothing saved: on
+    expect(migrateSettings({ effectsMode: false, graphics: true })).toMatchObject({ effectsMode: false, graphics: true });
+    expect(migrateSettings({ effectsMode: true, graphics: false })).toMatchObject({ effectsMode: true, graphics: false });
+    expect(migrateSettings(null).graphics).toBe(true);
+    // a patch changes one, never the other
+    expect(mergeSettings(DEFAULT_SETTINGS, { graphics: false })).toMatchObject({ effectsMode: true, graphics: false });
+    expect(mergeSettings(DEFAULT_SETTINGS, { graphics: "off" })).toMatchObject({ graphics: true });
   });
 
   it("keeps what it knows from a newer version", () => {

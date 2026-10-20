@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 7;
+pub const CONTRACT_VERSION: u8 = 8;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
 /// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
 /// v6 only stopped reading `yPos`.
@@ -192,11 +192,16 @@ pub struct Settings {
     /// contract v4: settings saved without it read as 50.
     #[serde(default = "default_effects")]
     pub effects: f64,
-    /// Effects mode: each song moves its own way, big moments splash, and words that name something
-    /// get a tiny picture; false keeps every song's words rising alike. Added in contract v5:
-    /// settings saved without it read as true.
+    /// Text effects (called Effects mode before contract v8): each song's words move their own way;
+    /// false keeps every song's words rising alike. Added in contract v5: settings saved without it
+    /// read as true. Until contract v8 it also turned the pictures and splashes on and off.
     #[serde(default = "default_effects_mode")]
     pub effects_mode: bool,
+    /// Graphics: words that name something take part in the line as a picture, and big moments
+    /// splash. Added in contract v8: settings saved without it read as true (`settings::migrate`
+    /// carries over an Effects mode that was off).
+    #[serde(default = "default_graphics")]
+    pub graphics: bool,
 }
 /// `Settings.effects` when it is missing (settings saved before contract v4).
 fn default_effects() -> f64 {
@@ -204,6 +209,10 @@ fn default_effects() -> f64 {
 }
 /// `Settings.effectsMode` when it is missing (settings saved before contract v5).
 fn default_effects_mode() -> bool {
+    true
+}
+/// `Settings.graphics` when it is missing (settings saved before contract v8).
+fn default_graphics() -> bool {
     true
 }
 impl Default for Settings {
@@ -242,6 +251,7 @@ impl Default for Settings {
             },
             effects: default_effects(),
             effects_mode: default_effects_mode(),
+            graphics: default_graphics(),
         }
     }
 }
@@ -545,12 +555,24 @@ mod tests {
                     "nudgeLater": "CmdOrCtrl+Alt+Shift+["
                 },
                 "effects": 50.0,
-                "effectsMode": true
+                "effectsMode": true,
+                "graphics": true
             })
         );
-        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level and Effects mode.
+        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Text effects and Graphics.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
         assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
+        assert!(CONTRACT_TS.contains(&format!("graphics: {},", DEFAULT_SETTINGS.graphics)));
+    }
+    #[test]
+    fn settings_saved_before_contract_v8_read_as_graphics_on() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["graphics"] = json!(false);
+        assert!(!serde_json::from_value::<Settings>(saved.clone()).unwrap().graphics);
+        saved.as_object_mut().unwrap().remove("graphics");
+        let v7: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v7, *DEFAULT_SETTINGS);
+        assert!(v7.graphics);
     }
     #[test]
     fn settings_saved_before_contract_v7_have_no_nudged_tracks() {
@@ -669,7 +691,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 7);
+        assert_eq!(CONTRACT_VERSION, 8);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

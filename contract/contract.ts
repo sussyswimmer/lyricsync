@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 7;
+export const CONTRACT_VERSION = 8;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -71,8 +71,8 @@ export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
 export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
-  /** the settings schema, still 1: contracts v3, v4, v5 and v7 only added fields, and stored settings
-   *  without them get the defaults; v6 only stopped reading `yPos` */
+  /** the settings schema, still 1: contracts v3, v4, v5, v7 and v8 only added fields, and stored
+   *  settings without them get the defaults; v6 only stopped reading `yPos` */
   version: 1;
   /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
   mode: Mode;
@@ -110,10 +110,13 @@ export interface Settings {
   shortcuts: Shortcuts;
   /** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. Added in contract v4. */
   effects: number;
-  /** Effects mode: each song moves its own way (not every word floats up), big moments splash, and
-   *  words that name something get a tiny picture. false: every word rises, nothing else is added.
-   *  Added in contract v5. */
+  /** Text effects (called Effects mode before contract v8): each song's words move their own way
+   *  (not every word floats up). false: every word rises. Added in contract v5; until v8 it also
+   *  turned the pictures and splashes on and off, which `graphics` does now. */
   effectsMode: boolean;
+  /** Graphics: words that name something take part in the line as a picture, and big moments
+   *  splash. Added in contract v8: settings saved without it keep their `effectsMode`'s value. */
+  graphics: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -132,4 +135,5 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   effects: 50,
   effectsMode: true,
+  graphics: true,
 };

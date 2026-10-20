@@ -5,7 +5,7 @@ import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
-import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
+import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, GRAPHICS_OFF, GRAPHICS_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
 import { resetDom, stubDom, type FakeElement } from "./fake-dom";
 
@@ -473,32 +473,45 @@ describe("the settings panel since contract v4", () => {
     expect(none.root.all("hint").some((h) => h.textContent === "How much words rise, swell and ripple as they're sung.")).toBe(true);
   });
 
-  it("Effects mode: a switch at the top of Look, on by default, saved as `effectsMode`, saying what it does", () => {
+  it("Text effects and Graphics: two switches at the top of Look, on by default, each saved apart, saying what they do", () => {
     const p = mountPanel();
     const look = p.group("Look");
-    const row = look.all("toggle")[0] as FakeElement;
-    expect(row.one("row-label").textContent).toBe("Effects mode");
-    const input = row.one("switch");
-    expect(input.getAttribute("role")).toBe("switch");
-    expect(input.checked).toBe(true);
-    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
-    expect(caption?.textContent).toBe(EFFECTS_MODE_ON);
-    input.checked = false;
-    input.dispatch("change");
+    const [textRow, graphicsRow] = look.all("toggle") as FakeElement[];
+    expect(textRow?.one("row-label").textContent).toBe("Text effects");
+    expect(graphicsRow?.one("row-label").textContent).toBe("Graphics");
+    const text = (textRow as FakeElement).one("switch");
+    const graphics = (graphicsRow as FakeElement).one("switch");
+    for (const input of [text, graphics]) {
+      expect(input.getAttribute("role")).toBe("switch");
+      expect(input.checked).toBe(true);
+    }
+    const captionOf = (input: FakeElement): FakeElement | undefined => p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
+    expect(captionOf(text)?.textContent).toBe(EFFECTS_MODE_ON);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_ON);
+    text.checked = false;
+    text.dispatch("change");
     expect(p.edits).toEqual([{ effectsMode: false }]);
-    expect(input.checked).toBe(false);
-    expect(caption?.textContent).toBe(EFFECTS_MODE_OFF);
-    // the sliders come after it, in the same order as before
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Size", "Effects", "Glow", "Opacity"]);
+    expect(captionOf(text)?.textContent).toBe(EFFECTS_MODE_OFF);
+    // Graphics stays as it was
+    expect(graphics.checked).toBe(true);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_ON);
+    graphics.checked = false;
+    graphics.dispatch("change");
+    expect(p.edits).toEqual([{ effectsMode: false }, { graphics: false }]);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_OFF);
+    // the sliders come after them, in the same order as before
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
   });
 
-  it("Effects mode: shows the saved state, and an older core's settings as on", () => {
-    const off = mountPanel({ effectsMode: false });
-    expect((off.group("Look").all("switch")[0] as FakeElement).checked).toBe(false);
-    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-    delete old.effectsMode;
-    const p = mountPanel(old);
-    expect((p.group("Look").all("switch")[0] as FakeElement).checked).toBe(true);
+  it("Text effects and Graphics: show the saved states, and an older core's Effects mode for both", () => {
+    const switches = (over: Partial<Settings>): boolean[] => (mountPanel(over).group("Look").all("switch") as FakeElement[]).slice(0, 2).map((s) => s.checked);
+    expect(switches({ effectsMode: false })).toEqual([false, true]);
+    expect(switches({ graphics: false })).toEqual([true, false]);
+    // settings without the field, as a core older than v8 (or v5) sends them
+    const missing = undefined as unknown as boolean;
+    expect(switches({ graphics: missing })).toEqual([true, true]);
+    expect(switches({ graphics: missing, effectsMode: false })).toEqual([false, false]);
+    expect(switches({ graphics: missing, effectsMode: missing })).toEqual([true, true]);
   });
 
   it("Glow says what it does now: the sung word's glow, never quite off", () => {

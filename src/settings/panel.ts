@@ -126,8 +126,10 @@ export function effectsWord(level: number): "Calm" | "Balanced" | "Lively" {
 }
 
 export const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
-export const EFFECTS_MODE_ON = "Each song moves its own way, big moments splash, and words like “rain” or “iced tea” get a tiny picture.";
-export const EFFECTS_MODE_OFF = "Off: every word rises the same way, with no splashes or pictures.";
+export const EFFECTS_MODE_ON = "Each song's words move their own way: they bounce, sway, pulse or drop.";
+export const EFFECTS_MODE_OFF = "Off: every word rises the same way.";
+export const GRAPHICS_ON = "Words like “rain” or “rocket” come to life in the line, and big moments splash.";
+export const GRAPHICS_OFF = "Off: just the words, no pictures or splashes.";
 export const REDUCED_MOTION_NOTE = "Your system asks for less motion: words fade instead of moving.";
 export const GLOW_HINT = "How much the sung word glows. 0 keeps a faint glow.";
 
@@ -381,21 +383,29 @@ export class SettingsPanel {
   // ---------- look ----------
 
   /**
-   * How the picked look sits on this desktop: Effects mode, Size, Effects, Glow and Opacity.
-   * Undertone picks the style and the face for each song (the card under the preview says which), and
-   * with Effects mode its own motion, splashes and word pictures; these scale it. The lyrics always sit
-   * in the middle of the screen, so there is no height to set.
+   * How the picked look sits on this desktop: Text effects, Graphics, Size, Effects, Glow and Opacity.
+   * Undertone picks the style and the face for each song (the card under the preview says which), with
+   * Text effects its own motion and with Graphics its word pictures and splashes; these scale it. The
+   * lyrics always sit in the middle of the screen, so there is no height to set.
    */
   private lookGroup(): HTMLElement {
     const edit = (patch: Partial<Settings>): void => this.actions.edit(patch);
     const modeCaptionId = nextId("effects-mode-caption");
     const mode = toggle({
-      label: "Effects mode",
+      label: "Text effects",
       describedBy: modeCaptionId,
       onChange: (on) => this.actions.edit({ effectsMode: on }),
     });
     const modeCaption = hint("", "toggle-hint");
     modeCaption.id = modeCaptionId;
+    const graphicsCaptionId = nextId("graphics-caption");
+    const graphics = toggle({
+      label: "Graphics",
+      describedBy: graphicsCaptionId,
+      onChange: (on) => this.actions.edit({ graphics: on }),
+    });
+    const graphicsCaption = hint("", "toggle-hint");
+    graphicsCaption.id = graphicsCaptionId;
     const size = slider({ label: "Size", min: 22, max: 140, format: String, speak: (v) => `${v} pixels`, onInput: (v) => edit({ size: v }) });
     const effectsHintId = nextId("effects-hint");
     const effects = slider({
@@ -419,12 +429,16 @@ export class SettingsPanel {
     const glowHint = hint(GLOW_HINT);
     glowHint.id = glowHintId;
     const opacity = slider({ label: "Opacity", min: 20, max: 100, format: (v) => `${v}%`, onInput: (v) => edit({ opacity: v }) });
-    const { el } = group("Look", mode.el, modeCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
+    const { el } = group("Look", mode.el, modeCaption, graphics.el, graphicsCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
     this.renderers.push(({ settings: s }) => {
-      // Settings without `effectsMode` (a core older than contract v5) have it on.
+      // Settings without `effectsMode` (a core older than contract v5) have it on; without `graphics`
+      // (older than v8), Effects mode turned the pictures and splashes on and off too.
       const on = s.effectsMode !== false;
       mode.set(on);
       setText(modeCaption, on ? EFFECTS_MODE_ON : EFFECTS_MODE_OFF);
+      const pictures = typeof s.graphics === "boolean" ? s.graphics : on;
+      graphics.set(pictures);
+      setText(graphicsCaption, pictures ? GRAPHICS_ON : GRAPHICS_OFF);
       size.set(s.size);
       // Settings without `effects` (a core older than contract v4) show the level as picked.
       effects.set(s.effects ?? DEFAULT_SETTINGS.effects);

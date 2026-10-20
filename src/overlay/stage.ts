@@ -591,8 +591,10 @@ export class LyricStage {
     this.lastT = Number.NaN;
     const { view, cues } = scene;
     if (view.kind === "lyrics") {
-      // for QA: the song's flair as drawn ("off" with Effects mode off)
-      scene.el.setAttribute("data-flair", look.effectsMode ? `${look.flair.move} ${look.flair.accent} ${look.flair.splash}` : "off");
+      // for QA: the song's flair as drawn: its moves ("rise rise" with Text effects off), then its
+      // splash ("off" with Graphics off)
+      const moves = look.effectsMode ? `${look.flair.move} ${look.flair.accent}` : "rise rise";
+      scene.el.setAttribute("data-flair", `${moves} ${look.graphics ? look.flair.splash : "off"}`);
       scene.mode = createMode(look.style);
       scene.mode.build(scene.el, cues?.lyrics ?? [], look);
     } else if (view.kind !== "none") {

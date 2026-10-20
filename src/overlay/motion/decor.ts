@@ -444,9 +444,10 @@ export function splashUntil(particles: readonly Particle[]): number {
 
 // ─────────────────────────────────────────── per song ───────────────────────────────────────────
 
-/** What a mode needs to give its lines their flair: whether Effects mode is on, and the song's flair. */
+/** What a mode needs to give its lines their flair: whether Text effects and Graphics are on, and the song's flair. */
 export interface DecorLook {
   effectsMode: boolean;
+  graphics: boolean;
   flair: Flair;
   unsynced: boolean;
   power: Power;
@@ -454,12 +455,13 @@ export interface DecorLook {
 }
 
 /**
- * Each line's flair for a mode drawing `lines` (by line index): none with Effects mode off, for plain
- * lyrics (no karaoke) or in the lite tier (software compositing has no frames to spare).
+ * Each line's flair for a mode drawing `lines` (by line index): moves with Text effects on, pictures and
+ * splashes with Graphics on; none for plain lyrics (no karaoke) or in the lite tier (software
+ * compositing has no frames to spare).
  */
 export function songDecor(lines: readonly Line[], look: DecorLook): LineDecor[] {
-  const on = look.effectsMode && !look.unsynced && look.power !== "lite";
-  return planDecor(lines, on ? look.flair : null, look.emphasis);
+  const on = !look.unsynced && look.power !== "lite";
+  return planDecor(lines, on ? look.flair : null, look.emphasis, { text: look.effectsMode, graphics: look.graphics });
 }
 
 /** Every picture a song's decor shows, to fetch and decode ahead. */

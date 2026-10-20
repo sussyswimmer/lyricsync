@@ -787,4 +787,16 @@ describe("SettingsSync for contract v3", () => {
     sync.receive(old as Settings);
     expect(sync.view.enabled).toBe(true);
   });
+
+  it("gives settings from a core older than v8 Graphics as their Effects mode has it", () => {
+    for (const effectsMode of [true, false]) {
+      const v7: Partial<Settings> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode };
+      delete v7.graphics;
+      expect(withDefaults(v7 as Settings)).toEqual({ ...structuredClone(DEFAULT_SETTINGS), effectsMode, graphics: effectsMode });
+    }
+    const v4: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+    delete v4.effectsMode;
+    delete v4.graphics;
+    expect(withDefaults(v4 as Settings)).toEqual(DEFAULT_SETTINGS);
+  });
 });

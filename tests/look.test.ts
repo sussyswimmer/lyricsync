@@ -235,11 +235,11 @@ describe("the picked look", () => {
   const pick = (over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, ...over });
   const picked = (p: PickedLook, over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look => resolveLook(settings(over), null, { ...FRAME, ...frame }, p);
 
-  it("defaults to the house look: Arc in Fraunces 700, curve 38, BL-like motion", () => {
+  it("defaults to the house look: Arc in Fraunces 700, a gentle curve, BL-like motion", () => {
     expect(DEFAULT_PICK).toEqual({
       style: "arc",
       font: { family: "Fraunces", weight: 700 },
-      curve: 38,
+      curve: 22,
       energy: 0.45,
       snap: 0.4,
       glow: 0.6,

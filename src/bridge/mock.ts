@@ -385,12 +385,19 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
   next.effects = clamp(p.effects, 0, 100) ?? next.effects;
   if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
+  if (typeof p.graphics === "boolean") next.graphics = p.graphics;
   return next;
 }
 
-/** Stored settings of any shape made valid by the same rules, starting from the defaults (`settings::migrate`). */
+/**
+ * Stored settings of any shape made valid by the same rules, starting from the defaults
+ * (`settings::migrate`). Saved without `graphics` (before contract v8), they keep the pictures and
+ * splashes as their Effects mode had them.
+ */
 export function migrateSettings(stored: unknown): Settings {
-  return mergeSettings(DEFAULT_SETTINGS, stored);
+  const settings = mergeSettings(DEFAULT_SETTINGS, stored);
+  if (!isObject(stored) || !("graphics" in stored)) settings.graphics = settings.effectsMode;
+  return settings;
 }
 
 /**

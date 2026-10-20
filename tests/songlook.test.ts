@@ -6,6 +6,8 @@ import { parseLrc } from "../src/core/lrc";
 import { coverStats, type CoverStats } from "../src/core/palette";
 import {
   CONTRACT_STYLES,
+  CURVE_MAX,
+  CURVE_MIN,
   LookKeeper,
   STYLES,
   hasWordTags,
@@ -764,7 +766,9 @@ describe("legibility invariants over a feature grid", () => {
       if (f.widthP90 >= 100) expect(["arc", "lens"]).not.toContain(look.style);
       expect(look.energy).toBeGreaterThanOrEqual(f.timing === "unsynced" ? 0.2 : 0.3);
       expect(look.energy).toBeLessThanOrEqual(1);
-      expect(Math.abs(look.curve)).toBeLessThanOrEqual(100);
+      // a gentle bend: never a bow
+      expect(Math.abs(look.curve)).toBeLessThanOrEqual(CURVE_MAX + 2);
+      expect(Math.abs(look.curve)).toBeGreaterThanOrEqual(CURVE_MIN - 2);
       expect(look.scale).toBeGreaterThanOrEqual(0.82);
       expect(look.scale).toBeLessThanOrEqual(1.2);
       expect(look.glow).toBeGreaterThanOrEqual(0.3);

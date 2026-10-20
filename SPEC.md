@@ -78,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v7 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5 and v7 below only add to v1, and v6 stops reading one field.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v8 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5, v7 and v8 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts

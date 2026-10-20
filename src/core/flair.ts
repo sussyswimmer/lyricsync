@@ -1,7 +1,8 @@
 /**
- * Effects mode (Settings.effectsMode): each song's own flair on top of its look. How its words move as
- * they're sung (they don't all float up), the splash that bursts from its big moments, and the tiny
- * pictures beside the words that name something (wordpics.ts). The picker (songlook.ts) chooses a
+ * Each song's own flair on top of its look. Text effects (Settings.effectsMode): how its words move as
+ * they're sung (they don't all float up). Graphics (Settings.graphics): the splash that bursts from its
+ * big moments, and the pictures that take part in the line where a word names something (wordpics.ts).
+ * The two are switched on and off apart. The picker (songlook.ts) chooses a
  * song's flair from how it is sung, what its words are about and its cover; this module holds the
  * vocabulary and plans, line by line, which words get what. Everything is pure and deterministic: a
  * song gets the same flair, splashes and pictures every time it plays, in every window.
@@ -34,7 +35,7 @@ export interface Flair {
   splash: SplashKind;
 }
 
-/** No flair: every word rises, as with Effects mode off. */
+/** No flair: every word rises, as with Text effects off. */
 export const PLAIN_FLAIR: Flair = Object.freeze({ move: "rise", accent: "rise", splash: "ripple" });
 
 export const isMove = (value: unknown): value is Move => typeof value === "string" && (MOVES as readonly string[]).includes(value);
@@ -180,19 +181,33 @@ function splashCandidates(line: Line, hook: boolean, emphasis: EmphasisRule | nu
   return [...out].sort((a, b) => (line.words[a]?.start ?? 0) - (line.words[b]?.start ?? 0));
 }
 
+/** Which of a song's flair shows: its words' moves (Text effects), its pictures and splashes (Graphics). */
+export interface DecorParts {
+  text: boolean;
+  graphics: boolean;
+}
+
+export const ALL_DECOR: DecorParts = Object.freeze({ text: true, graphics: true });
+
 /**
- * Each line's flair, by line index (gaps included, with nothing on them). With `flair` null (Effects
- * mode off) every line rises and nothing splashes or shows a picture.
+ * Each line's flair, by line index (gaps included, with nothing on them). With `flair` null (no flair
+ * at all: plain lyrics, the lite tier) or Text effects off, every line rises; with `flair` null or
+ * Graphics off, nothing splashes or shows a picture.
  */
-export function planDecor(lines: readonly Line[], flair: Flair | null, emphasis: EmphasisRule | null): LineDecor[] {
-  if (!flair) return lines.map(() => ({ move: "rise", hook: false, words: new Map() }));
+export function planDecor(lines: readonly Line[], flair: Flair | null, emphasis: EmphasisRule | null, parts: DecorParts = ALL_DECOR): LineDecor[] {
+  if (!flair || (!parts.text && !parts.graphics)) return lines.map(() => ({ move: "rise", hook: false, words: new Map() }));
+  if (!parts.graphics) {
+    const hooks = hookLines(lines);
+    return lines.map((_, index) => ({ move: hooks.has(index) ? flair.accent : flair.move, hook: hooks.has(index), words: new Map() }));
+  }
+  const moveOf = (hook: boolean): Move => (!parts.text ? "rise" : hook ? flair.accent : flair.move);
   const hooks = hookLines(lines);
   const pictures = planPictures(lines);
   let lastSplash = Number.NEGATIVE_INFINITY;
   return lines.map((line, index) => {
     const hook = hooks.has(index);
     const words = new Map<number, WordDecor>();
-    if (line.words.length === 0) return { move: flair.move, hook, words };
+    if (line.words.length === 0) return { move: moveOf(false), hook, words };
     const picture = pictures.get(index);
     if (picture) words.set(picture.word, { picture: picture.id });
     for (const i of splashCandidates(line, hook, emphasis)) {
@@ -202,6 +217,6 @@ export function planDecor(lines: readonly Line[], flair: Flair | null, emphasis:
       lastSplash = at;
       break;
     }
-    return { move: hook ? flair.accent : flair.move, hook, words };
+    return { move: moveOf(hook), hook, words };
   });
 }
