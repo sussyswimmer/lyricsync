@@ -2,13 +2,9 @@
   <img src="assets/banner.png" alt="Undertone: your desktop, singing along" width="100%">
 </p>
 
-<!-- Until the first release, the release and downloads badges would only say "no releases found".
-     Once it's out, replace the status badge with these two:
+<p align="center">
   <a href="https://github.com/sussyswimmer/lyricsync/releases/latest"><img src="https://img.shields.io/github/v/release/sussyswimmer/lyricsync?sort=semver&amp;display_name=tag&amp;label=release&amp;color=C8642A" alt="Latest release"></a>
   <a href="https://github.com/sussyswimmer/lyricsync/releases"><img src="https://img.shields.io/github/downloads/sussyswimmer/lyricsync/total?label=downloads&amp;color=0891B2" alt="Downloads, all releases"></a>
--->
-<p align="center">
-  <a href="#install"><img src="https://img.shields.io/badge/status-pre--release-C8642A" alt="Status: pre-release"></a>
   <a href="https://github.com/sussyswimmer/lyricsync/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sussyswimmer/lyricsync/ci.yml?branch=main&amp;label=CI&amp;logo=githubactions&amp;logoColor=white" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&amp;logoColor=white" alt="macOS 14 or later">
@@ -36,8 +32,7 @@
     macOS 14 or later, one build for Apple silicon and Intel ·
     Windows 10 and 11, x64 ·
     <a href="https://github.com/sussyswimmer/lyricsync/releases">all releases</a>
-  </sub><br>
-  <sub><b>Pre-release:</b> nothing is published yet, so for now take a test build from CI, as <a href="docs/INSTALL.md#download">docs/INSTALL.md</a> explains.</sub>
+  </sub>
 </p>
 
 <p align="center">
@@ -121,9 +116,9 @@ Settings follows your system's light or dark mode, and every change applies at o
 
 ## Install
 
-> **Status: pre-release.** Every part of v1 is built. A first run on a real Mac (macOS 26, Spotify) showed the song, cover art and lyrics arriving and the overlay sitting on the desktop. The rest of the Mac checks, Apple Music and Windows haven't been run yet, so expect rough edges. Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
+> **Status: early release.** Every part of v1 is built and 0.1.0 is out. A first run on a real Mac (macOS 26, Spotify) showed the song, cover art and lyrics arriving and the overlay sitting on the desktop. The rest of the Mac checks, Apple Music and Windows haven't been run yet, so expect rough edges, and please [report what you find](https://github.com/sussyswimmer/lyricsync/issues/new?template=bug_report.yml). Progress is logged in [docs/HANDOFF.md](docs/HANDOFF.md).
 
-1. **Download** the `.dmg` for macOS or the `-setup.exe` for Windows from the [latest release](https://github.com/sussyswimmer/lyricsync/releases/latest). Until the first release is out, take a test build from a CI run, as [docs/INSTALL.md](docs/INSTALL.md#download) explains.
+1. **Download** the `.dmg` for macOS or the `-setup.exe` for Windows from the [latest release](https://github.com/sussyswimmer/lyricsync/releases/latest).
 2. **Open it.** The builds aren't code-signed yet, so your system warns you the first time.
    - **macOS:** drag Undertone into Applications and open it, then click **Open Anyway** in **System Settings → Privacy & Security**. The first time Undertone reads Spotify or Music, macOS asks whether it may; click **OK** ([why](#macos-automation)).
    - **Windows:** if SmartScreen says *Windows protected your PC*, click **More info**, then **Run anyway**.
@@ -262,7 +257,8 @@ No Mac or PC at hand? `pnpm dev` runs both pages in a plain browser at <http://l
 
 ## Roadmap
 
-- [ ] **The first release** on GitHub Releases, once the checks in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) pass on a real Mac and PC.
+- [x] **The first release,** 0.1.0, on GitHub Releases.
+- [ ] **Checked on real machines:** every step of [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) on a Mac and a PC.
 - [ ] **Signed builds,** so macOS and Windows open Undertone without a warning.
 - [ ] **Automatic proxy settings** (PAC scripts and WPAD). Proxies set by hand already work.
 - [ ] **macOS: spotting clashes with system shortcuts** in **Settings › Shortcuts**.
