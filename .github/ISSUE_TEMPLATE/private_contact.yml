@@ -1,0 +1,16 @@
+name: Ask for a private contact
+description: Something to report that shouldn't be public, like a security problem or a conduct concern? Ask for a private channel, without the details.
+title: "Private contact request"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public, so leave out every detail of what you want to report, including in the title.** Just submit it. The maintainer will reply here with a private way to share the details, and only you and the maintainer will see them.
+
+        If the [Report a vulnerability](https://github.com/sussyswimmer/lyricsync/security/advisories/new) form opens for you, use that instead. It's already private.
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else? (optional)
+      description: Nothing about the problem itself. For example, a language you'd prefer. Everything you write here is public.

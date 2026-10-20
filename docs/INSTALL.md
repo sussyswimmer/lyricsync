@@ -84,4 +84,4 @@ Install the new version over the old one. Your settings, sync nudges and cached 
 
 ## Building it yourself
 
-To build the installers from source, set up the tools in the README's [Development](../README.md#development) section and run `pnpm tauri build`. The installers land in `src-tauri/target/release/bundle/`. On macOS, for one build that runs on both kinds of Mac, run `rustup target add aarch64-apple-darwin x86_64-apple-darwin` once, then `pnpm tauri build --target universal-apple-darwin`, and look in `src-tauri/target/universal-apple-darwin/release/bundle/`.
+To build the installers from source, set up the tools in the [Development](../CONTRIBUTING.md#development) section of CONTRIBUTING.md and run `pnpm tauri build`. The installers land in `src-tauri/target/release/bundle/`. On macOS, for one build that runs on both kinds of Mac, run `rustup target add aarch64-apple-darwin x86_64-apple-darwin` once, then `pnpm tauri build --target universal-apple-darwin`, and look in `src-tauri/target/universal-apple-darwin/release/bundle/`.
