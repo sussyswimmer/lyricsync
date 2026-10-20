@@ -242,15 +242,21 @@ impl MacSource {
             ));
         }
         let in_flight = InFlight(self.reading.clone());
-        let script = player.read_script();
+        let (script, position_script) = (player.read_script(), player.position_script());
         let answer = on_main(&self.app, move || {
             let _in_flight = in_flight;
-            read_on_main(script)
+            let (text, sampled_at) = read_on_main(script)?;
+            // Straight after, on the same hop: the position on its own, precisely timed.
+            let has_track = !matches!(text.trim(), "" | "stopped" | "not-running");
+            let position = has_track
+                .then(|| position_on_main(position_script))
+                .flatten();
+            Ok::<_, Failure>((text, sampled_at, position))
         })
         .await
         .map_err(Failure::other)
         .and_then(|answer| answer);
-        let (text, sampled_at) = answer.inspect_err(|failure| match failure.kind {
+        let (text, sampled_at, position) = answer.inspect_err(|failure| match failure.kind {
             FailureKind::NotPermitted => {
                 lock(&self.consent)
                     .entry(player)
@@ -263,7 +269,7 @@ impl MacSource {
             _ => {}
         })?;
         let reading = applescript::parse_reading(player, &text).map_err(Failure::other)?;
-        Ok(reading.map(|reading| (reading, sampled_at)))
+        Ok(reading.map(|reading| applescript::timed_reading(reading, sampled_at, position)))
     }
     /// Scripts run only once macOS has answered the Automation question for this player. The
     /// question is asked on a blocking thread (`consent_status`), where its prompt may wait for
@@ -554,6 +560,19 @@ fn read_on_main(script: Script) -> Result<(String, f64), Failure> {
             .map(|text| text.to_string())
             .unwrap_or_default();
         Ok((text, applescript::midpoint(before, after)))
+    })
+}
+
+/// Main thread: the player's position from a script that reads nothing else, stamped halfway
+/// through its own call. `None` when it fails: the read script's position stands in.
+fn position_on_main(script: Script) -> Option<applescript::TimedPosition> {
+    autoreleasepool(|_| {
+        let compiled = compiled(script).ok()?;
+        let before = epoch_ms();
+        let result = execute(&compiled);
+        let after = epoch_ms();
+        let text = result.ok()?.stringValue()?.to_string();
+        applescript::parse_position(&text, before, after)
     })
 }
 

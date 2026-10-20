@@ -49,6 +49,13 @@ impl Player {
             Player::Music => Script::MusicRead,
         }
     }
+    /// The position alone, run right after `read_script` (see `timed_reading`).
+    pub fn position_script(self) -> Script {
+        match self {
+            Player::Spotify => Script::SpotifyPosition,
+            Player::Music => Script::MusicPosition,
+        }
+    }
     /// state, title, artist, album, duration, position, then Spotify's artwork URL.
     fn fields(self) -> usize {
         match self {
@@ -69,6 +76,8 @@ impl Player {
 pub enum Script {
     SpotifyRead,
     MusicRead,
+    SpotifyPosition,
+    MusicPosition,
     MusicArtwork,
 }
 impl Script {
@@ -76,6 +85,8 @@ impl Script {
         match self {
             Script::SpotifyRead => SPOTIFY_READ,
             Script::MusicRead => MUSIC_READ,
+            Script::SpotifyPosition => SPOTIFY_POSITION,
+            Script::MusicPosition => MUSIC_POSITION,
             Script::MusicArtwork => MUSIC_ARTWORK,
         }
     }
@@ -137,6 +148,25 @@ with timeout of 2 seconds
 		return stateText & d & my txt(name of t) & d & my txt(artist of t) & d & my txt(album of t) & d & my txt(duration of t) & d & my txt(player position)
 	end tell
 end timeout
+"#;
+
+// The position on its own: one Apple event, so the call's midpoint is when the player read it to
+// within a few milliseconds. In a read script it is the sixth of seven or eight events, read well
+// after that call's midpoint, which put lyrics early by a third of the call (more on a busy Mac).
+// The real is turned into text outside the `tell`, as `txt` does. It runs on the read's main-thread
+// hop, so its timeout is shorter: the two together stay inside that hop's 3 s.
+const SPOTIFY_POSITION: &str = r#"if application id "com.spotify.client" is not running then return ""
+with timeout of 1 second
+	tell application id "com.spotify.client" to set p to player position
+end timeout
+return p as text
+"#;
+
+const MUSIC_POSITION: &str = r#"if application id "com.apple.Music" is not running then return ""
+with timeout of 1 second
+	tell application id "com.apple.Music" to set p to player position
+end timeout
+return p as text
 "#;
 
 /// Image bytes, or `missing value` when the track has no artwork. Run once per track. `raw data`
@@ -306,6 +336,51 @@ pub fn https_artwork_url(raw: &str) -> Option<reqwest::Url> {
         _ => return None,
     }
     url.host_str().is_some().then_some(url)
+}
+
+/// A position script's answer: the position in milliseconds, read halfway through its call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TimedPosition {
+    pub position_ms: f64,
+    pub sampled_at: f64,
+    /// How long the call took, ms: the reading is good to half of it.
+    pub took_ms: f64,
+}
+
+/// Parses a position script's answer (seconds, in the user's number format). `None` for a closed
+/// player or an answer that is not a number.
+pub fn parse_position(output: &str, before_ms: f64, after_ms: f64) -> Option<TimedPosition> {
+    let seconds = parse_number(output)?;
+    (seconds >= 0.0).then(|| TimedPosition {
+        position_ms: seconds * 1000.0,
+        sampled_at: midpoint(before_ms, after_ms),
+        took_ms: (after_ms - before_ms).max(0.0),
+    })
+}
+
+/// A position call that took longer than this (a busy player) is no better than the read
+/// script's own position, ms.
+pub const POSITION_CALL_MAX_MS: f64 = 250.0;
+
+/// The reading with its position and read time taken from the position call made right after it,
+/// when there is one: the read script's own position is stamped with the middle of a call that
+/// read it near its end. A position call that failed or ran very long (a busy player) leaves the
+/// reading as it was.
+pub fn timed_reading(
+    reading: Reading,
+    sampled_at: f64,
+    position: Option<TimedPosition>,
+) -> (Reading, f64) {
+    match position {
+        Some(timed) if timed.took_ms <= POSITION_CALL_MAX_MS => (
+            Reading {
+                position_ms: timed.position_ms,
+                ..reading
+            },
+            timed.sampled_at,
+        ),
+        _ => (reading, sampled_at),
+    }
 }
 
 /// Read time for a whole script call: halfway through it, since the position is read mid-call.
@@ -1164,6 +1239,72 @@ mod tests {
             Some(0)
         );
         assert_eq!(choose(&[], &mut activity, 40.0), None);
+    }
+    #[test]
+    fn position_scripts_read_one_event_and_convert_outside_the_tell() {
+        for player in Player::ALL {
+            let source = player.position_script().source();
+            let guard = source
+                .find(&format!(
+                    "application id \"{}\" is not running",
+                    player.bundle_id()
+                ))
+                .unwrap();
+            let tell = source
+                .find(&format!("tell application id \"{}\"", player.bundle_id()))
+                .unwrap();
+            assert!(guard < tell, "{player:?} must check before it tells");
+            assert!(source.contains("with timeout of 1 second"));
+            // One Apple event: the property, and nothing else asked of the player.
+            assert_eq!(source.matches("player position").count(), 1);
+            assert!(source.find("p as text").unwrap() > source.find("end timeout").unwrap());
+        }
+    }
+    #[test]
+    fn position_answers_parse_in_any_number_format() {
+        let timed = parse_position("83,125", 1000.0, 1008.0).unwrap();
+        assert_eq!(timed.position_ms, 83_125.0);
+        assert_eq!(timed.sampled_at, 1004.0);
+        assert_eq!(timed.took_ms, 8.0);
+        assert_eq!(
+            parse_position("1.5E+2", 0.0, 0.0).unwrap().position_ms,
+            150_000.0
+        );
+        assert_eq!(parse_position("", 0.0, 1.0), None);
+        assert_eq!(parse_position("missing value", 0.0, 1.0), None);
+        assert_eq!(parse_position("-1", 0.0, 1.0), None);
+        // A clock that stepped back mid-call: no negative duration.
+        assert_eq!(parse_position("1", 10.0, 5.0).unwrap().took_ms, 0.0);
+    }
+    #[test]
+    fn the_position_call_times_the_reading() {
+        let reading = parse_reading(
+            Player::Music,
+            &["playing", "T", "A", "B", "200", "12.5"].join(&FIELD_SEPARATOR.to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        let timed = TimedPosition {
+            position_ms: 12_620.0,
+            sampled_at: 5_100.0,
+            took_ms: 6.0,
+        };
+        let (read, at) = timed_reading(reading.clone(), 5_000.0, Some(timed));
+        assert_eq!((read.position_ms, at), (12_620.0, 5_100.0));
+        assert_eq!(read.title, "T");
+        // No position call, or one too slow to trust: the read script's own.
+        assert_eq!(
+            timed_reading(reading.clone(), 5_000.0, None),
+            (reading.clone(), 5_000.0)
+        );
+        let slow = TimedPosition {
+            took_ms: POSITION_CALL_MAX_MS + 1.0,
+            ..timed
+        };
+        assert_eq!(
+            timed_reading(reading.clone(), 5_000.0, Some(slow)),
+            (reading, 5_000.0)
+        );
     }
     #[test]
     fn scripts_guard_launches_bound_events_and_match_the_parser() {
