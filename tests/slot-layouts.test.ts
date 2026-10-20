@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { fitRow, poseOf, type Shape } from "../src/overlay/modes/lens-plan";
-import { balancedRows, LENS_LAYOUT, POSTER_LAYOUT, POSTER_MAX_ROW, posterRows, SPOT_BIG, SPOT_FAINT, SPOTLIGHT_LAYOUT } from "../src/overlay/modes/slot-layouts";
+import {
+  balancedRows,
+  COLLAGE_LAYOUT,
+  collageRows,
+  LENS_LAYOUT,
+  POSTER_LAYOUT,
+  POSTER_MAX_ROW,
+  posterRows,
+  REVEAL_GHOST,
+  REVEAL_LAYOUT,
+  SLOT_LAYOUTS,
+  SPOT_BIG,
+  SPOT_FAINT,
+  SPOTLIGHT_LAYOUT,
+  WAVE_AMP,
+  WAVE_BIG,
+  WAVE_LAYOUT,
+} from "../src/overlay/modes/slot-layouts";
 
 const SIZE = 58;
 const STAGE = { width: 1440, height: 900 };
@@ -105,5 +122,115 @@ describe("Lens as a layout", () => {
     expect(pose.y.every((y) => y === 0) && pose.rotate.every((r) => r === 0)).toBe(true);
     expect(LENS_LAYOUT.extent(fit, SIZE)).toEqual({ above: SIZE / 2, below: SIZE / 2 });
     expect(LENS_LAYOUT.faintest(fit, STAGE.width, false).opacity).toBe(1);
+  });
+});
+
+describe("Wave", () => {
+  it("lifts the word being sung onto the crest, a little larger, and tilts the words on the slopes", () => {
+    const fit = WAVE_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, 0.8);
+    const pose = WAVE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    // word 3 is being sung: highest (most negative drop) and largest
+    const highest = pose.y.indexOf(Math.min(...pose.y));
+    expect(highest).toBe(3);
+    expect(pose.scale[3]).toBeCloseTo(fit.fit * WAVE_BIG, 3);
+    for (const j of [0, 1, 2, 4, 5, 6]) expect(pose.scale[j]).toBeLessThan(pose.scale[3] ?? 0);
+    // never more than the wave's height off the line, and the slopes lean
+    for (const y of pose.y) expect(Math.abs(y)).toBeLessThanOrEqual(WAVE_AMP * SIZE * fit.fit + 1e-6);
+    expect(pose.rotate.some((r) => r > 2)).toBe(true);
+    expect(pose.rotate.some((r) => r < -2)).toBe(true);
+    // the crest follows the voice
+    const later = WAVE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 5.5);
+    expect(later.y.indexOf(Math.min(...later.y))).toBe(5);
+  });
+
+  it("keeps the row inside the stage, and at rest is one plain row", () => {
+    const fit = WAVE_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, 0.8);
+    for (const a of [0, 1.5, 3.5, 6.5]) {
+      const pose = WAVE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, a);
+      const right = Math.max(...LINE.widths.map((w, j) => (pose.x[j] ?? 0) + w * (pose.scale[j] ?? 1)));
+      expect(Math.min(...pose.x)).toBeGreaterThanOrEqual(0);
+      expect(right).toBeLessThanOrEqual(STAGE.width);
+    }
+    const still = WAVE_LAYOUT.fit(LINE, SIZE, STAGE, false, 0, 0.8);
+    const rest = WAVE_LAYOUT.pose(LINE, still, STAGE.width, 1, 0, 2);
+    expect(rest).toEqual(poseOf(LINE, fitRow(LINE, SIZE, STAGE.width, false), STAGE.width, 1, 0, 0));
+  });
+});
+
+describe("Reveal", () => {
+  it("shows the words sung so far, and keeps the rest as faint, low ghosts in their places", () => {
+    const fit = REVEAL_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, 0.8);
+    const pose = REVEAL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    for (const j of [0, 1, 2]) {
+      expect(pose.opacity[j]).toBeCloseTo(1, 6);
+      expect(pose.y[j]).toBeCloseTo(0, 6);
+    }
+    for (const j of [4, 5, 6]) {
+      expect(pose.opacity[j]).toBeCloseTo(REVEAL_GHOST, 6);
+      expect(pose.y[j]).toBeGreaterThan(0);
+      expect(pose.scale[j]).toBeLessThan(fit.fit);
+    }
+    // the word being sung is coming in
+    expect(pose.opacity[3]).toBeGreaterThan(REVEAL_GHOST);
+    // the line doesn't move as it fills in: a word's middle stays where it is
+    const start = REVEAL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 0);
+    const end = REVEAL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, LINE.widths.length);
+    LINE.widths.forEach((w, j) => {
+      const mid = (p: typeof pose): number => (p.x[j] ?? 0) + (w * (p.scale[j] ?? 1)) / 2;
+      expect(mid(start)).toBeCloseTo(mid(end), 6);
+    });
+    expect(end.opacity.every((o) => Math.abs(o - 1) < 1e-9)).toBe(true);
+  });
+});
+
+describe("Collage", () => {
+  it("sets a line in one to three rows, each word its own size and tilt, the same every time", () => {
+    expect([1, 3, 4, 7, 8, 20].map(collageRows)).toEqual([1, 1, 2, 2, 3, 3]);
+    const fit = COLLAGE_LAYOUT.fit(LINE, SIZE, STAGE, true, 4, 0.8);
+    const c = fit.collage;
+    expect(c?.rows).toHaveLength(2);
+    expect(new Set(c?.scale.map((s) => s.toFixed(3))).size).toBeGreaterThan(3);
+    expect(c?.tilt.some((t) => t > 0) && c?.tilt.some((t) => t < 0)).toBe(true);
+    expect(COLLAGE_LAYOUT.fit(LINE, SIZE, STAGE, true, 4, 0.8)).toEqual(fit);
+    expect(COLLAGE_LAYOUT.fit(LINE, SIZE, STAGE, true, 5, 0.8).collage?.tilt).not.toEqual(c?.tilt);
+    // the block fits the stage
+    expect((c?.width ?? 0) * fit.fit).toBeLessThanOrEqual(0.86 * STAGE.width + 1e-6);
+    expect((c?.height ?? 0) * fit.fit).toBeLessThanOrEqual(0.56 * STAGE.height + 1e-6);
+  });
+
+  it("stacks its rows, dims the words not sung yet, and at rest is one level row", () => {
+    const fit = COLLAGE_LAYOUT.fit(LINE, SIZE, STAGE, true, 2, 0.8);
+    const pose = COLLAGE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 2.5);
+    const rows = fit.collage?.rows ?? [];
+    expect((pose.y[rows[1]?.from ?? 0] ?? 0) - (pose.y[rows[0]?.from ?? 0] ?? 0)).toBeGreaterThan(SIZE * fit.fit * 0.5);
+    for (const j of [0, 1]) expect(pose.opacity[j]).toBe(1);
+    for (const j of [4, 5, 6]) expect(pose.opacity[j]).toBeLessThan(1);
+    expect(pose.rotate.some((r) => r !== 0)).toBe(true);
+    const still = COLLAGE_LAYOUT.fit(LINE, SIZE, STAGE, false, 2, 0.8);
+    const rest = COLLAGE_LAYOUT.pose(LINE, still, STAGE.width, 1, 0, 0);
+    expect(still.collage?.rows).toHaveLength(1);
+    expect(rest.rotate.every((r) => r === 0)).toBe(true);
+    expect(new Set(rest.y.map((y) => y.toFixed(6))).size).toBe(1);
+  });
+});
+
+describe("every layout", () => {
+  it("is named for its kind, and reaches above and below the line", () => {
+    for (const [kind, layout] of Object.entries(SLOT_LAYOUTS)) {
+      expect(layout.kind).toBe(kind);
+      for (const moving of [true, false]) {
+        const fit = layout.fit(LINE, SIZE, STAGE, moving, 1, 0.8);
+        const reach = layout.extent(fit, SIZE * fit.fit);
+        expect(reach.above).toBeGreaterThan(0);
+        expect(reach.below).toBeGreaterThan(0);
+        const faint = layout.faintest(fit, STAGE.width, moving);
+        expect(faint.opacity).toBeGreaterThan(0);
+        expect(faint.scale).toBeGreaterThan(0);
+        for (const a of [0, 2.5, 7]) {
+          const pose = layout.pose(LINE, fit, STAGE.width, 1, moving ? 1 : 0, a);
+          for (const list of [pose.x, pose.y, pose.scale, pose.opacity, pose.rotate]) expect(list.every(Number.isFinite)).toBe(true);
+        }
+      }
+    }
   });
 });

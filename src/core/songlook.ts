@@ -21,16 +21,18 @@ import { splitWords, syllables, type Timeline } from "./timing";
 // ───────────────────────────────────────────── types ─────────────────────────────────────────────
 
 /**
- * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and two the
- * overlay draws without the core knowing: Poster (the line as a block of rows set big) and Spotlight
- * (the line sliding through the middle with the voice). Settings never names a style since contract
- * v4, so the new ones need no contract change.
+ * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and five the
+ * overlay draws without the core knowing: Poster (the line as a block of rows set big), Spotlight
+ * (the line sliding through the middle with the voice), Wave (the line riding a wave whose crest
+ * follows the voice), Reveal (the line appearing word by word as it's sung) and Collage (the line as
+ * cut-out words, each its own size and tilt). Settings never names a style since contract v4, so the
+ * new ones need no contract change.
  */
-export type Style = Mode | "poster" | "spotlight";
+export type Style = Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage";
 /** The contract's modes. */
 export const CONTRACT_STYLES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
 /** The styles the picker chooses between; on equal scores the earlier one ranks first. */
-export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight"];
+export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight", "wave", "reveal", "collage"];
 
 /** How the lyrics are timed: per word (enhanced LRC), per line, evenly paced plain text, or no lyrics. */
 export type Timing = "word" | "line" | "unsynced" | "none";
@@ -503,7 +505,17 @@ export function axesOf(f: SongFeatures): Axes {
 
 // ─────────────────────────────────────────── styles ───────────────────────────────────────────
 
-const STYLE_LABEL: Record<Style, string> = { arc: "Arc", lens: "Lens", drift: "Drift", stack: "Stack", poster: "Poster", spotlight: "Spotlight" };
+const STYLE_LABEL: Record<Style, string> = {
+  arc: "Arc",
+  lens: "Lens",
+  drift: "Drift",
+  stack: "Stack",
+  poster: "Poster",
+  spotlight: "Spotlight",
+  wave: "Wave",
+  reveal: "Reveal",
+  collage: "Collage",
+};
 /** How far the house look (Arc, Fraunces) is favored when the lyrics are too short to tell much. */
 const HOUSE_PRIOR = 0.15;
 /** A near-tie this close goes to the trackKey hash, so similar songs don't all look the same. */
@@ -514,7 +526,7 @@ const STYLE_TIE = 0.04;
  * one song gets Arc, the next Poster, Spotlight or Lens, where each would suit it, instead of every
  * such song getting the same one.
  */
-export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight"];
+export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight", "wave", "reveal", "collage"];
 const ONE_LINE_VARIETY = 0.1;
 const FONT_TIE = 0.03;
 
@@ -545,6 +557,21 @@ function styleScores(f: SongFeatures, a: Axes): Record<Style, number> {
     spotlight:
       0.3 * a.sustain + 0.22 * a.space + 0.2 * (1 - a.pace) + 0.12 * (1 - a.density) + 0.12 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.35 : 0) -
       0.4 * a.longLines - 0.4 * smooth(a.pace, 0.55, 0.85) - 0.05,
+    // a groove: dance, electronic and upbeat pop, a pace to bob to, hooks, bright covers; lines short
+    // enough to ride the wave
+    wave:
+      0.3 * bell(a.pace, 0.6, 0.25) + 0.24 * a.punch + 0.24 * has(f, "dance") + 0.16 * a.vivid + 0.14 * timed + 0.1 * (1 - a.sustain) +
+      0.1 * smooth(f.vocables, 0.02, 0.2) - 0.45 * a.longLines - 0.12 * a.intimacy - 0.2 * smooth(f.widthMedian, 30, 44) - 0.04,
+    // words landing as they're said: rap, spoken and story songs, fast and wordy, little held; needs real
+    // word timing, and lines that still fit one row
+    reveal:
+      0.3 * a.pace + 0.2 * a.density + 0.14 * (1 - a.sustain) + 0.14 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.2 : 0) + 0.08 * (1 - a.light) -
+      0.5 * smooth(f.widthP90, 56, 84) - 0.12 * a.punch * smooth(f.repetition, 0.4, 0.8) - 0.2 * (f.script === "cjk" ? a.density : 0) - 0.06,
+    // a zine of cut-out words: rock, punk and raw songs, shouted, live, gritty grey or dark covers; short
+    // and medium lines
+    collage:
+      0.3 * a.punch + 0.3 * smooth(f.shout, 0.05, 0.4) + 0.2 * bell(a.pace, 0.6, 0.3) + 0.16 * has(f, "live") + 0.18 * (1 - a.vivid) * (1 - 0.5 * a.light) +
+      0.1 * timed - 0.45 * a.longLines - 0.2 * smooth(f.widthMedian, 32, 48) - 0.1 * a.intimacy - 0.02,
   };
   for (const s of STYLES) scores[s] = round(scores[s], 3);
   return scores;
@@ -639,6 +666,9 @@ const HARMONY: Record<Style, Partial<Record<string, number>>> = {
   arc: { Fraunces: 0.08, "Instrument Serif": 0.08, "Playfair Display": 0.06, Caveat: 0.04, Pacifico: 0.04 },
   poster: { Unbounded: 0.1, Syne: 0.1, Anton: 0.1, "Bricolage Grotesque": 0.08, Righteous: 0.06, "Pirata One": 0.06, Rubik: 0.04, Fraunces: 0.04 },
   spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, "Playfair Display": 0.08, Syne: 0.04, Anton: 0.04 },
+  wave: { Rubik: 0.08, Righteous: 0.08, Pacifico: 0.06, Syne: 0.06, "Space Grotesk": 0.06, Unbounded: 0.04 },
+  reveal: { Anton: 0.08, "Bricolage Grotesque": 0.08, "Space Grotesk": 0.06, "JetBrains Mono": 0.06, System: 0.04 },
+  collage: { Anton: 0.08, "Pirata One": 0.08, Unbounded: 0.06, "Bricolage Grotesque": 0.06, Syne: 0.04, "Playfair Display": 0.04 },
   lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "Space Grotesk": 0.06, Rubik: 0.06, "JetBrains Mono": 0.04, Righteous: 0.04 },
   drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06, "Playfair Display": 0.04, Pacifico: 0.04 },
   stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, "Space Grotesk": 0.06, Anton: 0.04, Rubik: 0.04, Fraunces: 0.03 },

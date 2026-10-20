@@ -19,7 +19,7 @@ import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/sc
 import { commit, SongTimeline } from "../motion/timeline";
 import { warmPictures } from "../pictures";
 import { lensTransform, planLens, turnTransform, zoomAt, type LensPlan, type LensPose, type Shape } from "./lens-plan";
-import { LENS_LAYOUT, POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
+import { COLLAGE_LAYOUT, LENS_LAYOUT, POSTER_LAYOUT, REVEAL_LAYOUT, SPOTLIGHT_LAYOUT, WAVE_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
 import type { Cue, ModeRenderer } from "./types";
 
 // The fisheye's geometry lives in lens-plan.ts (pure); these stay importable from here.
@@ -1132,4 +1132,19 @@ export function createPoster(): ModeRenderer {
 /** Spotlight: the line slides through the middle of the screen with the voice, the sung word large (slot-layouts.ts). */
 export function createSpotlight(): ModeRenderer {
   return new LensMode(SPOTLIGHT_LAYOUT);
+}
+
+/** Wave: the line rides a wave whose crest follows the voice (slot-layouts.ts). */
+export function createWave(): ModeRenderer {
+  return new LensMode(WAVE_LAYOUT);
+}
+
+/** Reveal: the line appears as it's sung, each word punching in as the voice reaches it (slot-layouts.ts). */
+export function createReveal(): ModeRenderer {
+  return new LensMode(REVEAL_LAYOUT);
+}
+
+/** Collage: the line as cut-out words, each its own size and tilt (slot-layouts.ts). */
+export function createCollage(): ModeRenderer {
+  return new LensMode(COLLAGE_LAYOUT);
 }

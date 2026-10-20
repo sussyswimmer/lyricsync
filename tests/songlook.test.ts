@@ -394,7 +394,7 @@ function looksOf(builds: readonly Built[]): Map<string, SongLook> {
 }
 
 const face = (family: string) => FONTS.find((x) => x.family === family);
-const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight"];
+const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage"];
 
 // ───────────────────────────── tests ─────────────────────────────
 
@@ -776,7 +776,7 @@ describe("legibility invariants over a feature grid", () => {
     }
   });
 
-  it("picks only the six styles: the contract's four modes, Poster and Spotlight", () => {
+  it("picks only the nine styles: the contract's four modes, Poster, Spotlight, Wave, Reveal and Collage", () => {
     expect(STYLES).toEqual(MODES);
     expect(STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
     const looks = [...grid.map((f) => pickLook(f)), ...looksOf([...SYNTHETIC.map((make) => make()), ...mockInputs()]).values()];

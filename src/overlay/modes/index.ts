@@ -1,7 +1,7 @@
 import type { Style } from "../../core/songlook";
 import { createArc } from "./arc";
 import { createDrift } from "./drift";
-import { createLens, createPoster, createSpotlight } from "./lens";
+import { createCollage, createLens, createPoster, createReveal, createSpotlight, createWave } from "./lens";
 import type { ModeRenderer } from "./types";
 
 export function createMode(mode: Style): ModeRenderer {
@@ -18,5 +18,11 @@ export function createMode(mode: Style): ModeRenderer {
       return createPoster();
     case "spotlight":
       return createSpotlight();
+    case "wave":
+      return createWave();
+    case "reveal":
+      return createReveal();
+    case "collage":
+      return createCollage();
   }
 }
