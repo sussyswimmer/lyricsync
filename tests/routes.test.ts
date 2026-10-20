@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PICTURE_IDS, type PictureId } from "../src/core/wordpics";
 import type { Track } from "../src/overlay/motion/karaoke";
-import { planPictureRoute, routeOf, type RouteInput, type Stop } from "../src/overlay/motion/routes";
+import { BALL_EM, planBall, planPictureRoute, routeOf, type RouteInput, type Stop } from "../src/overlay/motion/routes";
 
 /** Where a track draws the picture at song time `t`: its translate and opacity, linear between keyframes (held at the ends). */
 function poseAt(track: Track, t: number): { x: number; y: number; opacity: number } {
@@ -141,5 +141,68 @@ describe("picture routes (routes.ts)", () => {
     expect(planPictureRoute({ ...input("dance" as PictureId), until: 10_500 }).track.duration).toBeGreaterThanOrEqual(2600);
     const long = planPictureRoute({ ...input("candle"), until: 40_000 });
     expect(long.track.t0 + long.track.duration).toBe(10_450 + 9000);
+  });
+});
+
+describe("karaoke mode's dot (routes.ts planBall)", () => {
+  /** Five words 120 px apart on a row whose tops are at y 100, sung 450 ms apart from 10 s; the line ends at 12.2 s. */
+  const words: Stop[] = [0, 1, 2, 3, 4].map((j) => ({ x: 60 + 120 * j, y: 100, w: 100, t: 10_000 + 450 * j }));
+  const ball = (bounce = true, over: readonly Stop[] = words): Track => {
+    const track = planBall({ words: over, until: 12_200, size: L, bounce });
+    if (!track) throw new Error("no track");
+    return track;
+  };
+
+  it("is well formed, and the same every time", () => {
+    wellFormed(ball());
+    wellFormed(ball(false));
+    expect(ball()).toEqual(ball());
+    expect(BALL_EM * L).toBeGreaterThan(8);
+  });
+
+  it("lands on every word exactly as it starts, just above its top, and stays while it's sung", () => {
+    for (const bounce of [true, false]) {
+      const track = ball(bounce);
+      for (const w of words) {
+        for (const t of [w.t, w.t + 40]) {
+          const p = poseAt(track, t);
+          expect(p.x, `${bounce} ${t}`).toBeCloseTo(w.x, 0);
+          expect(p.y).toBeLessThan(w.y);
+          expect(p.y).toBeGreaterThan(w.y - 0.3 * L);
+          expect(p.opacity).toBeCloseTo(1, 2);
+        }
+      }
+    }
+  });
+
+  it("hops between words in an arc, and slides without one under reduced motion", () => {
+    // the hop to the second word takes 360 ms of the 450 (BALL_FLIGHT): its top is halfway through
+    const mid = (words[0] as Stop).t + 450 - 360 / 2;
+    const rest = poseAt(ball(), (words[0] as Stop).t).y;
+    expect(poseAt(ball(), mid).y).toBeLessThan(rest - 0.25 * L);
+    for (let t = 10_000; t < 11_800; t += 25) expect(poseAt(ball(false), t).y).toBeCloseTo(rest, 0);
+  });
+
+  it("drops in before the first word, and fades out where it is after the line's last word", () => {
+    const track = ball();
+    expect(track.t0).toBeLessThan(10_000);
+    expect(poseAt(track, track.t0).opacity).toBeLessThan(0.2);
+    const end = track.t0 + track.duration;
+    expect(end).toBeGreaterThan(12_200);
+    expect(end).toBeLessThan(12_200 + 1000);
+    expect(poseAt(track, 12_200).x).toBeCloseTo(540, 0);
+    expect(poseAt(track, end).x).toBeCloseTo(540, 0);
+    expect(poseAt(track, end).opacity).toBeLessThan(0.05);
+  });
+
+  it("takes words that start together as one landing, and has nothing to plan without words", () => {
+    const together: Stop[] = [
+      { x: 60, y: 100, w: 100, t: 10_000 },
+      { x: 180, y: 100, w: 100, t: 10_010 },
+      { x: 300, y: 100, w: 100, t: 10_500 },
+    ];
+    expect(poseAt(ball(true, together), 10_050).x).toBeCloseTo(60, 0);
+    expect(poseAt(ball(true, together), 10_500).x).toBeCloseTo(300, 0);
+    expect(planBall({ words: [], until: 0, size: L, bounce: true })).toBeNull();
   });
 });

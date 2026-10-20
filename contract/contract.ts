@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 7;
+export const CONTRACT_VERSION = 8;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -112,8 +112,12 @@ export interface Settings {
   effects: number;
   /** Effects mode: each song moves its own way (not every word floats up), big moments splash, and
    *  words that name something get a tiny picture. false: every word rises, nothing else is added.
-   *  Added in contract v5. */
+   *  Added in contract v5; off by default since v8. */
   effectsMode: boolean;
+  /** Karaoke mode: a dot bounces onto each word of the line as it's sung, to show what to sing next.
+   *  Off by default. Added in contract v8: settings saved before it read as off, and have
+   *  `effectsMode` turned off once (it was on by default until v8). */
+  karaokeMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -131,5 +135,6 @@ export const DEFAULT_SETTINGS: Settings = {
     nudgeLater: "CmdOrCtrl+Alt+Shift+[",
   },
   effects: 50,
-  effectsMode: true,
+  effectsMode: false,
+  karaokeMode: false,
 };

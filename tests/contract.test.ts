@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v7", () => {
+describe("contract v8", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(7);
+    expect(CONTRACT_VERSION).toBe(8);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
@@ -17,8 +17,15 @@ describe("contract v7", () => {
         nudgeLater: "CmdOrCtrl+Alt+Shift+[",
       },
       effects: 50,
-      effectsMode: true,
+      effectsMode: false,
+      karaokeMode: false,
     });
+  });
+
+  it("adds karaokeMode, off by default, and turns effectsMode off by default, without touching the settings schema (v8)", () => {
+    expect(DEFAULT_SETTINGS.karaokeMode).toBe(false);
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(false);
+    expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
   it("adds nudgedTracks, empty by default, without touching the settings schema (v7)", () => {
@@ -26,8 +33,8 @@ describe("contract v7", () => {
     expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
-  it("adds effectsMode, on by default, without touching the settings schema (v5)", () => {
-    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
+  it("adds effectsMode without touching the settings schema (v5)", () => {
+    expect(typeof DEFAULT_SETTINGS.effectsMode).toBe("boolean");
     expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 

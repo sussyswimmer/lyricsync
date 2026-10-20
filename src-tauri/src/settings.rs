@@ -7,8 +7,10 @@
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
 //! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects`, contract
-//! v5 `effectsMode` and contract v7 `nudgedTracks`, without a new settings version: a stored file
-//! without them loads with their defaults and is rewritten once with them (`load`).
+//! v5 `effectsMode`, contract v7 `nudgedTracks` and contract v8 `karaokeMode`, without a new settings
+//! version: a stored file without them loads with their defaults and is rewritten once with them
+//! (`load`). Contract v8 also turned Effects mode off by default; `migrate` turns it off once in a
+//! file saved before v8.
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -263,6 +265,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
             "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
             "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
+            "karaokeMode" => keep_or_set(&mut next.karaoke_mode, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -274,7 +277,14 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
 /// fields, not even an object) into valid ones by the update rules, starting from the defaults.
 /// Settings v1 has no renamed fields to carry over; a future version adds its steps here.
 pub fn migrate(stored: &Value) -> Settings {
-    merge_patch(&Settings::default(), stored)
+    let mut settings = merge_patch(&Settings::default(), stored);
+    // Effects mode was on by default until contract v8, so a file saved before it (no `karaokeMode`)
+    // says `effectsMode: true` whether or not anyone chose it: it starts off, as on a new install.
+    // `load` then rewrites the file with `karaokeMode`, so a choice made after that sticks.
+    if stored.is_object() && stored.get("karaokeMode").is_none() {
+        settings.effects_mode = Settings::default().effects_mode;
+    }
+    settings
 }
 
 /// What startup (`open`) does with the stored value: the settings to use, and whether the file
@@ -919,7 +929,8 @@ mod tests {
                 "nudgeLater": "Control+Shift+K"
             },
             "effects": 80,
-            "effectsMode": false
+            "effectsMode": true,
+            "karaokeMode": true
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -971,7 +982,7 @@ mod tests {
             }
         );
         assert_eq!(s.effects, 80.0);
-        assert!(!s.effects_mode);
+        assert!(s.effects_mode && s.karaoke_mode);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -1238,7 +1249,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 20);
+        assert_eq!(keys.len(), 21);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1820,23 +1831,33 @@ mod tests {
     }
 
     #[test]
-    fn settings_saved_before_contract_v5_get_effects_mode_on_and_are_rewritten_once() {
+    fn settings_saved_before_contract_v8_start_with_effects_mode_off_and_are_rewritten_once() {
+        // a file from 0.1.0 (contract v7): Effects mode on, its default then, and no karaokeMode
         let mut saved = serde_json::to_value(custom()).unwrap();
-        saved.as_object_mut().unwrap().remove("effectsMode");
+        saved.as_object_mut().unwrap().remove("karaokeMode");
+        assert_eq!(saved["effectsMode"], json!(true));
         let (settings, rewrite) = load(Some(&saved));
         assert_eq!(
             settings,
             Settings {
-                effects_mode: true,
+                effects_mode: false,
+                karaoke_mode: false,
                 ..custom()
             }
         );
         assert!(rewrite);
         let rewritten = serde_json::to_value(&settings).unwrap();
-        assert_eq!(rewritten["effectsMode"], json!(true));
-        assert_eq!(load(Some(&rewritten)), (settings, false));
-        assert!(migrate(&json!({ "version": 1 })).effects_mode);
-        assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
+        assert_eq!(rewritten["karaokeMode"], json!(false));
+        assert_eq!(load(Some(&rewritten)), (settings.clone(), false));
+        // once rewritten, turning Effects mode back on sticks
+        let chosen = merge_patch(&settings, &json!({ "effectsMode": true }));
+        let stored = serde_json::to_value(&chosen).unwrap();
+        assert_eq!(load(Some(&stored)), (chosen, false));
+        // a file from before contract v5 has no effectsMode at all: off too
+        saved.as_object_mut().unwrap().remove("effectsMode");
+        assert!(!load(Some(&saved)).0.effects_mode);
+        assert!(!migrate(&json!({ "version": 1 })).effects_mode);
+        assert!(migrate(&json!({ "effectsMode": true, "karaokeMode": false })).effects_mode);
     }
 
     #[test]

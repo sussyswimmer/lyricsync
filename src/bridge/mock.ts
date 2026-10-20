@@ -385,12 +385,21 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
   next.effects = clamp(p.effects, 0, 100) ?? next.effects;
   if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
+  if (typeof p.karaokeMode === "boolean") next.karaokeMode = p.karaokeMode;
   return next;
 }
 
-/** Stored settings of any shape made valid by the same rules, starting from the defaults (`settings::migrate`). */
+/**
+ * Stored settings of any shape made valid by the same rules, starting from the defaults (`settings::migrate`).
+ * Effects mode was on by default until contract v8, so settings saved before it (no `karaokeMode`) start
+ * with it off, as on a new install.
+ */
 export function migrateSettings(stored: unknown): Settings {
-  return mergeSettings(DEFAULT_SETTINGS, stored);
+  const next = mergeSettings(DEFAULT_SETTINGS, stored);
+  if (stored !== null && typeof stored === "object" && !Array.isArray(stored) && !("karaokeMode" in stored)) {
+    next.effectsMode = DEFAULT_SETTINGS.effectsMode;
+  }
+  return next;
 }
 
 /**

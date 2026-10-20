@@ -4,7 +4,7 @@ import { parseLrc, type Line } from "../src/core/lrc";
 import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
 import { DEFAULT_PICK, resolveLook, shadowLayers, withBloom, type Frame, type Look } from "../src/overlay/look";
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
-import { POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotLayout } from "../src/overlay/modes/slot-layouts";
+import { LENS_LAYOUT, POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotLayout } from "../src/overlay/modes/slot-layouts";
 import type { Cue } from "../src/overlay/modes/types";
 import { PICTURE_EM } from "../src/overlay/motion/decor";
 import { findInterludes } from "../src/overlay/motion/interlude";
@@ -12,8 +12,9 @@ import { leadTimes } from "../src/overlay/motion/schedule";
 import { FakeAnimationHost } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
+// Effects mode is off by default since contract v8; these suites check its pictures and moves, so it's on here.
 const look = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
-  resolveLook({ ...structuredClone(DEFAULT_SETTINGS), mode: "lens", ...over }, null, {
+  resolveLook({ ...structuredClone(DEFAULT_SETTINGS), mode: "lens", effectsMode: true, ...over }, null, {
     width: 1280,
     height: 720,
     dpr: 1,
@@ -921,6 +922,32 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
     const over = routeY(POSTER_LAYOUT);
     expect(Number.isFinite(over)).toBe(true);
     expect(over).toBeLessThan(routeY({ ...POSTER_LAYOUT, blocks: false }));
+  });
+
+  it("Karaoke mode: one dot over the sung line, on the song's clock, landing on its word's own row in Poster", () => {
+    const dotOf = (over: Partial<Settings>, layout: SlotLayout = LENS_LAYOUT): FakeElement[] => {
+      const { mode, row } = lens(look(over), LINES, layout);
+      mode.paint(cue(0, 2000));
+      frames();
+      return everything(row()).filter((e) => e.classList.contains("kw-ball"));
+    };
+    expect(dotOf({})).toHaveLength(0);
+    for (const layout of [LENS_LAYOUT, POSTER_LAYOUT, SPOTLIGHT_LAYOUT]) {
+      const dots = dotOf({ karaokeMode: true }, layout);
+      expect(dots).toHaveLength(1);
+      expect(dots[0]?.getAnimations()).toHaveLength(1);
+    }
+    // in Poster it goes down the block, row by row, where a picture stays over the block's top row
+    const ysOf = (el: FakeElement | undefined): number[] =>
+      (el?.getAnimations()[0]?.keyframes ?? []).map((f: Keyframe) => Number(/translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(f.transform))?.[1])).filter(Number.isFinite);
+    const { mode, row } = lens(look({ karaokeMode: true }), LINES, POSTER_LAYOUT);
+    mode.paint(cue(0, 2000));
+    frames();
+    const els = everything(row());
+    const pictureY = ysOf(els.find((e) => e.classList.contains("kw-route")))[0] ?? Number.NaN;
+    const dotYs = ysOf(els.find((e) => e.classList.contains("kw-ball")));
+    expect(Number.isFinite(pictureY)).toBe(true);
+    expect(Math.max(...dotYs)).toBeGreaterThan(pictureY + 0.5 * look().size);
   });
 
   it("Spotlight draws a word's picture as big as its word is once the light is on it", () => {

@@ -869,6 +869,7 @@ export class DriftMode implements ModeRenderer {
         params: this.moves.paramsFor(look, this.params ?? motionParams(look), decor?.move ?? "rise"),
         steps: this.steps,
         ...(decor ? { decor: decor.words } : {}),
+        ball: look.karaokeMode && !look.unsynced,
       },
       this.timeline,
       `kw${row.index}`,

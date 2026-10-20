@@ -250,6 +250,23 @@
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) saturate(1.12);
 }
 
+/* Karaoke mode's dot (motion/line.ts, routes.ts planBall): standing on its point (its size and centering
+   margins are inline), moved by its track. A shiny bead in the highlight with a soft glow, and a dark
+   shadow under it so it stays clear on a light or busy wallpaper. Rests invisible, like a picture. */
+.kw-ball {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  transform-origin: 50% 100%;
+  background: radial-gradient(circle at 35% 32%, rgba(255, 255, 255, 0.85) 0 14%, transparent 42%), var(--ut-hl);
+  box-shadow:
+    0 0 0.5em var(--ut-hl),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
 /* A living picture's light (motion/decor.ts planPictureLife): on its picture's route, but under the
    words, so it never covers the text. A soft glow in the picture's own color (--aura, inline),
    flickering or breathing, and a big flame's embers rising through it. */

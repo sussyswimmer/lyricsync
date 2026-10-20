@@ -474,6 +474,84 @@ function hop(input: RouteInput, k: number, end: number, rest: number): Track {
   }, [...keys, leave]);
 }
 
+/** Karaoke mode's dot is this many font sizes across... */
+export const BALL_EM = 0.34;
+/** ...and rests this many font sizes above a word's top. */
+const BALL_GAP_EM = 0.08;
+/** It drops in this long before its line's first word, and fades out this long after the last one ends, ms. */
+const BALL_IN_MS = 350;
+const BALL_OUT_MS = 450;
+/** Words starting closer together than this are one landing, ms. */
+const BALL_MIN_GAP = 40;
+/** A hop takes at most this share of the time to the next word, so the dot is seen to land on each one. */
+const BALL_FLIGHT = 0.8;
+
+export interface BallInput {
+  /** the line's words in the order they're sung: when each starts, and where it is then */
+  words: readonly Stop[];
+  /** when the line's last word ends, song ms */
+  until: number;
+  /** the line's font size, px */
+  size: number;
+  /** false (reduced motion, the lite tier): it moves from word to word without arcing or squashing */
+  bounce: boolean;
+}
+
+/**
+ * Karaoke mode's dot over a line (line.ts), on the song's clock: it drops onto the first word just
+ * before it's sung, lands on every word exactly as it starts, waits there while it's sung (at least a
+ * fifth of the time to the next word), and hops to the next in an arc as tall as the hop is long; after
+ * the last word it fades out where it is.
+ * Positions are for the dot's bottom middle, in the line's box. Null for a line without words.
+ */
+export function planBall(input: BallInput): Track | null {
+  const { size: L, bounce: arcs } = input;
+  const lands: { t: number; x: number; y: number }[] = [];
+  for (const w of input.words) {
+    const prev = lands[lands.length - 1];
+    if (prev && w.t - prev.t < BALL_MIN_GAP) continue;
+    lands.push({ t: w.t, x: w.x, y: w.y - BALL_GAP_EM * L });
+  }
+  const first = lands[0];
+  const last = lands[lands.length - 1];
+  if (!first || !last) return null;
+  const t0 = first.t - BALL_IN_MS;
+  const leave = Math.max(input.until, last.t + 200);
+  const end = leave + BALL_OUT_MS;
+  const flightOf = (a: { t: number }, b: { t: number }): number => Math.min(HOP_MS, BALL_FLIGHT * (b.t - a.t));
+  const keys = lands.flatMap((p, i) => {
+    const next = lands[i + 1];
+    return next ? [p.t, next.t - flightOf(p, next)] : [p.t];
+  });
+  return trackOf(
+    t0,
+    end - t0,
+    (t) => {
+      if (t < first.t) {
+        // dropping onto the first word (fading in, without motion)
+        const u = (t - t0) / BALL_IN_MS;
+        const y = arcs ? first.y - 1.2 * L * (1 - easeIn(u)) : first.y;
+        return [first.x, y, 0, 1, 1, clamp01(arcs ? u * 3 : u)];
+      }
+      if (t >= leave) return [last.x, last.y, 0, 1, 1, 1 - smooth((t - leave) / BALL_OUT_MS)];
+      // the stretch it's in: resting on one word, or in the air toward the next
+      let i = 0;
+      while (i + 1 < lands.length && t >= (lands[i + 1] as { t: number }).t) i++;
+      const a = lands[i] as { t: number; x: number; y: number };
+      const b = lands[i + 1];
+      const [sx, sy] = arcs ? squash(t, a.t, 1) : [1, 1];
+      if (!b || !arcs) return [a.x, a.y, 0, sx, sy, 1];
+      const flight = flightOf(a, b);
+      const takeoff = b.t - flight;
+      if (t < takeoff) return [a.x, a.y, 0, sx, sy, 1];
+      const u = (t - takeoff) / flight;
+      const height = clamp(0.35 * L + 0.12 * Math.abs(b.x - a.x), 0.3 * L, 1.1 * L);
+      return [lerp(a.x, b.x, u), lerp(a.y, b.y, u) - 4 * height * u * (1 - u), 0, 1, 1, 1];
+    },
+    [...keys, leave],
+  );
+}
+
 /** Rain, snow, leaves, money, feathers: the picture comes down onto its word and copies fall across the line. */
 function fall(input: RouteInput, k: number, end: number, rest: number, left: number, right: number, rand: () => number): RoutePlan {
   const { id, at, home, size: L } = input;
