@@ -587,6 +587,13 @@ const METRICS: Record<string, { scale: number; spacing: number }> = {
   "Bricolage Grotesque": { scale: 1, spacing: 0 },
   Caveat: { scale: 1.1, spacing: 0 },
   "JetBrains Mono": { scale: 0.92, spacing: -0.02 },
+  Anton: { scale: 1.06, spacing: 0.01 },
+  "Playfair Display": { scale: 1, spacing: 0 },
+  "Space Grotesk": { scale: 0.96, spacing: -0.01 },
+  Righteous: { scale: 0.96, spacing: 0 },
+  Pacifico: { scale: 0.96, spacing: 0 },
+  Rubik: { scale: 0.96, spacing: -0.01 },
+  "Pirata One": { scale: 1.08, spacing: 0.01 },
   System: { scale: 1, spacing: 0 },
 };
 
@@ -611,18 +618,30 @@ function fontVeto(face: FontChoice, f: SongFeatures, a: Axes): string | null {
     case "Instrument Serif":
       if (a.pace > 0.6 || a.density > 0.6) return "hairline serif too thin for fast dense lines";
       break;
+    case "Playfair Display":
+      if (a.pace > 0.7) return "hairline serif too thin for fast lines";
+      break;
+    case "Righteous":
+      if (f.widthP90 > 56) return "too wide for long lines";
+      break;
+    case "Pacifico":
+      if (a.pace > 0.55 || f.widthMedian > 32 || a.density > 0.5) return "script too busy for fast or long lines";
+      break;
+    case "Pirata One":
+      if (f.widthMedian > 28 || f.widthP90 > 46 || a.pace > 0.75 || a.light > 0.42) return "blackletter only for short lines of dark, heavy songs";
+      break;
   }
   return null;
 }
 
 /** Faces that suit each style. */
 const HARMONY: Record<Style, Partial<Record<string, number>>> = {
-  arc: { Fraunces: 0.08, "Instrument Serif": 0.08, Caveat: 0.04 },
-  poster: { Unbounded: 0.1, Syne: 0.1, "Bricolage Grotesque": 0.08, Fraunces: 0.04 },
-  spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, Syne: 0.04 },
-  lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "JetBrains Mono": 0.04 },
-  drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06 },
-  stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, Fraunces: 0.03 },
+  arc: { Fraunces: 0.08, "Instrument Serif": 0.08, "Playfair Display": 0.06, Caveat: 0.04, Pacifico: 0.04 },
+  poster: { Unbounded: 0.1, Syne: 0.1, Anton: 0.1, "Bricolage Grotesque": 0.08, Righteous: 0.06, "Pirata One": 0.06, Rubik: 0.04, Fraunces: 0.04 },
+  spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, "Playfair Display": 0.08, Syne: 0.04, Anton: 0.04 },
+  lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "Space Grotesk": 0.06, Rubik: 0.06, "JetBrains Mono": 0.04, Righteous: 0.04 },
+  drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06, "Playfair Display": 0.04, Pacifico: 0.04 },
+  stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, "Space Grotesk": 0.06, Anton: 0.04, Rubik: 0.04, Fraunces: 0.03 },
 };
 
 /** Each face's character, as taste written down. */
@@ -646,6 +665,22 @@ function fontScore(family: string, f: SongFeatures, a: Axes): number {
       return 0.36 * a.intimacy + 0.2 * has(f, "intimate") + 0.16 * warm * a.light + 0.14 * f.shortLines + 0.14 * (1 - a.punch) - 0.12;
     case "JetBrains Mono": // machine type: cold neon covers, steady electronic pulse
       return 0.3 * cool + 0.26 * a.vivid * smooth(f.cover?.contrast ?? 0, 0.1, 0.3) + 0.2 * bell(a.pace, 0.5, 0.3) + 0.12 * has(f, "dance") + 0.12 * a.punch - 0.1;
+    case "Anton": // tall condensed shout: rap, rock anthems, chants, dark heavy covers; narrow enough for long bars
+      return 0.28 * a.punch + 0.24 * smooth(f.shout, 0.05, 0.4) + 0.24 * a.pace + 0.12 * a.density + 0.08 * has(f, "live") + 0.12 * (1 - a.light) - 0.14 * a.intimacy - 0.08;
+    case "Playfair Display": // high-contrast display serif: soul, R&B, torch songs, held notes under rich, dark covers
+      return 0.24 * a.sustain + 0.18 * elegant + 0.2 * bell(a.pace, 0.3, 0.3) + 0.32 * (1 - a.light) * (0.3 + 0.7 * a.vivid) + 0.12 * warm - 0.02;
+    case "Space Grotesk": // clean techy grotesque: synth-pop, house, electronic, cool covers
+      return 0.26 * cool + 0.2 * has(f, "dance") + 0.2 * bell(a.pace, 0.55, 0.3) + 0.14 * a.vivid + 0.12 * a.density + 0.08 * (1 - a.sustain) - 0.06;
+    case "Righteous": // retro rounded display: disco, funk, grooves, warm saturated covers
+      return 0.5 * warm * a.vivid + 0.1 * warm + 0.2 * has(f, "dance") + 0.2 * bell(a.pace, 0.5, 0.25) + 0.14 * a.punch + 0.2 * smooth(f.vocables, 0.02, 0.2) + 0.06 * a.light - 0.12;
+    case "Pacifico": // brush script: summer, beach, reggae, feel-good songs, bright warm covers, an easy pace
+      return 0.7 * warm * a.light + 0.22 * bell(a.pace, 0.25, 0.3) + 0.12 * (1 - a.density) + 0.12 * a.vivid * a.light - 0.16 * smooth(f.shout, 0.05, 0.4) - 0.12 * a.sustain - 0.06;
+    case "Rubik": // friendly rounded sans: bubbly pop, bright light covers, upbeat hooks
+      return 0.6 * a.light * (0.5 + 0.5 * a.vivid) + 0.22 * bell(a.pace, 0.62, 0.25) + 0.16 * a.punch + 0.14 * smooth(f.repetition, 0.3, 0.7) + 0.08 * (1 - a.intimacy) - 0.2 * (1 - a.light) - 0.12;
+    case "Pirata One": { // blackletter: metal, gothic, heavy and dark, shouted short lines
+      const dark = smooth(0.42 - a.light, 0, 0.3);
+      return 0.45 * dark * (0.4 + 0.6 * a.punch) + 0.26 * smooth(f.shout, 0.05, 0.4) + 0.12 * (1 - a.vivid) + 0.08 * (1 - a.intimacy) - 0.16;
+    }
     case "System": // neutral, covers every script
       return 0.18 + 0.08 * a.density;
     default:
@@ -814,7 +849,7 @@ export function pickLook(f: SongFeatures): SongLook {
   const { face, scores: fontScoresOut, tie: fontTie } = pickFont(f, a, style);
   const m = METRICS[face.family] ?? { scale: 1, spacing: 0 };
   const upper =
-    (face.family === "Unbounded" || face.family === "Syne") &&
+    (face.family === "Unbounded" || face.family === "Syne" || face.family === "Anton") &&
     f.script === "latin" &&
     !f.vietnamese &&
     (f.shout >= 0.35 || (a.punch >= 0.6 && f.widthMedian <= 22));

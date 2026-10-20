@@ -126,8 +126,8 @@ describe("coverage flags", () => {
   it("gives the system stack every script, and names the faces the picker may use for each", () => {
     for (const subset of SUBSETS) expect(fontFor("System")[subset], subset).toBe(true);
     const having = (subset: (typeof SUBSETS)[number]): string[] => FONTS.filter((f) => f[subset]).map((f) => f.family);
-    expect(having("cyrillic")).toEqual(["Unbounded", "Caveat", "JetBrains Mono", "System"]);
+    expect(having("cyrillic")).toEqual(["Unbounded", "Caveat", "JetBrains Mono", "Playfair Display", "Pacifico", "Rubik", "System"]);
     expect(having("greek")).toEqual(["Syne", "JetBrains Mono", "System"]);
-    expect(having("vietnamese")).toEqual(["Fraunces", "Unbounded", "Bricolage Grotesque", "JetBrains Mono", "System"]);
+    expect(having("vietnamese")).toEqual(["Fraunces", "Unbounded", "Bricolage Grotesque", "JetBrains Mono", "Anton", "Playfair Display", "Space Grotesk", "Pacifico", "System"]);
   });
 });

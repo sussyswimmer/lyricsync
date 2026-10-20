@@ -518,7 +518,7 @@ describe("synthetic profiles", () => {
   });
 
   it("Cyrillic: only faces with Cyrillic letters", () => {
-    expect(["Unbounded", "Caveat", "JetBrains Mono", "System"]).toContain(get("Cyrillic mid-tempo").font.family);
+    expect(face(get("Cyrillic mid-tempo").font.family)?.cyrillic).toBe(true);
   });
 });
 

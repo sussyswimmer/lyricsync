@@ -5,6 +5,13 @@ import "@fontsource/unbounded/700.css";
 import "@fontsource/bricolage-grotesque/700.css";
 import "@fontsource/caveat/600.css";
 import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource/anton/400.css";
+import "@fontsource/playfair-display/700.css";
+import "@fontsource/space-grotesk/700.css";
+import "@fontsource/righteous/400.css";
+import "@fontsource/pacifico/400.css";
+import "@fontsource/rubik/700.css";
+import "@fontsource/pirata-one/400.css";
 
 import { FONTS, type FontChoice } from "../core/faces";
 

@@ -86,6 +86,13 @@ export const FONTS: readonly FontChoice[] = [
   face("Bricolage Grotesque", "Bricolage", 700, false, { vietnamese: true }),
   face("Caveat", "Caveat", 600, false, { cyrillic: true }, `"Comic Sans MS"`),
   face("JetBrains Mono", "JetBrains Mono", 600, false, { vietnamese: true, cyrillic: true, greek: true }, "ui-monospace, Menlo, Consolas"),
+  face("Anton", "Anton", 400, false, { vietnamese: true }, `Impact, "Arial Narrow"`),
+  face("Playfair Display", "Playfair", 700, true, { vietnamese: true, cyrillic: true }, `Didot, "Bodoni MT"`),
+  face("Space Grotesk", "Space Grotesk", 700, false, { vietnamese: true }),
+  face("Righteous", "Righteous", 400, false, {}),
+  face("Pacifico", "Pacifico", 400, false, { vietnamese: true, cyrillic: true }, `"Brush Script MT"`),
+  face("Rubik", "Rubik", 700, false, { cyrillic: true }),
+  face("Pirata One", "Pirata One", 400, false, {}, `"Old English Text MT"`),
   face("System", "System", 700, false, { vietnamese: true, cyrillic: true, greek: true }),
 ];
 
