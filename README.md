@@ -2,9 +2,13 @@
   <img src="assets/banner.png" alt="Undertone: your desktop, singing along" width="100%">
 </p>
 
-<p align="center">
-  <a href="https://github.com/sussyswimmer/lyricsync/releases/latest"><img src="https://img.shields.io/github/v/release/sussyswimmer/lyricsync?include_prereleases&amp;sort=semver&amp;display_name=tag&amp;label=release&amp;color=C8642A" alt="Latest release"></a>
+<!-- Until the first release, the release and downloads badges would only say "no releases found".
+     Once it's out, replace the status badge with these two:
+  <a href="https://github.com/sussyswimmer/lyricsync/releases/latest"><img src="https://img.shields.io/github/v/release/sussyswimmer/lyricsync?sort=semver&amp;display_name=tag&amp;label=release&amp;color=C8642A" alt="Latest release"></a>
   <a href="https://github.com/sussyswimmer/lyricsync/releases"><img src="https://img.shields.io/github/downloads/sussyswimmer/lyricsync/total?label=downloads&amp;color=0891B2" alt="Downloads, all releases"></a>
+-->
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/status-pre--release-C8642A" alt="Status: pre-release"></a>
   <a href="https://github.com/sussyswimmer/lyricsync/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/sussyswimmer/lyricsync/ci.yml?branch=main&amp;label=CI&amp;logo=githubactions&amp;logoColor=white" alt="CI status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&amp;logoColor=white" alt="macOS 14 or later">
