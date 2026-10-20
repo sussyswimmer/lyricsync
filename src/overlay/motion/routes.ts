@@ -22,6 +22,14 @@
  * Positions are px in the line's own box (its host element), for the picture's bottom middle, which
  * is also the point it turns and squashes around. Without motion (reduced motion, Effects 0) a picture
  * only fades in on its word and out again.
+ *
+ * The words take part too (`reactions`): each word the picture touches answers it on its own track, on
+ * the word box's `translate`, `rotate` and `scale` (which compose with the word's own pop on
+ * `transform`). A word squashes under a hopping picture as it lands, ducks as a bird flies over, dips
+ * under a car's wheels, shakes on a rocket's launch pad and is kicked up as it lifts off, is lifted
+ * and swayed by a balloon, takes the hits of the rain, pops with a burst and shoves its neighbors
+ * aside, tilts toward an orbiting moon, is knocked as a ball rolls past, and sways and bounces with a
+ * flame or a guitar (a flame's word shimmers in its heat).
  */
 import type { PictureId } from "../../core/wordpics";
 import { randomOf, reachOf } from "./decor";
@@ -122,6 +130,10 @@ const ROUTES: Readonly<Partial<Record<PictureId, PictureRoute>>> = {
   window: "dance",
 };
 
+/** Floating pictures whose word beats with them, and rooted ones whose word shimmers in their heat. */
+const BEATS_WITH: ReadonlySet<PictureId> = new Set(["heart", "broken-heart", "lips", "music"]);
+const HEAT: ReadonlySet<PictureId> = new Set(["fire", "campfire", "candle", "lighter", "match"]);
+
 /** The way a picture that travels faces in its photo: 1 right (the default), -1 left. */
 const FACING: Readonly<Partial<Record<PictureId, -1>>> = { bird: -1, boat: -1 };
 
@@ -157,13 +169,17 @@ export interface Spot {
   w: number;
 }
 
-/** A word sung after the picture's, as it starts: when, and where it is then. */
+/** Another word of the picture's line, as it starts: which, when, and where it is then. */
 export interface Stop extends Spot {
   t: number;
+  /** its index in the line */
+  word: number;
 }
 
 export interface RouteInput {
   id: PictureId;
+  /** its word's index in the line */
+  word: number;
   /** its word's start, song ms */
   at: number;
   /** when the line's last word ends, song ms */
@@ -179,15 +195,24 @@ export interface RouteInput {
   home: Spot;
   /** the words after it, in the order they're sung */
   stops: readonly Stop[];
+  /** the word sung just before it, if any (a burst shoves it aside) */
+  prev?: Stop | null;
   /** the line's left and right ends, px */
   left: number;
   right: number;
 }
 
-/** A picture's route and its copies' (each at a scale of the picture), on the song's clock. */
+/** How word `word` of the line answers the picture: a track on its box's `translate`, `rotate` and `scale`. */
+export interface Reaction {
+  word: number;
+  track: Track;
+}
+
+/** A picture's route and its copies' (each at a scale of the picture), and the words' answers, on the song's clock. */
 export interface RoutePlan {
   track: Track;
   copies: { track: Track; scale: number }[];
+  reactions: Reaction[];
 }
 
 /** Routes are sampled this often; the compositor eases in between. */
@@ -250,6 +275,13 @@ function squash(t: number, t0: number, depth: number): [number, number] {
   return [1 + 0.16 * depth * k, 1 - 0.18 * depth * k];
 }
 
+/** squash()'s spring, `ms` after landing: across and along. */
+function squashAt(ms: number, depth: number): [number, number] {
+  if (ms < 0 || ms > 220) return [1, 1];
+  const k = Math.exp(-ms / 70) * Math.cos((ms / 220) * Math.PI * 1.5);
+  return [1 + 0.16 * depth * k, 1 - 0.18 * depth * k];
+}
+
 /** A pulse at each of `beats` (song ms): up to `peak` and back over 240 ms. */
 function pulse(t: number, beats: readonly number[], peak: number): number {
   let s = 1;
@@ -268,6 +300,88 @@ function bounce(t: number, beats: readonly number[], height: number): number {
     if (ms >= 0 && ms < 260) y = Math.min(y, -height * Math.sin((ms / 260) * Math.PI));
   }
   return y;
+}
+
+// ─────────────────────────────────────────── reactions ───────────────────────────────────────────
+
+/** A word's answer at an instant: its offset (px), turn (degrees) and squash (across, along). */
+type Push = [dx: number, dy: number, deg: number, sx: number, sy: number];
+const STILL: Push = [0, 0, 0, 1, 1];
+/** Reactions are sampled this often; keyframes are kept where a straight line would miss by more than this: x, y px, degrees, scale. */
+const REACT_MS = 1000 / 30;
+const REACT_THIN = [0.3, 0.3, 0.4, 0.006, 0.006];
+
+/** A hit at `t0` that is over in `ms`: up from 0 and back, a little front-loaded. */
+function knock(t: number, t0: number, ms: number): number {
+  const u = (t - t0) / ms;
+  return u <= 0 || u >= 1 ? 0 : Math.sin(Math.PI * u) * (1 - 0.45 * u);
+}
+
+/**
+ * Word `word`'s answer over [t0, t1], sampled and thinned like a route. It rests (no offset, no turn,
+ * no squash) at both ends, so nothing is left on the word once it is over, whatever cuts it short.
+ */
+function reactionOf(word: number, t0: number, t1: number, at: (t: number) => Push, keys: readonly number[] = []): Reaction {
+  const duration = Math.max(1, t1 - t0);
+  const extra = keys.map((t) => t - t0).filter((ms) => ms > 0 && ms < duration);
+  const times = extra.length > 0 ? [...new Set([...sampleTimes(duration, REACT_MS), ...extra])].sort((a, b) => a - b) : sampleTimes(duration, REACT_MS);
+  const samples = times.map((ms, i) => (i === 0 || i === times.length - 1 ? STILL : at(t0 + ms)));
+  const channels = REACT_THIN.map((_, c) => samples.map((s) => s[c] ?? 0));
+  const keep = thin(times, channels, REACT_THIN);
+  const points = keyPoints(times, keep, channels, null);
+  return {
+    word,
+    track: {
+      t0,
+      duration,
+      frames: framesOf(points, duration, ([dx, dy, r, a, b]) => ({
+        translate: `${num(dx ?? 0, 2)}px ${num(dy ?? 0, 2)}px`,
+        rotate: `${num(r ?? 0, 2)}deg`,
+        scale: `${num(a ?? 1, 4)} ${num(b ?? 1, 4)}`,
+      })),
+    },
+  };
+}
+
+/** Hits on words, each at its own time: one reaction per word, its hits added up. */
+function hitsOf(hits: readonly { word: number; t: number }[], ms: number, push: (h: number, t: number) => Push): Reaction[] {
+  const byWord = new Map<number, number[]>();
+  for (const h of hits) {
+    if (!Number.isFinite(h.t)) continue;
+    const list = byWord.get(h.word) ?? [];
+    list.push(h.t);
+    byWord.set(h.word, list);
+  }
+  return [...byWord].map(([word, times]) => {
+    const t0 = Math.min(...times) - REACT_MS;
+    const t1 = Math.max(...times) + ms + REACT_MS;
+    return reactionOf(word, t0, t1, (t) => {
+      const sum: Push = [0, 0, 0, 1, 1];
+      for (const at of times) {
+        const p = push(knock(t, at, ms), t - at);
+        sum[0] += p[0];
+        sum[1] += p[1];
+        sum[2] += p[2];
+        sum[3] += p[3] - 1;
+        sum[4] += p[4] - 1;
+      }
+      return sum;
+    }, times);
+  });
+}
+
+/** When something moving along x(t) from (ta, xa) to (tb, xb) passes x, or null if it doesn't between them. */
+function passes(x: number, ta: number, xa: number, tb: number, xb: number): number | null {
+  if (xb === xa) return null;
+  const u = (x - xa) / (xb - xa);
+  return u > 0 && u < 1 ? ta + u * (tb - ta) : null;
+}
+
+/** When a picture crossing the line (in from `from` at t0, over its word at `at`, out to `to` by `end`) passes each of the other words. */
+function crossings(input: RouteInput, t0: number, from: number, end: number, to: number): { word: number; t: number }[] {
+  const { at, home } = input;
+  const others = [...(input.prev ? [input.prev] : []), ...input.stops];
+  return others.map((w) => ({ word: w.word, t: passes(w.x, t0, from, at, home.x) ?? passes(w.x, at, home.x, end, to) ?? Number.NaN }));
 }
 
 /** The later words a hop lands on: each at least MIN_HOP_GAP after the last (a fast run is hopped over). */
@@ -303,16 +417,24 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
   const rest = home.y + 0.06 * L;
   if (k === 0) {
     // no motion: in on its word, out again
-    return { track: trackOf(at, end - at, (t) => [home.x, rest, 0, 1, 1, presence(t, at, end, 220, 400)]), copies: [] };
+    return { track: trackOf(at, end - at, (t) => [home.x, rest, 0, 1, 1, presence(t, at, end, 220, 400)]), copies: [], reactions: [] };
   }
+  const word = input.word;
   const rand = randomOf(seed ^ 0x51ed270b);
   const beats = input.stops.map((s) => s.t);
   const span = Math.max(input.right - input.left, home.w);
   const left = input.left;
   const right = left + span;
   switch (routeOf(id)) {
-    case "hop":
-      return { track: hop(input, k, end, rest), copies: [] };
+    case "hop": {
+      // each word squashes as the picture lands on it
+      const hits = [{ word, t: at }, ...landings(at, input.stops).map((s) => ({ word: s.word, t: s.t }))];
+      const reactions = hitsOf(hits, 300, (h, ms) => {
+        const [sx, sy] = squashAt(ms, 0.7 * k);
+        return [0, 0.08 * L * k * h, 0, sx, sy];
+      });
+      return { track: hop(input, k, end, rest), copies: [], reactions };
+    }
     case "fly": {
       const dir = FACING[id] ?? 1;
       const from = dir > 0 ? left - 1.4 * L : right + 1.4 * L;
@@ -331,6 +453,12 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [x(t), y(t), tilt, 1, 1, presence(t, t0, end, 220, 320)];
         }),
         copies: [],
+        // each word ducks and leans away as it flies over
+        reactions: hitsOf(
+          [{ word, t: at }, ...crossings(input, t0, from, end, to)].map((c) => ({ word: c.word, t: c.t - 120 })),
+          420,
+          (h) => [dir * 0.04 * L * k * h, 0.06 * L * k * h, dir * 3.5 * k * h, 1, 1],
+        ),
       };
     }
     case "launch": {
@@ -345,6 +473,14 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [home.x + shake + 0.8 * L * easeIn(u), rest - up, 14 * easeIn(u), sx, sy, presence(t, at, gone, 160, 260)];
         }),
         copies: [],
+        // its word shakes on the launch pad, is kicked up as it lifts off, and lands
+        reactions: [
+          reactionOf(word, at, lift + 820, (t) => {
+            const shake = t < lift ? 0.025 * L * Math.sin((t - at) * 0.35) * smooth((t - at) / 200) : 0;
+            const [sx, sy] = squashAt(t - (lift + 560), 0.8 * k);
+            return [shake, -0.24 * L * k * knock(t, lift, 560), 0, sx, sy];
+          }, [lift, lift + 560]),
+        ],
       };
     }
     case "drive": {
@@ -364,6 +500,12 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [x, y, r, 1, 1, presence(t, t0, end, 260, 320)];
         }),
         copies: [],
+        // each word dips under it as it passes over (a boat or a wave rocks it instead)
+        reactions: hitsOf(
+          [{ word, t: at }, ...crossings(input, t0, from, end, to)],
+          boat ? 600 : 340,
+          (h, ms) => (boat ? [0, 0.04 * L * k * h, 4 * k * h * Math.sin(ms / 95), 1, 1] : [0, 0.07 * L * k * h, -dir * 3 * k * h, 1 + 0.04 * k * h, 1 - 0.06 * k * h]),
+        ),
       };
     }
     case "float": {
@@ -378,6 +520,14 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [x, rest - 0.15 * L - rise * smooth(u), 9 * Math.sin(phase + (t - at) / 480), s, s, presence(t, at, end, 120, 520)];
         }),
         copies: [],
+        // it lifts its word as it rises, swaying it with its own sway, then lets go (a heart's word beats with it)
+        reactions: [
+          reactionOf(word, at, Math.min(end, at + 2300), (t) => {
+            const held = smooth((t - at) / 450) * (1 - smooth((t - (at + 1400)) / 800));
+            const beat = BEATS_WITH.has(id) ? 1 + (pulse(t, beats, 1.08) - 1) * held : 1;
+            return [0.06 * L * k * Math.sin(phase + (t - at) / 360) * held, -0.22 * L * k * held, 4 * k * Math.sin(phase + (t - at) / 480) * held, beat, beat];
+          }),
+        ],
       };
     }
     case "fall":
@@ -397,6 +547,14 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [home.x + rx * Math.cos(th) * pop, cy + ry * Math.sin(th) * pop, 0, s, s, presence(t, at, end, 160, 420)];
         }),
         copies: [],
+        // its word leans toward it as it goes round, a little raised
+        reactions: [
+          reactionOf(word, at, end, (t) => {
+            const th = -Math.PI / 2 + ((t - at) / lap) * Math.PI * 2;
+            const held = presence(t, at, end, 300, 420);
+            return [0, -0.04 * L * k * held, 3.5 * k * Math.cos(th) * held, 1, 1];
+          }),
+        ],
       };
     }
     case "roll": {
@@ -413,6 +571,18 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [x, rest + drop + bounce(t, beats, 0.12 * L * k) + 1.6 * L * off, deg, sx, sy, presence(t, at - 280, end, 120, 260)];
         }),
         copies: [],
+        // its word squashes as it drops on; each word after it is knocked over a little as it rolls past
+        reactions: [
+          ...hitsOf([{ word, t: at }], 300, (h, ms) => {
+            const [sx, sy] = squashAt(ms, 0.7 * k);
+            return [0, 0.06 * L * k * h, 0, sx, sy];
+          }),
+          ...hitsOf(
+            input.stops.map((s) => ({ word: s.word, t: passes(s.x, go, home.x, stop, edge) ?? Number.NaN })),
+            380,
+            (h) => [0.03 * L * k * h, -0.04 * L * k * h, 6 * k * h, 1, 1],
+          ),
+        ],
       };
     }
     case "dance": {
@@ -425,6 +595,14 @@ export function planPictureRoute(input: RouteInput): RoutePlan {
           return [home.x, rest + bounce(t, beats, 0.2 * L * k), 7 * k * Math.sin(phase + (t - at) / 300), s, s, presence(t, at, end, 100, 420)];
         }),
         copies: [],
+        // its word sways and bounces along with it; a flame's word shimmers in its heat
+        reactions: [
+          reactionOf(word, at, end, (t) => {
+            const held = presence(t, at, end, 200, 420);
+            const heat = HEAT.has(id) ? 0.022 * k * Math.sin((t - at) / 37) * Math.sin((t - at) / 91 + 1) * held : 0;
+            return [0, bounce(t, beats, 0.06 * L * k) * held, 2.4 * k * Math.sin(phase + (t - at) / 300) * held, 1 - heat / 2, 1 + heat];
+          }),
+        ],
       };
     }
   }
@@ -491,6 +669,9 @@ function fall(input: RouteInput, k: number, end: number, rest: number, left: num
   });
   const n = COPIES[id] ?? 0;
   const copies: RoutePlan["copies"] = [];
+  // the words take the hits: its own as the picture comes down on it, and whichever word each copy falls on
+  const words: Stop[] = [{ ...home, t: at, word: input.word }, ...(input.prev ? [input.prev] : []), ...input.stops];
+  const hits: { word: number; t: number }[] = [{ word: input.word, t: at }];
   for (let c = 0; c < n; c++) {
     const x0 = left + (right - left) * ((c + 0.2 + 0.6 * rand()) / n);
     const start = at - 200 + 1700 * rand();
@@ -498,6 +679,8 @@ function fall(input: RouteInput, k: number, end: number, rest: number, left: num
     const fallFor = ((2.4 + 0.6 * rand()) * L * 1000) / (speed * L);
     const top = rest - (1.8 + 0.8 * rand()) * L;
     const ph = rand() * Math.PI * 2;
+    const under = words.find((w) => Math.abs(w.x - x0) <= w.w / 2);
+    if (under) hits.push({ word: under.word, t: start + ((rest - top) / (3 * L)) * fallFor });
     copies.push({
       scale,
       track: trackOf(start, fallFor, (t) => {
@@ -507,12 +690,14 @@ function fall(input: RouteInput, k: number, end: number, rest: number, left: num
       }),
     });
   }
-  return { track, copies };
+  const weight = id === "rain" || id === "tear" || id === "money" ? 1 : 0.5;
+  const reactions = hitsOf(hits, 260, (h) => [0, 0.05 * L * k * weight * h, 0, 1 + 0.03 * k * weight * h, 1 - 0.05 * k * weight * h]);
+  return { track, copies, reactions };
 }
 
 /** A star, fireworks, a diamond: pops in big and spinning, throws small copies out around the word, hovers and rises away. */
 function burst(input: RouteInput, k: number, end: number, rest: number, rand: () => number): RoutePlan {
-  const { id, at, home, size: L, stops } = input;
+  const { id, at, home, size: L, stops, word } = input;
   const spin = id === "star" || id === "diamond" || id === "sparkler" || id === "fireworks" ? 360 : 0;
   const beats = stops.map((s) => s.t);
   const track = trackOf(at, end - at, (t) => {
@@ -541,5 +726,22 @@ function burst(input: RouteInput, k: number, end: number, rest: number, rand: ()
       }),
     });
   }
-  return { track, copies };
+  // its word pops with the burst (lightning shakes it), and the words either side are shoved apart
+  const shock = id === "lightning";
+  const reactions: Reaction[] = [
+    reactionOf(word, at, at + 560, (t) => {
+      const pop = 1 + 0.16 * k * knock(t, at, 480);
+      const shake = shock ? 0.03 * L * Math.sin((t - at) * 0.9) * (1 - smooth((t - at) / 380)) : 0;
+      return [shake, -0.04 * L * k * knock(t, at, 480), 0, pop, pop];
+    }),
+  ];
+  const shove = (side: Stop, dir: number): Reaction =>
+    reactionOf(side.word, at, at + 620, (t) => {
+      const h = knock(t, at + 30, 560);
+      return [dir * 0.12 * L * k * h, 0, dir * 3 * k * h, 1, 1];
+    });
+  if (input.prev) reactions.push(shove(input.prev, -1));
+  const next = stops[0];
+  if (next) reactions.push(shove(next, 1));
+  return { track, copies, reactions };
 }

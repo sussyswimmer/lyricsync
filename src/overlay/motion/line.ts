@@ -244,6 +244,8 @@ export class KaraokeLine {
   private readonly group: string;
   /** the extras' animations: each on its own window, kept apart from the line's shared one */
   private readonly extrasGroup: string;
+  /** The words' answers to the line's picture (routes.ts reactions): cancelled, never frozen, as a sung line leaves focus. */
+  private readonly reactGroup: string;
   private readonly look: KaraokeLook;
   private readonly steps: boolean;
   private measure: Measure | null = null;
@@ -266,6 +268,7 @@ export class KaraokeLine {
     this.timeline = timeline;
     this.group = group;
     this.extrasGroup = `${group}+fx`;
+    this.reactGroup = `${group}+react`;
     this.look = look;
     this.steps = look.steps ?? compositorSteps();
     const last = words.length - 1;
@@ -356,6 +359,7 @@ export class KaraokeLine {
     this.stopSlices();
     this.timeline.cancel(this.group);
     this.timeline.cancel(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     this.mountedAt = t;
     const { params } = this.look;
     const origin = Math.min(t, this.views[0]?.word.start ?? t);
@@ -386,8 +390,10 @@ export class KaraokeLine {
    */
   finish(): void {
     this.stopSlices();
-    // the extras stop where they are, and fade out with the overlay
+    // the extras stop where they are, and fade out with the overlay; the words straighten up, since a
+    // sung line may stay on screen (Stack and Drift's past lines)
     this.timeline.freeze(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     this.timeline.cancel(this.group);
     for (const v of this.views) {
       if (v.ov) this.finalStyle(v, v.ov);
@@ -417,6 +423,7 @@ export class KaraokeLine {
     this.stopSlices();
     this.timeline.freeze(this.group);
     this.timeline.freeze(this.extrasGroup);
+    this.timeline.freeze(this.reactGroup);
     for (const f of this.fades.splice(0)) commit(f.anim, f.el);
   }
 
@@ -426,6 +433,7 @@ export class KaraokeLine {
     this.destroyed = true;
     this.timeline.cancel(this.group);
     this.timeline.cancel(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     for (const f of this.fades.splice(0)) {
       try {
         f.anim.cancel();
@@ -566,6 +574,11 @@ export class KaraokeLine {
           const copy = plan.copies[i];
           if (copy) start(el, copy.track);
         });
+        // the words the picture touches answer it, on their boxes' own translate, rotate and scale
+        for (const r of plan.reactions) {
+          const el = this.views[r.word]?.el;
+          if (el && r.track.t0 + r.track.duration > this.mountedAt) this.timeline.play(el, r.track.frames, r.track.t0, r.track.duration, this.reactGroup);
+        }
       }
     }
     if (x.pic && x.picLife) start(x.pic, x.picLife);
@@ -890,6 +903,7 @@ export class KaraokeLine {
     const home = layoutless ? { x: 0, y: 0, w: 0 } : this.spotOf(v.index, at);
     if (!home) return null;
     const stops: Stop[] = [];
+    let prev: Stop | null = null;
     let left = home.x - home.w / 2;
     let right = home.x + home.w / 2;
     if (!layoutless) {
@@ -898,11 +912,13 @@ export class KaraokeLine {
         if (!spot) continue;
         left = Math.min(left, spot.x - spot.w / 2);
         right = Math.max(right, spot.x + spot.w / 2);
-        if (other.index > v.index) stops.push({ ...spot, t: other.word.start });
+        if (other.index > v.index) stops.push({ ...spot, t: other.word.start, word: other.index });
+        if (other.index === v.index - 1) prev = { ...spot, t: other.word.start, word: other.index };
       }
     }
     return planPictureRoute({
       id,
+      word: v.index,
       at,
       until: this.sungBy,
       side: this.sideOf(v),
@@ -911,6 +927,7 @@ export class KaraokeLine {
       seed: seedOf(`${v.index}|${v.text}|${Math.round(at)}`),
       home,
       stops,
+      prev,
       left,
       right,
     });

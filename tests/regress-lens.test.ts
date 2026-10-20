@@ -475,8 +475,10 @@ describe("Lens on the motion engine: sleeping between line changes", () => {
       expect(a?.currentTime).toBeCloseTo(2000 - (LINES[0]?.words[0]?.start ?? 0), 6);
       expect(Object.keys(a?.keyframes[0] ?? {})).toEqual(expect.arrayContaining(["transform", "opacity"]));
     }
-    // the karaoke shares it: every word box pops in the same window
-    for (const w of wordsOf(row())) for (const a of w.getAnimations()) expect(a.duration).toBe(span);
+    // the karaoke shares it: every word box pops in the same window (a word's answer to the line's
+    // picture, on its translate, rotate and scale, keeps its own: routes.ts reactions)
+    const reacting = (a: { keyframes: Keyframe[] }): boolean => a.keyframes.some((f) => "translate" in f);
+    for (const w of wordsOf(row())) for (const a of w.getAnimations()) if (!reacting(a)) expect(a.duration).toBe(span);
     // each word box sits in its slot, which carries the lens around it
     for (const s of slots) expect(s.children[0]?.classList.contains("kw")).toBe(true);
   });
@@ -672,12 +674,20 @@ describe("Lens on the motion engine: line changes", () => {
     const origin = LINES[0]?.words[0]?.start ?? 0;
     const pictured = LINES[0]?.words.find((w) => w.text.startsWith("lanterns"))?.start ?? NaN;
     const ownWindow = (e: FakeElement): boolean => ["kw-route", "kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
+    // the words' answers to the picture run on windows of their own, paused alike
+    const reacting = (a: { keyframes: Keyframe[] }): boolean => a.keyframes.some((f) => "translate" in f);
+    let answers = 0;
     for (const e of els) {
       for (const a of e.getAnimations()) {
         expect(a.paused).toBe(true);
+        if (reacting(a)) {
+          answers++;
+          continue;
+        }
         expect(a.currentTime).toBeCloseTo(2100 - (ownWindow(e) ? pictured : origin), 6);
       }
     }
+    expect(answers).toBeGreaterThan(0);
     expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(true);
     expect(els.some((e) => e.classList.contains("kw-route"))).toBe(true);
     expect(els.some((e) => e.classList.contains("kw-aura"))).toBe(true);

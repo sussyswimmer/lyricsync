@@ -26,9 +26,9 @@ function poseAt(track: Track, t: number): { x: number; y: number; opacity: numbe
 const L = 58;
 /** A line of five words 120 px apart, sung 450 ms apart from 10 s; the picture on word `i`. */
 function input(id: PictureId, i = 1, amp = 1): RouteInput {
-  const spots = [0, 1, 2, 3, 4].map((j) => ({ x: 60 + 120 * j, y: 100, w: 100, t: 10_000 + 450 * j }));
+  const spots: Stop[] = [0, 1, 2, 3, 4].map((j) => ({ x: 60 + 120 * j, y: 100, w: 100, t: 10_000 + 450 * j, word: j }));
   const home = spots[i] as Stop;
-  return { id, at: home.t, until: 12_200, side: L, size: L, amp, seed: 7, home, stops: spots.slice(i + 1), left: 10, right: 590 };
+  return { id, word: i, at: home.t, until: 12_200, side: L, size: L, amp, seed: 7, home, stops: spots.slice(i + 1), prev: spots[i - 1] ?? null, left: 10, right: 590 };
 }
 
 function wellFormed(track: Track): void {
@@ -141,5 +141,108 @@ describe("picture routes (routes.ts)", () => {
     expect(planPictureRoute({ ...input("dance" as PictureId), until: 10_500 }).track.duration).toBeGreaterThanOrEqual(2600);
     const long = planPictureRoute({ ...input("candle"), until: 40_000 });
     expect(long.track.t0 + long.track.duration).toBe(10_450 + 9000);
+  });
+});
+
+/** A reaction's pose at song time `t`: translate, rotate and scale as numbers, linear between keyframes (rest outside). */
+function pushAt(track: Track, t: number): { dx: number; dy: number; deg: number; sx: number; sy: number } {
+  const read = (f: Keyframe): number[] => {
+    const [dx = 0, dy = 0] = String(f.translate).split(" ").map((v) => Number.parseFloat(v));
+    const [sx = 1, sy = 1] = String(f.scale).split(" ").map(Number);
+    return [dx, dy, Number.parseFloat(String(f.rotate)), sx, sy];
+  };
+  const u = (t - track.t0) / track.duration;
+  if (u <= 0 || u >= 1) return { dx: 0, dy: 0, deg: 0, sx: 1, sy: 1 };
+  const frames = track.frames;
+  let i = 0;
+  while (i + 1 < frames.length && Number(frames[i + 1]?.offset) <= u) i++;
+  const a = read(frames[i] as Keyframe);
+  const next = frames[i + 1];
+  const b = next ? read(next) : a;
+  const o0 = Number(frames[i]?.offset);
+  const o1 = next ? Number(next.offset) : o0;
+  const p = o1 > o0 ? (u - o0) / (o1 - o0) : 0;
+  const v = a.map((x, c) => x + ((b[c] ?? x) - x) * p);
+  return { dx: v[0] ?? 0, dy: v[1] ?? 0, deg: v[2] ?? 0, sx: v[3] ?? 1, sy: v[4] ?? 1 };
+}
+
+/** The most a reaction moves its word over its window: offset (px), turn (degrees), squash. */
+function reach(track: Track): { move: number; turn: number; squash: number } {
+  let move = 0;
+  let turn = 0;
+  let squash = 0;
+  for (let t = track.t0; t <= track.t0 + track.duration; t += 10) {
+    const p = pushAt(track, t);
+    move = Math.max(move, Math.hypot(p.dx, p.dy));
+    turn = Math.max(turn, Math.abs(p.deg));
+    squash = Math.max(squash, Math.abs(p.sx - 1), Math.abs(p.sy - 1));
+  }
+  return { move, turn, squash };
+}
+
+describe("the words answer the picture (reactions)", () => {
+  it("every picture moves at least its own word, and every reaction starts and ends at rest", () => {
+    for (const id of PICTURE_IDS) {
+      const plan = planPictureRoute(input(id));
+      expect(plan.reactions.length, id).toBeGreaterThan(0);
+      for (const r of plan.reactions) {
+        const first = r.track.frames[0];
+        const last = r.track.frames[r.track.frames.length - 1];
+        for (const f of [first, last]) {
+          expect(f?.translate, id).toBe("0px 0px");
+          expect(f?.rotate, id).toBe("0deg");
+          expect(f?.scale, id).toBe("1 1");
+        }
+        expect([0, 1, 2, 3, 4], id).toContain(r.word);
+        // a nudge, never a shove off the line
+        const most = reach(r.track);
+        expect(most.move, id).toBeLessThan(0.3 * L);
+        expect(most.turn, id).toBeLessThan(8);
+        expect(most.squash, id).toBeLessThan(0.2);
+      }
+      expect(new Set(plan.reactions.map((r) => r.word)).size, `${id}: one reaction a word`).toBe(plan.reactions.length);
+    }
+  });
+
+  it("a hopping picture squashes each word it lands on, as it lands", () => {
+    const plan = planPictureRoute(input("wine"));
+    const own = plan.reactions.find((r) => r.word === 1);
+    expect(own).toBeDefined();
+    expect(pushAt(own?.track as Track, 10_450 + 90).dy).toBeGreaterThan(0.03 * L);
+    // and the words after it, each at its own start
+    const third = plan.reactions.find((r) => r.word === 3);
+    expect(pushAt(third?.track as Track, 10_000 + 3 * 450 - 30).dy).toBeCloseTo(0, 6);
+    expect(pushAt(third?.track as Track, 10_000 + 3 * 450 + 90).dy).toBeGreaterThan(0.03 * L);
+  });
+
+  it("a balloon lifts its word and lets go; a rocket kicks its word up as it lifts off", () => {
+    const balloon = planPictureRoute(input("balloon")).reactions.find((r) => r.word === 1)?.track as Track;
+    expect(pushAt(balloon, 10_450 + 900).dy).toBeLessThan(-0.1 * L);
+    expect(pushAt(balloon, 10_450 + 2290).dy).toBeGreaterThan(-0.02 * L);
+    const rocket = planPictureRoute(input("rocket")).reactions.find((r) => r.word === 1)?.track as Track;
+    expect(pushAt(rocket, 10_450 + 650 + 240).dy).toBeLessThan(-0.15 * L);
+    expect(Math.abs(pushAt(rocket, 10_450 + 300).dx)).toBeGreaterThan(0);
+  });
+
+  it("a burst pops its word and shoves the words either side apart", () => {
+    const plan = planPictureRoute(input("star", 2));
+    const own = plan.reactions.find((r) => r.word === 2)?.track as Track;
+    expect(pushAt(own, 10_900 + 200).sx).toBeGreaterThan(1.05);
+    const left = plan.reactions.find((r) => r.word === 1)?.track as Track;
+    const right = plan.reactions.find((r) => r.word === 3)?.track as Track;
+    expect(pushAt(left, 10_900 + 250).dx).toBeLessThan(-2);
+    expect(pushAt(right, 10_900 + 250).dx).toBeGreaterThan(2);
+  });
+
+  it("a car dips the words it drives over, a bird ducks them, rain hits them", () => {
+    for (const id of ["car", "bird", "rain"] as const) {
+      const plan = planPictureRoute(input(id));
+      const touched = plan.reactions.filter((r) => reach(r.track).move > 0.02 * L);
+      expect(touched.length, id).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("asks nothing of the words without motion", () => {
+    for (const id of PICTURE_IDS) expect(planPictureRoute(input(id, 1, 0)).reactions, id).toEqual([]);
   });
 });
