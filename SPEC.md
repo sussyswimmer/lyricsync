@@ -6,9 +6,11 @@ Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex rea
 
 A desktop app for **macOS and Windows** that shows the synced lyrics of whatever is playing on the **desktop layer**. That layer is above the wallpaper and below desktop icons and every window. The user can still drag folders and windows over it, and clicks pass straight through.
 
-- Highlights word by word as the song plays.
-- Default colors come from the album cover. The user can override every color.
-- Fully customizable: style (Arc / Lens / Drift / Stack), font, size, curve, height, glow, opacity.
+- Highlights word by word as the song plays, and the words move as they're sung. Lyrics timed by line only (no word tags) are swept word by word at the pace the song is sung around each line (`core/timing.ts` singingPace, paceWords), so a pause after a line doesn't slow the sweep.
+- A look picked for each song: the style (Arc / Lens / Drift / Stack / Poster / Spotlight), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
+- Default colors come from the album cover: its most vivid color highlights, its overall tone tints the lyrics and the other lines, and gray covers get grays (`core/palette.ts`). The sung letters are filled with a gradient from the highlight into the cover's other main color (`Palette.accent`: the heaviest hue at least 40° away, a muted one counting by its area; `--ut-hl2`, `background-clip: text` in `stage.css`), or into the highlight's neighbor on the color wheel (`accentFor`). The user can override every color.
+- Always in the middle of the screen, clear of the menu bar, Dock and taskbar. Customizable: size, effects (how much the words move), glow, opacity and colors.
+- Effects mode (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop), its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable bring a bundled picture into the line that moves with the song: it hops word to word, flies or drives across, floats, falls, bursts, orbits, rolls or dances (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`, `src/overlay/motion/routes.ts`).
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
@@ -76,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v3 today: `contract/contract.ts` is authoritative, and v2 and v3 below only add to v1.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v7 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5 and v7 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts
@@ -155,11 +157,11 @@ export const DEFAULT_SETTINGS: Settings = {
 | Command | Returns |
 |---|---|
 | `get_settings()` | `Settings` |
-| `update_settings(patch: Partial<Settings>)` | `Settings`. Each field is validated and clamped on its own, and an invalid value keeps the current one. A partial `colors`, `font` or `shortcuts` changes only the keys it has; `trackOffsetsMs` replaces the whole map. |
+| `update_settings(patch: Partial<Settings>)` | `Settings`. Each field is validated and clamped on its own, and an invalid value keeps the current one. A partial `colors`, `font` or `shortcuts` changes only the keys it has; `trackOffsetsMs` and `nudgedTracks` replace the whole map and list. |
 | `get_now_playing()` | `NowPlaying \| null` |
 | `get_lyrics(trackKey: string)` | `Lyrics` |
 | `refetch_lyrics(trackKey: string)` | `()` (bypasses the cache; result arrives on the `lyrics` event) |
-| `set_track_offset(trackKey: string, ms: number)` | `Settings` (`ms` clamped to ±2000; 0 removes the song's entry) |
+| `set_track_offset(trackKey: string, ms: number \| null)` | `Settings` (`ms` clamped to ±2000 and kept, 0 included, and the song becomes the newest of `nudgedTracks`; `null` removes the song's entry and its place, since v7) |
 | `open_settings()` / `quit()` | `()` |
 
 **Contract v2 (additive, 2026-10-06).** `CONTRACT_VERSION = 2`. Nothing above changed; `Settings.version` stays 1.
@@ -210,6 +212,57 @@ shortcuts: Shortcuts;    // defaults: CmdOrCtrl+Alt+Shift+L / ] / [
 | `suspend_shortcuts(suspended: boolean)` | `()` | Settings suspends the global shortcuts while it records a new one, so the old binding doesn't swallow the keys. Rust resumes on `false`, after 30 s, or when Settings hides, is minimized or loses focus. |
 
 `enabled` replaces the tray's runtime-only "Hide lyrics" state: the tray item, the toggle shortcut and the Settings switch all change it, and it persists. `launchAtLogin` changes the login item in the same update (a failure keeps the old value and returns an error). Rust adopts the login item's real state at startup, whenever Settings opens and when the pointer enters the tray icon, and emits `settings-changed` when it differs. On macOS that state includes System Settings' **Allow in the Background** (`login_item.rs`): turning the item on while it is off there fails, and System Settings opens at Login Items. Invalid or duplicate shortcut bindings keep their current value, like every other field. **Reset to defaults** in Settings resets the shortcuts but keeps `enabled` and `launchAtLogin`.
+
+**Contract v4 (additive, 2026-10-18).** `CONTRACT_VERSION = 4`. `Settings.version` stays 1; stored settings without `effects` read as 50. No event or command changed.
+
+```ts
+// Settings gains:
+/** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. */
+effects: number;         // default 50
+
+// Still validated and stored, but not read since v4:
+mode: Mode;                                 // Undertone picks the style per song
+font: { family: string; weight: number };   // the face is picked per song
+curve: number;                              // Arc's curve is picked per song
+
+// Still read, with a new meaning:
+/** 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest) and
+ *  softens the dark shadow. */
+glow: number;
+```
+
+Undertone picks each song's look itself: the style, the face, Arc's curve and the motion's character, from the lyrics and their timing, the title and the cover (`src/core/songlook.ts`). The user scales it with Size, **Effects** and Glow, and doesn't choose it. Settings' Effects slider and the tray's **Effects ▸** Calm (20) / Balanced (50) / Lively (85) both write `effects` through `update_settings`. For QA, `--look=<style>[,<family>[,<curve>]]` on the app's command line and `?look=` on the overlay page force a look; neither is ever stored.
+
+**Contract v5 (additive, 2026-10-19).** `CONTRACT_VERSION = 5`. `Settings.version` stays 1; stored settings without `effectsMode` read as `true`. No event or command changed.
+
+```ts
+// Settings gains:
+/** Effects mode: each song moves its own way, big moments splash, and words that name something
+ *  get a tiny picture. false: every word rises, nothing else is added. */
+effectsMode: boolean;    // default true
+```
+
+Effects mode adds a **flair** to each song's picked look (`SongLook.flair`, chosen in `src/core/songlook.ts` from the same features as the rest of the look, plus what the lyrics mention): a `move` for most lines and an `accent` move for the hooks (lines sung more than once), each one of `rise` (the v4 motion), `bounce`, `sway`, `wave`, `pulse` or `drop` (`overlay/motion/params.ts` moveTuning), and a `splash` of `drops`, `sparks`, `confetti`, `ripple` or `glints`. `core/flair.ts` plans each line's decor: a splash on a held note, a hook's last word or a shouted line's (at most one a line, 5 s apart), and the pictures `core/wordpics.ts` matches (140 realistic pictures, each called by its own list of English words and phrases; one a line at most, 4 s apart, the same one 20 s apart). The pictures are bundled WebP files in `src/overlay/pictures/`, made once with Higgsfield. Each takes part in its line (`overlay/motion/routes.ts`): it hops from word to word as each is sung, flies or drives across, lifts off, floats up, falls with copies, bursts into copies, orbits, rolls off the end or dances on its word, from where the line's words are (the line's host element; modes that place words with transforms say where, KaraokeLook.spot), in the line's own picture layers (`.kw-pics`), until the line is sung (2.6 to 9 s). Some also live while they show (`overlay/motion/decor.ts` planPictureLife): a flame flickers in its own glow and a big one throws embers, a lamp or the sun or moon glows, a star twinkles, a heart beats, wings flap. Extras run on transform and opacity on the song timeline, each on its own window (`overlay/motion/line.ts`); none in the lite tier or for unsynced lyrics; without motion, pictures only fade and nothing splashes. Settings › Look's **Effects mode** switch and the tray's **Effects ▸ Effects mode** write `effectsMode`. For QA, `?flair=move[,accent[,splash]]` on the overlay page forces a flair; it is never stored.
+
+**Contract v6 (2026-10-19).** `CONTRACT_VERSION = 6`. Nothing added or removed; `Settings.version` stays 1. No event or command changed.
+
+```ts
+// Still validated and stored, but not read since v6:
+yPos: number;            // the lyrics always sit in the middle of the display's work area
+```
+
+The current line is centered on the overlay, which covers the display's work area: on macOS the screen below the menu bar and clear of the Dock, on Windows the monitor without the taskbar. In Arc the song's widest line is centered, its middle as far above the middle of the overlay as its ends below (`arcGeometry`'s `extent`), and shorter lines share its middle; in Lens the line coming next hangs below the centered one. Settings has no Height slider; Size sets how large the lyrics are.
+
+**Contract v7 (additive, 2026-10-20).** `CONTRACT_VERSION = 7`. `Settings.version` stays 1; stored settings without `nudgedTracks` read as `[]`. `set_track_offset` also takes `ms: null`.
+
+```ts
+// Settings gains:
+/** The songs whose sync was set most recently, oldest first, at most 9. */
+nudgedTracks: string[];  // default []
+// and trackOffsetsMs keeps a 0: it is a song's own offset now
+```
+
+**Learned sync.** A song you nudge keeps its own offset; any other song starts from what the songs you nudged last have in common (`src/core/sync.ts` `learnedOffsetMs`, `settings.rs` `learned_offset_ms`, the same rule): the middle of their own offsets, from two songs on, and with an even number the middle value nearer 0. So a correction you would make for every song (headphones that play late, say) is made once or twice, and one song with badly timed lyrics doesn't pull the others. A song's sync is `globalOffsetMs` plus its own offset or, without one, the learned one. "Reset this song" (`ms: null`) drops its own offset and its place among the nudged songs; Reset to defaults with "Also clear sync" empties both.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

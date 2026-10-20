@@ -1,12 +1,15 @@
-import { DEFAULT_SETTINGS, type Mode, type Settings } from "../../contract/contract";
+import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 import type { Line } from "../core/lrc";
 import type { Palette } from "../core/palette";
 import { lineAt, type Timeline } from "../core/timing";
 import { h } from "./dom";
 import { cjkLang, fontFor, loadFont, type CjkLang } from "./fonts";
-import { resolveLook, type Look } from "./look";
+import { DEFAULT_PICK, resolveLook, type Look, type PickedLook } from "./look";
 import { createMode } from "./modes";
 import type { Cue, ModeRenderer } from "./modes/types";
+import { LEAD_MS } from "./motion/params";
+import { detectPower, type Power } from "./motion/power";
+import { untilNext } from "./motion/schedule";
 import { LOADING_DELAY_MS, SCENE_FADE_IN_MS, SCENE_FADE_OUT_MS, buildState, type StateKind } from "./states";
 import "../styles/stage.css";
 
@@ -28,6 +31,8 @@ const LINE_IN_DELAY_MS = 80;
  * when the LRC has no empty stamp marking a long instrumental break.
  */
 export const LINGER_MS = 2500;
+/** A rest between two lines at least this long is a break: a safe point for a look refinement. */
+export const SAFE_BREAK_MS = 2000;
 
 /** Lyric lines (gaps dropped) plus what the stage needs to place a time on them quickly. */
 interface CueMap {
@@ -39,6 +44,12 @@ interface CueMap {
   nextLyric: number[];
   /** every time something visible changes (word starts and ends, line starts, linger ends), sorted */
   boundaries: number[];
+  /** the same without word starts and ends, for modes that draw words on their own (wordWakes false) */
+  lineBoundaries: number[];
+  /** rests of SAFE_BREAK_MS or more between lines: from a line's last word to the next line's start, sorted */
+  breaks: { start: number; end: number }[];
+  /** their start times */
+  breakStarts: number[];
   unsynced: boolean;
 }
 
@@ -54,18 +65,43 @@ export function cueMap(timeline: Timeline): CueMap {
     if (li >= 0) next = li;
   }
   const times = new Set<number>();
-  for (const line of all) {
+  const lineTimes = new Set<number>();
+  const breaks: { start: number; end: number }[] = [];
+  all.forEach((line, i) => {
     times.add(line.start);
+    lineTimes.add(line.start);
     // Unsynced lyrics draw no per-word change and never linger: only line starts matter.
-    if (timeline.unsynced) continue;
+    if (timeline.unsynced) return;
     for (const w of line.words) {
       times.add(w.start);
       times.add(w.end);
     }
     const last = line.words[line.words.length - 1];
-    if (last) times.add(last.end + LINGER_MS);
-  }
-  return { all, lyrics, lyricOf, nextLyric, boundaries: [...times].sort((a, b) => a - b), unsynced: timeline.unsynced };
+    const li = lyricOf[i] ?? -1;
+    if (!last || li < 0) return;
+    // The linger hands over to the next line only while this line is still the one playing: before
+    // the next stamp (a line or an empty gap stamp), and only when there is a next lyric line.
+    const nextStamp = all[i + 1]?.start ?? Infinity;
+    if (li + 1 < lyrics.length && last.end + LINGER_MS < nextStamp) {
+      times.add(last.end + LINGER_MS);
+      lineTimes.add(last.end + LINGER_MS);
+    }
+    const nextLine = lyrics[li + 1];
+    if (nextLine && nextLine.start - last.end >= SAFE_BREAK_MS) breaks.push({ start: last.end, end: nextLine.start });
+  });
+  const sorted = (set: Set<number>): number[] => [...set].sort((a, b) => a - b);
+  breaks.sort((a, b) => a.start - b.start);
+  return {
+    all,
+    lyrics,
+    lyricOf,
+    nextLyric,
+    boundaries: sorted(times),
+    lineBoundaries: sorted(lineTimes),
+    breaks,
+    breakStarts: breaks.map((b) => b.start),
+    unsynced: timeline.unsynced,
+  };
 }
 
 /** Which line is in focus at `t`, and whether it is still waiting to start. */
@@ -87,8 +123,8 @@ export function cueAt(map: CueMap, t: number): Omit<Cue, "running"> {
  * Time from `t` to the next visible change, in ms (Infinity when nothing else will change). Every
  * span is [start, end): a boundary at exactly `t` has already happened, as `wordState` paints it.
  */
-export function untilNextChange(map: CueMap, t: number): number {
-  const b = map.boundaries;
+export function untilNextChange(map: CueMap, t: number, words = true): number {
+  const b = words ? map.boundaries : map.lineBoundaries;
   let lo = 0;
   let hi = b.length;
   while (lo < hi) {
@@ -101,8 +137,8 @@ export function untilNextChange(map: CueMap, t: number): number {
 }
 
 /** Whether `t` is exactly one of the map's boundaries. */
-function onBoundary(map: CueMap, t: number): boolean {
-  const b = map.boundaries;
+function onBoundary(map: CueMap, t: number, words = true): boolean {
+  const b = words ? map.boundaries : map.lineBoundaries;
   let lo = 0;
   let hi = b.length;
   while (lo < hi) {
@@ -135,7 +171,17 @@ export interface StageOptions {
   referenceHeight?: number | (() => number);
   /** Called when the stage needs a fresh frame on its own (fonts loaded, resized, motion preference flipped). */
   onInvalidate?: () => void;
+  /**
+   * Called at a moment a look change can crossfade in without breaking a line in the middle (SPEC
+   * §4.6): a lyrics scene's first paint before its first line, every focus-line change, and the start
+   * of a break of SAFE_BREAK_MS or more. `atSafePoint` answers the same question at any time.
+   * `addSafePointListener` hears the same moments (an OverlayController listens that way).
+   */
+  onSafePoint?: () => void;
 }
+
+/** How setPickedLook brings a new look in: at once, or crossfading the scene (freeze, copy, rebuild). */
+export type LookChange = "now" | "crossfade";
 
 const now = (): number => (typeof performance === "undefined" ? Date.now() : performance.now());
 
@@ -143,12 +189,17 @@ const reducedMotion = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
- * What a look change means for a mode: `shape` (fonts, sizes, placement, motion) needs a rebuild,
- * `paint` (colors, glow) only a restyle. Opacity is neither: the stage root applies it.
+ * What a look change means for a mode (SPEC §2.7): `shape` (the style, face, sizes, placement,
+ * curve, letter-spacing, case, motion, power, unsynced, dpr, emphasis) needs a rebuild; `paint` (the
+ * colors, glow and bloom, and the motion's energy, snap and Effects) only a restyle, which re-plans
+ * the focus line when the motion changed. Opacity is neither: the stage root applies it. `mode`
+ * replaces the look's style (callers from before the style was part of the look).
  */
-export function lookKeys(look: Look, mode: Mode): { shape: string; paint: string } {
-  const { colors, glow, opacity, ...shape } = look;
-  return { shape: JSON.stringify([shape, mode]), paint: JSON.stringify([colors, glow]) };
+export function lookKeys(look: Look, mode = look.style): { shape: string; paint: string } {
+  const { colors, glow, bloom, energy, snap, effects, opacity, style, ...shape } = look;
+  void opacity;
+  void style;
+  return { shape: JSON.stringify([shape, mode]), paint: JSON.stringify([colors, glow, bloom, energy, snap, effects]) };
 }
 
 /** An element's opacity as drawn right now, running fades included. */
@@ -166,17 +217,20 @@ function stopFades(el: HTMLElement): void {
 
 /**
  * The lyric stage: one per overlay window, and a small one in the settings preview. Owns the DOM,
- * the current mode, song-to-song fades and per-line crossfades. Knows nothing about the bridge or
- * the clock: the controller hands it views and positions.
+ * the current mode, song-to-song fades and per-line crossfades, and the picked look it draws with.
+ * Knows nothing about the bridge or the clock: the controller hands it views, looks and positions.
  */
 export class LyricStage {
   private readonly host: HTMLElement;
   private readonly root: HTMLDivElement;
   private readonly options: StageOptions;
+  private readonly power: Power;
   private settings: Settings = structuredClone(DEFAULT_SETTINGS);
   private palette: Palette | null = null;
+  private picked: PickedLook = DEFAULT_PICK;
   private scene: Scene | null = null;
   private lastCue: Cue | null = null;
+  private lastT = Number.NaN;
   private shapeKey = "";
   private paintKey = "";
   private paused = false;
@@ -186,6 +240,9 @@ export class LyricStage {
   private clearAt = 0;
   private fontKey = "";
   private fontTimer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
+  /** addSafePointListener's listeners, on top of StageOptions.onSafePoint */
+  private readonly safeListeners = new Set<() => void>();
   private readonly resize: ResizeObserver | null;
   private readonly motionQuery: MediaQueryList | null;
   private readonly onMotion = (): void => this.rebuild();
@@ -207,6 +264,7 @@ export class LyricStage {
   constructor(host: HTMLElement, options: StageOptions = {}) {
     this.host = host;
     this.options = options;
+    this.power = detectPower();
     host.classList.add("ut-stage");
     this.root = h("div", "ut-root");
     host.append(this.root);
@@ -221,15 +279,7 @@ export class LyricStage {
   setSettings(settings: Settings): void {
     this.settings = settings;
     this.root.style.opacity = String(settings.opacity / 100);
-    const fontKey = `${settings.font.family}/${settings.font.weight}`;
-    if (fontKey !== this.fontKey) {
-      // Measured layouts (lens, arc fitting, wrapped drift rows) need the real face, including the
-      // first one: build again once it's in.
-      this.fontKey = fontKey;
-      void loadFont(fontFor(settings.font.family), settings.font.weight).then(() => {
-        if (this.fontKey === fontKey) this.rebuild(true);
-      });
-    }
+    this.loadFace();
     this.rebuild();
   }
 
@@ -238,14 +288,54 @@ export class LyricStage {
     if (this.settings.autoColor) this.rebuild();
   }
 
+  /** The look the stage draws with: the song's pick (DEFAULT_PICK until one is set). */
+  get pickedLook(): PickedLook {
+    return this.picked;
+  }
+
+  /**
+   * Draws with `look` (null: DEFAULT_PICK) from now on. A change of shape (the style, face, size...)
+   * rebuilds the scene: at once, or with "crossfade" behind a still copy of what was on screen that
+   * fades out (freeze, copy, rebuild). Colors, glow and the motion's character only restyle. Only
+   * lyrics crossfade: a state rebuilds where its animation was (buildState), since a copy of it would
+   * start its animation over (a chip that had faded out would show again as the copy fades).
+   */
+  setPickedLook(look: PickedLook | null, how: LookChange = "now"): void {
+    const next = look ?? DEFAULT_PICK;
+    if (JSON.stringify(next) === JSON.stringify(this.picked)) return;
+    this.picked = next;
+    this.loadFace();
+    const scene = this.scene;
+    if (how === "crossfade" && scene && scene.view.kind === "lyrics") {
+      const fresh = this.look(scene);
+      if (lookKeys(fresh).shape !== this.shapeKey) {
+        this.ghost(scene);
+        this.build(scene, fresh);
+        this.options.onInvalidate?.();
+        return;
+      }
+    }
+    this.rebuild();
+  }
+
   /**
    * Shows a view for a track. A new key or a different view fades the old content out first, and the
    * new one in once nothing old is left on screen. Something that never became visible (a loading
    * state still in its quiet first 600 ms) is simply dropped and holds nothing up.
+   *
+   * With a `look` (null: DEFAULT_PICK), the new scene is drawn with it, as setPickedLook would from
+   * then on, while the old one fades out as it was drawn: a song comes in with its own look.
    */
-  show(view: StageView, key: string): void {
+  show(view: StageView, key: string, look?: PickedLook | null): void {
     const old = this.scene;
-    if (old && old.key === key && old.view === view) return;
+    if (old && old.key === key && old.view === view) {
+      if (look !== undefined) this.setPickedLook(look);
+      return;
+    }
+    if (look !== undefined) {
+      this.picked = look ?? DEFAULT_PICK;
+      this.loadFace();
+    }
     const t = now();
     const scene: Scene = {
       el: h("div", "ut-scene"),
@@ -261,6 +351,7 @@ export class LyricStage {
     this.root.append(scene.el);
     this.scene = scene;
     this.lastCue = null;
+    this.lastT = Number.NaN;
     this.shapeKey = "";
     this.build(scene);
     if (old) {
@@ -294,15 +385,72 @@ export class LyricStage {
     this.host.classList.toggle("ut-hidden", !visible);
   }
 
-  /** Paints position `t`. Returns true while it needs another frame regardless of word timing. */
-  render(t: number): boolean {
+  /**
+   * Paints position `t`. Returns true while it needs another frame regardless of word timing. `rate`
+   * is how fast song time runs right now (PlaybackClock.rate): 1 playing, 0 paused, near 1 slewing;
+   * `target` where the clock is converging (PlaybackClock.target), `t` when absent.
+   */
+  render(t: number, rate = this.paused ? 0 : 1, target = t): boolean {
     const scene = this.scene;
     if (!scene?.mode || !scene.cues) return false;
-    const cue: Cue = { ...cueAt(scene.cues, t), running: !this.paused };
+    const cue = this.cueOf(scene.cues, t, rate, target);
     const last = this.lastCue;
-    if (last && cue.line !== last.line && scene.mode.crossfades(cue)) this.ghost(scene);
+    const lastT = this.lastT;
+    if (last && (cue.line !== last.line ? scene.mode.crossfades(cue) : scene.mode.cuts?.(cue) === true)) this.ghost(scene);
     this.lastCue = cue;
-    return scene.mode.paint(cue);
+    this.lastT = t;
+    const busy = scene.mode.paint(cue);
+    if (this.watchesSafePoints && this.scene === scene && this.safeAt(scene.cues, cue, last, lastT)) this.safePoint();
+    return busy;
+  }
+
+  /**
+   * Calls `fn` at every safe point too (see StageOptions.onSafePoint), until the returned function is
+   * called. An OverlayController listens this way, so a stage built without the option (the settings
+   * preview's) still brings a song's look refinement in at the same moments as the overlay.
+   */
+  addSafePointListener(fn: () => void): () => void {
+    this.safeListeners.add(fn);
+    return () => {
+      this.safeListeners.delete(fn);
+    };
+  }
+
+  /**
+   * A clock sample between paints (the controller's quiet resyncs): the mode brings its song-time
+   * motion onto it without a frame. True when it does need a paint after all: the stage's line moved,
+   * or the mode's own focus did.
+   */
+  retime(t: number, rate = this.paused ? 0 : 1, target = t): boolean {
+    const scene = this.scene;
+    if (!scene?.mode || !scene.cues) return false;
+    const cue = this.cueOf(scene.cues, t, rate, target);
+    const last = this.lastCue;
+    if (!last || cue.line !== last.line || cue.waiting !== last.waiting) return true;
+    scene.mode.retime?.(cue);
+    return (scene.mode.nextChange?.(t) ?? Infinity) <= 0;
+  }
+
+  /**
+   * Whether a look change could crossfade in at `t` without cutting into a line: no lyrics on screen
+   * (a state, or lyrics still waiting for the scene before them to fade out), before the first line,
+   * or inside a break of SAFE_BREAK_MS or more (before the next line's lead).
+   */
+  atSafePoint(t: number): boolean {
+    const scene = this.scene;
+    const cues = scene?.cues;
+    if (!scene || !cues || now() < scene.revealAt) return true;
+    const first = cues.lyrics[0];
+    if (!first || t < first.start - LEAD_MS) return true;
+    return cues.breaks.some((b) => t >= b.start && t < b.end - LEAD_MS);
+  }
+
+  /**
+   * Whether the current scene needs frames at word boundaries (false: its mode draws words on the
+   * compositor, see ModeRenderer.wordWakes). States and modes that paint words themselves do.
+   */
+  get wakesForWords(): boolean {
+    return this.scene?.mode?.wordWakes !== false;
   }
 
   /**
@@ -315,23 +463,52 @@ export class LyricStage {
   nextChange(t: number): number {
     const cues = this.scene?.cues;
     if (!cues) return Infinity;
-    if (t !== this.followedUp && onBoundary(cues, t)) {
+    const mode = this.scene?.mode;
+    const words = mode?.wordWakes !== false;
+    if (t !== this.followedUp && onBoundary(cues, t, words)) {
       this.followedUp = t;
       return 0;
     }
-    return untilNextChange(cues, t);
+    const own = mode?.nextChange?.(t) ?? Infinity;
+    const safe = this.watchesSafePoints ? untilNext(cues.breakStarts, t) : Infinity;
+    return Math.min(untilNextChange(cues, t, words), Math.max(0, own), safe);
   }
 
   destroy(): void {
+    this.destroyed = true;
+    this.safeListeners.clear();
     this.resize?.disconnect();
     this.motionQuery?.removeEventListener("change", this.onMotion);
     this.dprQuery?.removeEventListener("change", this.onDpr);
     this.dprQuery = null;
     if (typeof document !== "undefined" && "fonts" in document) document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     if (this.fontTimer) clearTimeout(this.fontTimer);
+    this.fontTimer = null;
     this.scene?.mode?.destroy();
     this.root.remove();
     this.host.classList.remove("ut-stage", "ut-hidden");
+  }
+
+  /** Someone wants to hear of safe points (onSafePoint, addSafePointListener): breaks starting are woken for. */
+  private get watchesSafePoints(): boolean {
+    return this.options.onSafePoint !== undefined || this.safeListeners.size > 0;
+  }
+
+  private safePoint(): void {
+    this.options.onSafePoint?.();
+    for (const fn of [...this.safeListeners]) fn();
+  }
+
+  private cueOf(cues: CueMap, t: number, rate: number, target: number): Cue {
+    const running = !this.paused;
+    return { ...cueAt(cues, t), running, rate: running ? rate : 0, target: Number.isFinite(target) ? target : t };
+  }
+
+  /** A safe point at this paint: the scene's first paint before its first line, a line change, a long break starting. */
+  private safeAt(cues: CueMap, cue: Cue, last: Cue | null, lastT: number): boolean {
+    if (!last) return cue.t < (cues.lyrics[0]?.start ?? Infinity);
+    if (cue.line !== last.line) return true;
+    return cues.breakStarts.some((s) => s > lastT && s <= cue.t);
   }
 
   /**
@@ -347,30 +524,49 @@ export class LyricStage {
     this.dprQuery?.addEventListener("change", this.onDpr);
   }
 
-  private look(scene: Scene): Look {
-    const option = this.options.referenceHeight;
-    const reference = typeof option === "function" ? option() : option;
-    return resolveLook(this.settings, this.palette, {
-      width: this.host.clientWidth,
-      height: this.host.clientHeight,
-      dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
-      motion: !reducedMotion(),
-      unsynced: scene.cues?.unsynced ?? false,
-      lang: scene.lang,
-      ...(reference ? { referenceHeight: reference } : {}),
+  /** Measured layouts (lens, arc fitting, wrapped drift rows) need the real face: build again once the picked one is in. */
+  private loadFace(): void {
+    const { family, weight } = this.picked.font;
+    const key = `${family}/${weight}`;
+    if (key === this.fontKey) return;
+    this.fontKey = key;
+    const face = fontFor(family);
+    void loadFont(face, weight || face.weight).then(() => {
+      if (this.fontKey === key) this.rebuild(true);
     });
   }
 
+  private look(scene: Scene): Look {
+    const option = this.options.referenceHeight;
+    const reference = typeof option === "function" ? option() : option;
+    return resolveLook(
+      this.settings,
+      this.palette,
+      {
+        width: this.host.clientWidth,
+        height: this.host.clientHeight,
+        dpr: typeof devicePixelRatio === "number" ? devicePixelRatio : 1,
+        motion: !reducedMotion(),
+        unsynced: scene.cues?.unsynced ?? false,
+        lang: scene.lang,
+        power: this.power,
+        ...(reference ? { referenceHeight: reference } : {}),
+      },
+      this.picked,
+    );
+  }
+
   /**
-   * Brings the current scene up to date with the look: nothing to do, a restyle when only colors or
-   * glow changed (a slider drag mustn't tear down and re-measure the mode, or cut a glide short), or
-   * a rebuild. `force` always rebuilds.
+   * Brings the current scene up to date with the look: nothing to do, a restyle when only the paint
+   * changed (a slider drag mustn't tear down and re-measure the mode, or cut a glide short), or a
+   * rebuild. `force` always rebuilds.
    */
   private rebuild(force = false): void {
     const scene = this.scene;
-    if (!scene) return;
+    // a face or a font subset that finishes loading after destroy() builds nothing
+    if (!scene || this.destroyed) return;
     const look = this.look(scene);
-    const keys = lookKeys(look, this.settings.mode);
+    const keys = lookKeys(look);
     if (!force && keys.shape === this.shapeKey) {
       if (keys.paint === this.paintKey) return;
       if (scene.mode?.restyle) {
@@ -385,16 +581,19 @@ export class LyricStage {
   }
 
   private build(scene: Scene, look = this.look(scene)): void {
-    const keys = lookKeys(look, this.settings.mode);
+    const keys = lookKeys(look);
     this.shapeKey = keys.shape;
     this.paintKey = keys.paint;
     scene.mode?.destroy();
     scene.mode = null;
     scene.el.textContent = "";
     this.lastCue = null;
+    this.lastT = Number.NaN;
     const { view, cues } = scene;
     if (view.kind === "lyrics") {
-      scene.mode = createMode(this.settings.mode);
+      // for QA: the song's flair as drawn ("off" with Effects mode off)
+      scene.el.setAttribute("data-flair", look.effectsMode ? `${look.flair.move} ${look.flair.accent} ${look.flair.splash}` : "off");
+      scene.mode = createMode(look.style);
       scene.mode.build(scene.el, cues?.lyrics ?? [], look);
     } else if (view.kind !== "none") {
       buildState(scene.el, view.kind, look, now() - scene.shownAt);
@@ -402,10 +601,11 @@ export class LyricStage {
   }
 
   /**
-   * Leaves a copy of the current line fading out on top while the mode draws the next one. The copy
-   * starts from however visible the scene is right now (it may itself be fading in), and the scene's
-   * own fade restarts under it, so nothing ever jumps to full brightness. A scene that hasn't started
-   * fading in yet has nothing on screen to fade: its line just changes.
+   * Leaves a still copy of the scene fading out on top while the mode draws what comes next. The mode
+   * first freezes its motion where it is, so the copy shows what was on screen. The copy starts from
+   * however visible the scene is right now (it may itself be fading in), and the scene's own fade
+   * restarts under it, so nothing ever jumps to full brightness. A scene that hasn't started fading in
+   * yet has nothing on screen to fade: it just changes.
    */
   private ghost(scene: Scene): void {
     if (now() < scene.revealAt) return;
@@ -413,6 +613,7 @@ export class LyricStage {
     const shown = opacityOf(el);
     stopFades(el);
     if (shown > 0.01) {
+      scene.mode?.freeze?.();
       const copy = el.cloneNode(true) as HTMLElement;
       copy.classList.add("ut-ghost");
       copy.setAttribute("aria-hidden", "true");

@@ -1,16 +1,23 @@
 /* ---------- arc ---------- */
-/* Three lines on parallel quadratic curves. Each line is its own SVG band so its soft shadow (a CSS
-   filter, which every engine supports on an outer <svg>) is sized to that line and only repaints
-   that band. */
+/* Three lines on parallel curves. The focus line is HTML (modes/arc.ts): one karaoke word box per
+   word (stage.css `.kw`, overlay/motion/line.ts), each in a frame turned to the curve, every letter in
+   it placed on the curve itself, so the whole karaoke runs on the compositor. The dim neighbors are
+   SVG bands, each with its own path and a soft shadow (a CSS filter, which every engine supports on an
+   outer <svg>) sized to that line, rasterized once per line change. */
 .arc {
   position: absolute;
   inset: 0;
+  /* its own stacking context: the focus line over its neighbors, whatever else the stage layers */
+  isolation: isolate;
+  /* after the last line, the lines fade out */
+  transition: opacity 0.4s ease;
 }
 
 .arc-line {
   position: absolute;
   left: 0;
   overflow: visible;
+  z-index: 1;
 }
 
 .arc text {
@@ -19,17 +26,64 @@
   text-rendering: geometricPrecision;
 }
 
-/* A word's color and glow switch at once, as in the prototype; no transitions here. Every band
-   carries a drop-shadow filter, and a transition on any word re-rasters its whole filtered band on
-   every frame it runs (several times the work of a single repaint per word change). */
+/* No transitions on the bands: each carries a drop-shadow filter, and every frame of a transition
+   would re-raster its whole filtered band. They move and fade only by compositor animations of the
+   whole band. */
 
-/* off-screen text used once per build to measure line lengths */
-.arc-measure {
+/* The focus line: a stage-sized layer of word frames. Each word box, and each letter's box in it, is
+   1.2 font sizes tall (ARC_LINE_HEIGHT in modes/arc.ts places letters by it). */
+.arc-focus {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  line-height: 1.2;
+  text-rendering: geometricPrecision;
+}
+
+/* A word's frame: its transform (set by modes/arc.ts, from the top left corner) turns the box to the
+   curve with the middle of its baseline on it. A flex box, so the word box starts at its very top
+   with no line box around it; a word never wraps. */
+.arc-word {
   position: absolute;
   left: 0;
   top: 0;
+  display: flex;
+  white-space: nowrap;
+  transform-origin: 0 0;
+}
+
+/* The plain text, where the karaoke overlay doesn't cover it (a word whose overlay isn't built yet):
+   an upcoming word, with the dark legibility shadow. */
+.arc-focus .kw-txt {
+  color: var(--ut-lyric);
+  text-shadow: var(--ut-dark);
+}
+
+/* Measuring the baseline once per build: an empty inline-block sits on it. */
+.arc-mark {
+  display: inline-block;
   width: 0;
   height: 0;
-  overflow: hidden;
+}
+
+.arc-probe {
   visibility: hidden;
+}
+
+/* An instrumental break's dots, centered at the focus curve's apex (overlay/motion/dots.ts). */
+.arc-dots {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arc {
+    transition: none;
+  }
 }

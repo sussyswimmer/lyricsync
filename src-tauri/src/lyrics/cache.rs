@@ -7,6 +7,9 @@ use std::{
 };
 
 pub const NEGATIVE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+/// The entry format. Version 2 entries were looked up asking for a synced version when the match had
+/// plain text only; a version 1 plain-only entry wasn't, so it is due for that at its next play.
+const ENTRY_VERSION: u8 = 2;
 /// LRCLIB's synced coverage grows, so a plain-only result this old is asked about again.
 pub const PLAIN_RECHECK_SECS: u64 = 30 * 24 * 60 * 60;
 const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
@@ -79,16 +82,23 @@ impl Cache {
             let Ok(mut entry) = serde_json::from_slice::<Entry>(&bytes) else {
                 return Ok(None);
             };
-            if entry.version != 1
+            if !(1..=ENTRY_VERSION).contains(&entry.version)
                 || entry.lyrics.track_key != key
                 || !fresh(&entry.lyrics, entry.saved_at, now)
             {
                 return Ok(None);
             }
             entry.lyrics.source = LyricsSource::Cache;
+            // A plain-only entry from before synced versions were looked for counts as saved long
+            // ago: still served, and due for a recheck (`stale`).
+            let saved_at = if entry.version < 2 && entry.lyrics.status == LyricsStatus::PlainOnly {
+                0
+            } else {
+                entry.saved_at
+            };
             Ok(Some(Cached {
                 lyrics: entry.lyrics,
-                saved_at: entry.saved_at,
+                saved_at,
             }))
         })
         .await
@@ -101,7 +111,7 @@ impl Cache {
         let path = self.path(&lyrics.track_key);
         let directory = self.directory.clone();
         let entry = Entry {
-            version: 1,
+            version: ENTRY_VERSION,
             saved_at,
             lyrics: lyrics.clone(),
         };
@@ -179,6 +189,53 @@ mod tests {
         for status in [LyricsStatus::Instrumental, LyricsStatus::NotFound] {
             assert!(!stale(&empty("key", status), 0, u64::MAX));
         }
+    }
+    #[tokio::test]
+    async fn plain_only_entries_from_before_synced_versions_were_looked_for_are_due_now() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = Cache::new(directory.path());
+        let mut unsynced = record();
+        unsynced.synced_lyrics = None;
+        let plain = unsynced.into_lyrics("key");
+        // a realistic clock: "long ago" is measured against now
+        const NOW: u64 = 1_800_000_000;
+        let write = |version: u8, lyrics: &Lyrics| {
+            let entry = Entry {
+                version,
+                saved_at: NOW - 1000,
+                lyrics: lyrics.clone(),
+            };
+            std::fs::create_dir_all(&cache.directory).unwrap();
+            std::fs::write(
+                cache.path(&lyrics.track_key),
+                serde_json::to_vec(&entry).unwrap(),
+            )
+            .unwrap();
+        };
+        // version 1 plain text: still served, and due at once
+        write(1, &plain);
+        let old = cache.read("key", NOW).await.unwrap().unwrap();
+        assert_eq!(old.lyrics.status, LyricsStatus::PlainOnly);
+        assert!(stale(&old.lyrics, old.saved_at, NOW));
+        // version 1 synced lyrics, and version 2 plain text, keep their age
+        let found = record().into_lyrics("key");
+        write(1, &found);
+        assert_eq!(
+            cache.read("key", NOW).await.unwrap().unwrap().saved_at,
+            NOW - 1000
+        );
+        write(2, &plain);
+        let new = cache.read("key", NOW).await.unwrap().unwrap();
+        assert_eq!(new.saved_at, NOW - 1000);
+        assert!(!stale(&new.lyrics, new.saved_at, NOW));
+        // an unknown, newer format is no hit; what is written now is version 2
+        write(3, &plain);
+        assert!(cache.read("key", NOW).await.unwrap().is_none());
+        cache.put(&plain, NOW).await.unwrap();
+        let bytes = std::fs::read(cache.path("key")).unwrap();
+        let entry: Entry = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(entry.version, ENTRY_VERSION);
+        assert_eq!(ENTRY_VERSION, 2);
     }
     #[tokio::test]
     async fn corrupt_wrong_key_and_transient_results_are_not_hits() {

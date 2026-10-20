@@ -2,7 +2,31 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import type { Palette } from "../src/core/palette";
 import { FONTS, fontFor, stackFor } from "../src/overlay/fonts";
-import { REFERENCE_HEIGHT, dropShadow, resolveLook, rgba, shadowLayers, snap, textShadow, workAreaReference, type Frame, type Look } from "../src/overlay/look";
+import {
+  DEFAULT_PICK,
+  REFERENCE_HEIGHT,
+  cleanOverride,
+  dropShadow,
+  effectsModeOf,
+  effectsOf,
+  mergeOverrides,
+  overrideFromSettings,
+  parseLookOverride,
+  pickedOf,
+  resolveLook,
+  rgba,
+  sanePick,
+  shadowLayers,
+  snap,
+  textShadow,
+  withOverride,
+  workAreaReference,
+  type Frame,
+  type Look,
+  type PickedLook,
+} from "../src/overlay/look";
+import type { EmphasisRule as CoreEmphasisRule, SongLook } from "../src/core/songlook";
+import { bloomOf, type EmphasisRule } from "../src/overlay/motion/params";
 
 const FRAME: Frame = { width: 1920, height: 1080, dpr: 2, motion: true, unsynced: false };
 const PALETTE: Palette = { lyric: "#f5efe6", highlight: "#e0559a", dim: "#7d7f99" };
@@ -71,27 +95,24 @@ describe("resolveLook: colors", () => {
 });
 
 describe("resolveLook: placement and scaled settings", () => {
-  // Mid-range values only: at the extremes the line is kept on screen (next tests).
-  it("places the line at yPos percent of the stage height", () => {
-    expect(look({ yPos: 46 }).y).toBeCloseTo(496.8, 6);
-    expect(look({ yPos: 25 }, { height: 900 }).y).toBe(225);
-    expect(look({ yPos: 75 }, { height: 900 }).y).toBe(675);
-    expect(look({ yPos: 50 }, { height: 300 }).y).toBe(150);
+  // Contract v6: the lyrics always sit in the middle of the display's work area; yPos, still stored
+  // (and still in settings saved before v6), moves nothing.
+  it("centers the line on the stage, whatever yPos says", () => {
+    for (const yPos of [0, 10, 25, 46, 50, 75, 90, 100]) {
+      expect(look({ yPos }).y, `yPos ${yPos}`).toBe(540);
+      expect(look({ yPos }, { height: 900 }).y, `yPos ${yPos}`).toBe(450);
+    }
+    expect(look({}, { height: 300 }).y).toBe(150);
+    expect(look({}, { height: 1415, referenceHeight: workAreaReference(1415, 1440) }).y).toBe(707.5);
   });
 
-  it("moves the line down as yPos rises, across the whole range", () => {
-    const ys = [0, 10, 25, 46, 75, 90, 100].map((yPos) => look({ yPos }, { height: 720 }).y);
-    for (let i = 1; i < ys.length; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1] ?? Infinity);
-    expect(ys[ys.length - 1]).toBeGreaterThan(ys[0] ?? Infinity);
-  });
-
-  // Regression: Height 0 and 100 used to center the focus line on the screen edge, half off screen.
-  // The contract allows 0..100, so resolveLook keeps the line whole rather than the slider limiting it.
-  it("keeps the whole focus line on the stage at the Height extremes", () => {
-    for (const yPos of [0, 100]) {
-      const l = look({ yPos }, { height: 720 });
-      expect(l.y - l.size / 2).toBeGreaterThanOrEqual(0);
-      expect(l.y + l.size / 2).toBeLessThanOrEqual(l.height);
+  it("keeps the whole focus line on the stage at any Size, on any stage", () => {
+    for (const size of [22, 58, 140]) {
+      for (const height of [200, 720, 1415]) {
+        const l = look({ size }, { height });
+        expect(l.y - l.size / 2).toBeGreaterThanOrEqual(0);
+        expect(l.y + l.size / 2).toBeLessThanOrEqual(l.height);
+      }
     }
   });
 
@@ -207,6 +228,151 @@ describe("shadows", () => {
 
   it("never emits a negative length", () => {
     expect(textShadow(look({ glow: 0 }), -58)).not.toMatch(/-\d/u);
+  });
+});
+
+describe("the picked look", () => {
+  const pick = (over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, ...over });
+  const picked = (p: PickedLook, over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look => resolveLook(settings(over), null, { ...FRAME, ...frame }, p);
+
+  it("defaults to the house look: Arc in Fraunces 700, curve 38, BL-like motion", () => {
+    expect(DEFAULT_PICK).toEqual({
+      style: "arc",
+      font: { family: "Fraunces", weight: 700 },
+      curve: 38,
+      energy: 0.45,
+      snap: 0.4,
+      glow: 0.6,
+      emphasis: { minMs: 1000, maxChars: 12, lastWordOnly: false },
+      scale: 1,
+      letterSpacing: 0,
+      textCase: "as-is",
+      flair: { move: "rise", accent: "rise", splash: "ripple" },
+    });
+    expect(Object.isFrozen(DEFAULT_PICK)).toBe(true);
+  });
+
+  it("gives the stage its style, face, curve, size scale, letter-spacing, case and motion character", () => {
+    const p = pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -50, energy: 0.8, snap: 0.9, glow: 0.5, scale: 0.94, letterSpacing: 0.03, textCase: "upper" });
+    // the stored mode, face and curve no longer count
+    const l = picked(p, { mode: "drift", font: { family: "Caveat", weight: 600 }, curve: 90, size: 60 });
+    expect(l.style).toBe("lens");
+    expect(l.family).toBe("Syne");
+    expect(l.weight).toBe(800);
+    expect(l.font).toBe(stackFor(fontFor("Syne"), null));
+    expect(l.curve).toBe(-0.5);
+    expect(l.size).toBeCloseTo(60 * 0.94, 9);
+    expect(l.letterSpacing).toBe(0.03);
+    expect(l.textCase).toBe("upper");
+    expect([l.energy, l.snap, l.emphasis]).toEqual([0.8, 0.9, DEFAULT_PICK.emphasis]);
+    // Glow still scales the song's bloom; Effects comes from the settings
+    expect(l.bloom).toBeCloseTo(bloomOf(0.5, 40), 12);
+    expect(l.effects).toBe(50);
+    expect(l.power).toBe("full");
+    expect(picked(p, {}, { power: "lite" }).power).toBe("lite");
+  });
+
+  it("keeps the stored mode, face and curve for a caller that passes no pick, with the house motion", () => {
+    const l = look({ mode: "drift", font: { family: "Caveat", weight: 600 }, curve: 90 });
+    expect([l.style, l.family, l.weight, l.curve]).toEqual(["drift", "Caveat", 600, 0.9]);
+    expect([l.energy, l.snap, l.letterSpacing, l.textCase]).toEqual([0.45, 0.4, 0, "as-is"]);
+    expect(l.bloom).toBeCloseTo(bloomOf(0.6, 40), 12);
+  });
+
+  it("keeps the bloom out of a look's enumerable fields, so a Glow drag never reads as a new layout", () => {
+    const a = look({ glow: 30 });
+    const b = look({ glow: 80 });
+    expect(a.bloom).not.toBe(b.bloom);
+    const { glow: _a, colors: _ca, opacity: _oa, ...restA } = a;
+    const { glow: _b, colors: _cb, opacity: _ob, ...restB } = b;
+    expect(JSON.stringify(restA)).toBe(JSON.stringify(restB));
+    expect(Object.keys(a)).not.toContain("bloom");
+  });
+
+  it("makes any pick safe to draw", () => {
+    const wild = sanePick({ ...pick(), style: "flow" as PickedLook["style"], curve: 400, energy: 7, snap: -1, glow: Number.NaN, scale: 3, letterSpacing: 1, textCase: "loud" as PickedLook["textCase"] });
+    expect(wild).toMatchObject({ style: "arc", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
+    expect(sanePick({ ...pick(), emphasis: null }).emphasis).toBeNull();
+    expect(picked(pick({ font: { family: "Nope", weight: 0 } })).family).toBe("Fraunces");
+  });
+
+  it("draws a song's look by its PickedLook fields alone, leaving out why it was picked", () => {
+    const song: SongLook = {
+      ...pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }),
+      traits: ["big repeating hooks"],
+      reason: "big repeating hooks → Lens with Syne",
+      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3, poster: 0.2, spotlight: 0.1 }, font: { Syne: 0.5 } },
+      ties: { style: false, font: false },
+    };
+    const drawn: PickedLook = pickedOf(song);
+    expect(drawn).toEqual(pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }));
+    expect(Object.keys(drawn)).not.toContain("reason");
+    // one emphasis rule for the picker and the motion: each is the other
+    const rule: EmphasisRule = { minMs: 900, maxChars: 10, lastWordOnly: true };
+    const same: CoreEmphasisRule = rule;
+    const back: EmphasisRule = same;
+    expect(back).toBe(rule);
+  });
+
+  it("reads Effects from a store that has it, and 50 from one older than contract v4", () => {
+    expect(effectsOf(settings())).toBe(50);
+    expect(effectsOf({ ...settings(), effects: 80 } as Settings)).toBe(80);
+    expect(effectsOf({ ...settings(), effects: 180 } as Settings)).toBe(100);
+    expect(effectsOf({ ...settings(), effects: "lots" } as unknown as Settings)).toBe(50);
+    expect(look({ effects: 20 } as Partial<Settings>).effects).toBe(20);
+  });
+
+  it("reads Effects mode from a store that has it, and on from one older than contract v5", () => {
+    expect(effectsModeOf(settings())).toBe(true);
+    expect(effectsModeOf(settings({ effectsMode: false }))).toBe(false);
+    const v4: Record<string, unknown> = { ...settings() };
+    delete v4["effectsMode"];
+    expect(effectsModeOf(v4 as unknown as Settings)).toBe(true);
+    expect(look({ effectsMode: false }).effectsMode).toBe(false);
+    expect(look().effectsMode).toBe(true);
+  });
+
+  it("carries the song's flair to the stage, and makes any flair safe to draw", () => {
+    const flair = { move: "sway", accent: "pulse", splash: "glints" } as const;
+    expect(resolveLook(settings(), null, FRAME, pick({ flair })).flair).toEqual(flair);
+    expect(look().flair).toEqual(DEFAULT_PICK.flair);
+    const wild = sanePick({ ...pick(), flair: { move: "spin", accent: 3, splash: null } as unknown as PickedLook["flair"] });
+    expect(wild.flair).toEqual({ move: "rise", accent: "rise", splash: "ripple" });
+    expect(pickedOf({ ...pick({ flair }) }).flair).toEqual(flair);
+  });
+});
+
+describe("look overrides (QA)", () => {
+  it("parse style[,family[,curve]], keeping the pick where a part is empty", () => {
+    expect(parseLookOverride("lens")).toEqual({ style: "lens" });
+    expect(parseLookOverride("Lens,syne")).toEqual({ style: "lens", font: "Syne" });
+    expect(parseLookOverride("arc,,-50")).toEqual({ style: "arc", curve: -50 });
+    expect(parseLookOverride(",Bricolage")).toEqual({ font: "Bricolage Grotesque" });
+    expect(parseLookOverride("stack,Instrument Serif,999")).toEqual({ style: "stack", font: "Instrument Serif", curve: 100 });
+    // what isn't a style, a bundled face or a number is left out; nothing valid is null
+    expect(parseLookOverride("flow,Comic,wide")).toBeNull();
+    expect(parseLookOverride("drift,Comic")).toEqual({ style: "drift" });
+    expect(parseLookOverride("")).toBeNull();
+    expect(parseLookOverride(undefined)).toBeNull();
+    expect(parseLookOverride(42)).toBeNull();
+  });
+
+  it("take the mock's mode, font and curve from ?settings=", () => {
+    expect(overrideFromSettings(JSON.stringify({ mode: "stack", glow: 80 }))).toEqual({ style: "stack" });
+    expect(overrideFromSettings(JSON.stringify({ font: { family: "Caveat", weight: 600 }, curve: 10 }))).toEqual({ font: "Caveat", curve: 10 });
+    expect(overrideFromSettings(JSON.stringify({ glow: 80 }))).toBeNull();
+    expect(overrideFromSettings("{not json")).toBeNull();
+    expect(overrideFromSettings("[1]")).toBeNull();
+    expect(overrideFromSettings(null)).toBeNull();
+  });
+
+  it("merge part by part, and force the pick's parts, a face at its bundled weight", () => {
+    expect(mergeOverrides({ style: "stack", curve: 5 }, { style: "lens" })).toEqual({ style: "lens", curve: 5 });
+    expect(mergeOverrides(null, null)).toBeNull();
+    const forced = withOverride(DEFAULT_PICK, { style: "drift", font: "Unbounded", curve: -20 });
+    expect(forced).toEqual({ ...DEFAULT_PICK, style: "drift", font: { family: "Unbounded", weight: 700 }, curve: -20 });
+    expect(withOverride(DEFAULT_PICK, null)).toBe(DEFAULT_PICK);
+    expect(cleanOverride({ style: "lens", font: "Nope", curve: Number.NaN })).toEqual({ style: "lens" });
   });
 });
 

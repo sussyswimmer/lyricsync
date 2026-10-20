@@ -1,22 +1,11 @@
 # Troubleshooting
 
-Find what you're seeing below. If it isn't here, or the fix doesn't help, [report a bug](#reporting-a-bug) with the diagnostics it describes.
-
-- [No lyrics, or the wrong song](#no-lyrics-or-the-wrong-song)
-- [Lyrics are early or late](#lyrics-are-early-or-late)
-- [Nothing shows up](#nothing-shows-up)
-- [Lyrics on the wrong monitor](#lyrics-on-the-wrong-monitor)
-- [After an Explorer restart, sleep or a display change](#after-an-explorer-restart-sleep-or-a-display-change)
-- [Settings went back to the defaults](#settings-went-back-to-the-defaults)
-- [Network and proxies](#network-and-proxies)
-- [Reporting a bug](#reporting-a-bug)
-
 ## No lyrics, or the wrong song
 
-- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then falls back to a search by title and artist. Songs by several artists match however the credits are written ("A & B", "A, B", "A feat. B", "A x B"). It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
-- **"Couldn't load lyrics"** means the lookup failed: no connection, or LRCLIB didn't answer within 6 seconds. Undertone tries again by itself after 5, 20 and 60 seconds, and the lyrics appear as soon as one try works. If they don't, check your connection (and your proxy, see [Network and proxies](#network-and-proxies)), then use **Refetch lyrics**.
+- **"No lyrics for this song"** means LRCLIB has nothing that matches. Undertone looks the song up by title, artist, album and length, then the same without the album (a player's album name often differs from LRCLIB's), then searches by title and artist. Songs by several artists match however the credits are written ("A & B", "A, B", "A feat. B", "A x B"). It rejects any result whose length differs from your track by more than 8 seconds, so live versions, remasters and regional releases sometimes miss. Undertone remembers a miss for 7 days so it doesn't keep asking. **Refetch lyrics** asks again right away.
+- **"Couldn't load lyrics"** means the lookup failed: no connection, or no answer from LRCLIB within 15 seconds. LRCLIB's search often answers "busy, try again in a second", so Undertone asks it up to four times before giving up. It then tries again by itself after 5, 20 and 60 seconds, and the lyrics appear as soon as one try works. If they don't, check your connection (and your proxy, see [Network](INSTALL.md#network)), then use **Refetch lyrics**.
 - **Wrong lyrics:** **Refetch lyrics** skips the cache, which fixes lyrics that were corrected on LRCLIB since Undertone saved them. If LRCLIB's best match is itself wrong, refetching returns the same thing. Lyrics on LRCLIB are submitted by the community; [lrclib.net](https://lrclib.net) explains how to add or correct them.
-- **Lyrics but no word highlight:** LRCLIB only has unsynced text for this song. Undertone paces the lines evenly across the song instead (see "Plain (unsynced) lyrics" in the [user guide](USER_GUIDE.md#loading-missing-and-unsynced-lyrics)). When you play the song more than 30 days after Undertone saved them, it checks LRCLIB for synced lyrics again; **Refetch lyrics** checks right away. Synced lyrics whose timestamps would keep one line up for most of the song are paced the same way.
+- **Lyrics but no word highlight, drifting from the singer:** LRCLIB only has unsynced text for this song. Undertone looks for a synced version of the same song (another album or edition) right away and switches to it if it finds one. Without one, it can only guess the pace, by the length of each line and the gaps between verses, so it drifts when the singer speeds up or slows down. The lines around the current one stay easy to read meanwhile (see "Plain (unsynced) lyrics" in the [user guide](USER_GUIDE.md#loading-missing-and-unsynced-lyrics)). When you play the song more than 30 days later, Undertone looks for synced lyrics again; **Refetch lyrics** looks right away. Synced lyrics whose timestamps would keep one line up for most of the song are shown the same way.
 
 ## Lyrics are early or late
 
@@ -25,7 +14,7 @@ Positive offsets make lyrics appear **earlier**; negative offsets make them appe
 - **Every song is off by about the same amount** (for example, Bluetooth headphones that delay the sound): move the **All songs** slider in Settings → Sync, the global offset. If lyrics run ahead of the singer, move it toward Later (below 0).
 - **One song is off:** nudge just that song with **Sync ▸ Earlier/Later 100 ms** in the menu, ⌥⇧⌘[ / ⌥⇧⌘] (Ctrl+Alt+Shift+[ / ] on Windows, unless you've changed them) for 50 ms steps, or the −100 / −50 / +50 / +100 buttons under **This song** in Settings → Sync. Undertone remembers the nudge for that song. **Reset for this song** in the menu, or **Reset this song** in Settings, clears it.
 
-The song's nudge is added on top of the All songs offset. When a song's lyrics are timed by line only, Undertone estimates where each word falls, so judge the sync by when each line starts.
+The song's nudge is added on top of the All songs offset. A song you haven't nudged starts from what your last few nudged songs have in common, so after two or three nudges the same way, new songs start in time on their own. Most songs' lyrics are timed by line only: Undertone then works out when each word is sung, at the pace the song is being sung, so judge the sync by when each line starts. Lyrics timed word by word follow every word exactly.
 
 ## Nothing shows up
 
@@ -33,8 +22,9 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 2. **Are the lyrics turned off?** Then the preview in Settings says **Off on the desktop**. Switch on **Lyrics on the desktop** in Settings › General, choose **Show lyrics** in the menu, or press ⌥⇧⌘L / Ctrl+Alt+Shift+L (the default shortcut).
 3. **Is a window covering them?** The lyrics sit under every window, so a maximized or full-screen window hides them. Move windows aside or show the desktop.
 4. **Is the player supported?** On macOS, Undertone reads the Spotify app and the Music app only (not players in a web browser). On Windows, the player must show up in the Windows media controls. When Undertone finds no such player open, **This song** in Settings → Sync says **No music app open**.
-5. **On macOS, was Automation denied?** Then the settings window shows a notice at the top, such as "Undertone can't see what Spotify is playing.", with the switch to turn on. See [macOS: Automation](../README.md#macos-automation) in the README.
-6. **Are they faint?** Check **Opacity** and your colors in Settings, or turn on **Match album colors**.
+5. **On macOS, was Automation denied?** Then the settings window shows a notice at the top, such as "Undertone can't see what Spotify is playing.", with the switch to turn on. See [Permissions](INSTALL.md#macos-automation).
+6. **On macOS, does Settings play the demo song while Spotify or Music plays, with no notice at the top?** Then macOS hasn't given Undertone an answer yet. It should ask whether Undertone may control the player a few seconds after you open Undertone; click **OK**. If no prompt appears and Undertone isn't listed under System Settings → Privacy & Security → Automation, quit Undertone from the menu, run `tccutil reset AppleEvents com.undertone.desktop` in Terminal, open Undertone again and play a song.
+7. **Are they faint?** Check **Opacity** and your colors in Settings, or turn on **Match album colors**.
 
 ## Lyrics on the wrong monitor
 
@@ -44,15 +34,13 @@ The song's nudge is added on top of the All songs offset. When a song's lyrics a
 
 Undertone reattaches the lyrics to the desktop by itself when Windows Explorer restarts, when your computer wakes from sleep, and when displays are connected, removed or rearranged. It also picks up again when Spotify quits and relaunches. If the lyrics don't come back, quit Undertone from the menu and open it again, then report the problem with the diagnostics below.
 
+## A feature is missing after an update
+
+You may still be running the old build. The last line of the menu bar or tray menu, and the bottom of Settings, say which build is running: **Undertone 0.1.1 (build …)**. If it isn't the one you downloaded, quit Undertone from the menu and open it again from Applications (or the Start menu). Opening the new app while an old one runs restarts Undertone into the new one.
+
 ## Settings went back to the defaults
 
 Undertone keeps your settings, including each song's sync nudge, in `settings.json` in its data folder: `~/Library/Application Support/com.undertone.desktop` on macOS, `%APPDATA%\com.undertone.desktop` on Windows. It saves the file in one step, so a crash can't leave half a file. If the file still can't be read, Undertone renames it to `settings.corrupt-<number>.json` in the same folder, starts from the defaults and opens the settings window. Cached lyrics are kept.
-
-## Network and proxies
-
-Undertone sends the title, artist, album and length of the current song to `lrclib.net` to look up lyrics. For Spotify on macOS, it also downloads the cover art from Spotify's image server. Lyrics are cached on your computer so the same song loads instantly next time.
-
-If you set a proxy by hand in your system's network settings, Undertone uses it. A proxy set up automatically (a PAC script or WPAD) isn't supported.
 
 ## Reporting a bug
 

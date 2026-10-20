@@ -1,15 +1,19 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { parseLrc, type Line } from "../src/core/lrc";
-import { PaletteCache } from "../src/core/palette";
+import { accentFor, PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
-import { resolveLook, type Frame, type Look } from "../src/overlay/look";
-import { DriftMode } from "../src/overlay/modes/drift";
+import { DEFAULT_PICK, resolveLook, textShadow, type Frame, type Look, type PickedLook } from "../src/overlay/look";
+import { DriftMode, RELEASE_MS } from "../src/overlay/modes/drift";
 import type { Cue } from "../src/overlay/modes/types";
-import { LINGER_MS, LyricStage, type StageView } from "../src/overlay/stage";
+import { cueMap, LINGER_MS, LyricStage, untilNextChange, type StageView } from "../src/overlay/stage";
 import { buildState } from "../src/overlay/states";
+import { bloomShadow } from "../src/overlay/motion/bloom";
+import { HOLD } from "../src/overlay/motion/keyframes";
+import { bloomOf, LITE_SCROLL_MS } from "../src/overlay/motion/params";
+import { FakeAnimation, FakeAnimationHost, valuesAt } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 /*
@@ -31,28 +35,9 @@ class FakeStyle {
   }
 }
 
-class FakeAnimation {
-  readonly keyframes: Keyframe[];
-  readonly options: KeyframeAnimationOptions;
-  readonly finished: Promise<void>;
-  cancelled = false;
-  private reject: (e: Error) => void = () => undefined;
-  constructor(keyframes: Keyframe[], options: KeyframeAnimationOptions) {
-    this.keyframes = keyframes;
-    this.options = options;
-    this.finished = new Promise<void>((_, reject) => {
-      this.reject = reject;
-    });
-  }
-  cancel(): void {
-    this.cancelled = true;
-    this.reject(new Error("AbortError"));
-  }
-}
-
 let stageSize = { width: 1280, height: 720 };
 
-class FakeElement {
+class FakeElement extends FakeAnimationHost {
   readonly tagName: string;
   className = "";
   dir = "";
@@ -61,7 +46,6 @@ class FakeElement {
   parent: FakeElement | null = null;
   ownText = "";
   readonly attrs = new Map<string, string>();
-  animations: FakeAnimation[] = [];
   readonly classList = {
     add: (...names: string[]): void => {
       const set = new Set(this.className.split(" ").filter(Boolean));
@@ -84,6 +68,7 @@ class FakeElement {
   };
 
   constructor(tag: string) {
+    super();
     this.tagName = tag.toUpperCase();
   }
 
@@ -98,6 +83,9 @@ class FakeElement {
   get isConnected(): boolean {
     return this.parent !== null;
   }
+  get parentNode(): FakeElement | null {
+    return this.parent;
+  }
   get clientWidth(): number {
     return stageSize.width;
   }
@@ -105,9 +93,13 @@ class FakeElement {
     return stageSize.height;
   }
   /** Rows wrap at 88% of the stage width with glyphs about 0.5 em wide, 1.12 em per row. */
+  /** Text that takes room in the layout: the karaoke overlay (`.kw-fx`) is absolutely placed and takes none. */
+  get flowText(): string {
+    return this.ownText + this.children.map((c) => (c.classList.contains("kw-fx") ? "" : c.flowText)).join("");
+  }
   get offsetHeight(): number {
     const size = this.fontSize();
-    const width = this.textContent.length * size * 0.5;
+    const width = this.flowText.length * size * 0.5;
     const rows = Math.max(1, Math.ceil(width / (stageSize.width * 0.88)));
     return Math.round(rows * size * 1.12);
   }
@@ -136,6 +128,19 @@ class FakeElement {
     node.parent = p;
     p.children.splice(p.children.indexOf(this) + 1, 0, node);
   }
+  prepend(...nodes: FakeElement[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeElement | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeElement | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
+  }
   remove(): void {
     const p = this.parent;
     if (!p) return;
@@ -162,14 +167,6 @@ class FakeElement {
     if (deep) copy.append(...this.children.map((c) => c.cloneNode(true)));
     return copy;
   }
-  animate(keyframes: Keyframe[], options: KeyframeAnimationOptions): FakeAnimation {
-    const anim = new FakeAnimation(keyframes, options);
-    this.animations.push(anim);
-    return anim;
-  }
-  getAnimations(): FakeAnimation[] {
-    return this.animations.filter((a) => !a.cancelled);
-  }
   find(className: string): FakeElement[] {
     const out: FakeElement[] = [];
     for (const c of this.children) {
@@ -190,7 +187,21 @@ beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => clock);
 });
 
+/** Modes and stages a test made: destroyed after it, while its fake document is still in place, so no timer of theirs (the next line's prepare) outlives it. */
+const live: { destroy(): void }[] = [];
+function keep<T extends { destroy(): void }>(made: T): T {
+  live.push(made);
+  return made;
+}
+
 afterEach(() => {
+  for (const made of live.splice(0)) {
+    try {
+      made.destroy();
+    } catch {
+      // already torn down by the test
+    }
+  }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -210,59 +221,107 @@ const EIGHT: Line[] = parseLrc(
 /** A built Drift (depth 1) or Stack (depth 0) on a fake host. */
 function drift(depth = 1, look = lookFor(), lines: readonly Line[] = LINES): { mode: DriftMode; host: FakeElement; rows: FakeElement[] } {
   const host = new FakeElement("div");
-  const mode = new DriftMode(depth);
+  const mode = keep(new DriftMode(depth));
   mode.build(asHtml(host), lines, look);
   return { mode, host, rows: host.find("drift-row") };
 }
 
 const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, running, waiting });
 const scaleOf = (row: FakeElement | undefined): number => Number(/scale\(([\d.]+)\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
-const yOf = (row: FakeElement | undefined): number => Number(/calc\(-50% \+ (-?[\d.]+)px\)/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]);
+/** Where a row's center sits from the focus position: its translate (its top edge is on look.y) plus half its box. */
+const yOf = (row: FakeElement | undefined): number =>
+  Number(/translate(?:3d)?\(0px, (-?[\d.]+)px/u.exec(row?.style.getPropertyValue("transform") ?? "")?.[1]) + (row?.offsetHeight ?? 0) / 2;
+/** A row's running scroll (Web Animations on the row itself). */
+const scrolling = (row: FakeElement | undefined): FakeAnimation[] => row?.getAnimations() ?? [];
+/** The word boxes of a row, and one word's part of the karaoke overlay. */
+const wordsOf = (row: FakeElement | undefined): FakeElement[] => row?.find("kw") ?? [];
+const partOf = (row: FakeElement | undefined, word: number, part: string): FakeElement | undefined => wordsOf(row)[word]?.find(part)[0];
 
 // Regression (drift-paused-freeze): Drift glided from performance.now(), and no frame follows a paused
 // paint, so a glide caught by a pause froze halfway and a seek while paused left the old line centered.
+// The scroll now runs on the document timeline from the state on screen: a pause lets it finish, where
+// it was headed, while the words hold still at their song time.
 describe("Drift while paused", () => {
-  it("lands a glide in flight on its line in the paint that pauses it", () => {
+  it("lets a glide in flight finish through a pause, the words held at their song time", () => {
     const { mode, rows } = drift();
     mode.paint(cue(0, 2000));
     clock += 16;
-    expect(mode.paint(cue(1, 4300))).toBe(true);
+    // the scroll runs on the compositor: no frames asked for, an animation on every row it moves
+    expect(mode.paint(cue(1, 4300))).toBe(false);
+    const glide = scrolling(rows[1]);
+    expect(glide.length).toBe(1);
+    expect(glide[0]?.keyframes.length).toBeGreaterThan(2);
+    // on the document timeline, from now: not the song's
+    expect(glide[0]?.startTime).toBe(clock);
     clock += 150;
-    expect(mode.paint(cue(1, 4450))).toBe(true);
-    expect(scaleOf(rows[1])).toBeLessThan(1);
-    // paused
+    expect(mode.paint(cue(1, 4450))).toBe(false);
+    // paused: the glide runs on to its line, which is where the rows' own style already is
     expect(mode.paint(cue(1, 4450, false))).toBe(false);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(glide[0]?.cancelled).toBe(false);
     expect(scaleOf(rows[1])).toBe(1);
     expect(yOf(rows[1])).toBe(0);
     expect(scaleOf(rows[0])).toBeCloseTo(0.58, 4);
-    // ...and resuming doesn't jump back into the glide
+    // the line's words hold at their song time
+    const words = wordsOf(rows[1]).flatMap((w) => [w, ...w.find("kw-track")]).flatMap((e) => e.getAnimations());
+    expect(words.length).toBeGreaterThan(0);
+    expect(words.every((a) => a.paused && Math.abs((a.currentTime ?? 0) - (4450 - 4200)) < 1e-6)).toBe(true);
+    // ...and resuming doesn't start the glide again
     clock += 100;
     expect(mode.paint(cue(1, 4460))).toBe(false);
-    expect(scaleOf(rows[1])).toBe(1);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(words.every((a) => !a.paused)).toBe(true);
   });
 
   it("cuts to the line a paused seek lands on, and has the stage crossfade it", () => {
     const { mode, rows } = drift();
     mode.paint(cue(1, 5000));
     mode.paint(cue(1, 5000, false));
-    expect(mode.crossfades(cue(2, 10_000, false, true))).toBe(true);
-    expect(mode.paint(cue(2, 10_000, false, true))).toBe(false);
+    expect(mode.crossfades(cue(2, 12_600, false))).toBe(true);
+    expect(mode.paint(cue(2, 12_600, false))).toBe(false);
+    expect(scrolling(rows[2])).toEqual([]);
     expect(scaleOf(rows[2])).toBe(1);
     expect(yOf(rows[2])).toBe(0);
     expect(scaleOf(rows[1])).toBeCloseTo(0.58, 4);
-    // the focus colors went to the centered line
-    expect(rows[2]?.children[0]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
-    expect(rows[1]?.children[0]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.dim);
+    // the focus went to the centered line: lyric color there, the old line dim (drawn by its soft
+    // shadow), on every word's plain text (paused: at once, nothing left for later frames)
+    expect(rows[2]?.classList.contains("is-focus")).toBe(true);
+    expect(rows[1]?.classList.contains("is-focus")).toBe(false);
+    for (const txt of rows[2]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    for (const txt of rows[1]?.find("kw-txt") ?? []) {
+      expect(txt.style.getPropertyValue("color")).toBe("transparent");
+      expect(txt.style.getPropertyValue("text-shadow")).toMatch(/^0 0 [\d.]+px rgba\(141, 147, 160, 1\.000\)/u);
+    }
+    // nothing of it on the rows themselves: the overlay under a row would inherit it
+    expect(rows[2]?.style.getPropertyValue("color")).toBe("");
+    expect(rows[1]?.style.getPropertyValue("text-shadow")).toBe("");
+  });
+
+  it("draws untimed lyrics' near lines sharp in the lyric color, and only the far ones soft", () => {
+    const calm = lookFor({}, { unsynced: true });
+    const { mode, rows } = drift(0, calm, EIGHT);
+    mode.paint(cue(3, 7500, false));
+    for (const near of [rows[1], rows[2], rows[4], rows[5]]) {
+      for (const txt of near?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    }
+    for (const far of [rows[0], rows[6]]) {
+      for (const txt of far?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("transparent");
+    }
+    // timed lyrics keep their soft neighbors
+    const timed = drift(0, lookFor(), EIGHT);
+    timed.mode.paint(cue(3, 7500, false));
+    for (const txt of timed.rows[2]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("transparent");
   });
 
   it("glides again (no stage crossfade) once playing", () => {
-    const { mode } = drift();
+    const { mode, rows } = drift();
     mode.paint(cue(1, 5000, false));
     expect(mode.crossfades(cue(2, 12_500, false))).toBe(true);
     mode.paint(cue(1, 5016));
     expect(mode.crossfades(cue(2, 12_500))).toBe(false);
     clock += 16;
-    expect(mode.paint(cue(2, 12_500))).toBe(true);
+    expect(mode.paint(cue(2, 12_500))).toBe(false);
+    expect(scrolling(rows[2]).length).toBe(1);
   });
 });
 
@@ -320,25 +379,40 @@ describe("Drift asks for frames only while something moves", () => {
 
 // Regression (word-boundary-late): a word drew unlit at exactly its start time.
 describe("Drift word states", () => {
+  /** The value of the first keyframe at or after `offset` in an animation's keyframes. */
+  const at = (anim: FakeAnimation | undefined, offset: number): string =>
+    String(anim?.keyframes.find((k) => Number(k.offset) >= offset - 1e-9)?.transform ?? "");
+
   it("lights a word, with its glow, at the very millisecond it starts", () => {
     const { mode, rows } = drift();
     const word = LINES[1]?.words[1];
     expect(word).toMatchObject({ text: "the ", start: 4800 });
     mode.paint(cue(1, 4800));
-    const span = rows[1]?.children[1];
-    expect(span?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.highlight);
-    expect(span?.style.getPropertyValue("text-shadow")).not.toBe("");
-    expect(rows[1]?.children[2]?.style.getPropertyValue("color")).toBe(DEFAULT_SETTINGS.colors.lyric);
+    // the line is handed to the compositor at once: one window from its first word to when it settles
+    const wipe = (i: number): FakeAnimation | undefined => partOf(rows[1], i, "kw-track")?.getAnimations()[0];
+    const span = Number(wipe(1)?.options.duration);
+    const offset = (ms: number): number => (ms - 4200) / span;
+    // "the" starts its wipe at 4.8 s: closed up to then, moving right after
+    expect(at(wipe(1), offset(4800))).toMatch(/^translateX\(-/u);
+    expect(at(wipe(1), offset(4801))).not.toBe(at(wipe(1), offset(4800)));
+    expect(partOf(rows[1], 1, "kw-glow")?.getAnimations()).toHaveLength(1);
+    // "boats" holds closed until 5 s
+    expect(at(wipe(2), 0)).toBe(at(wipe(2), offset(4999)));
+    // every animation of the line shares that window, so the browser starts and ends them together
+    const all = wordsOf(rows[1]).flatMap((w) => [w, ...w.find("kw-track"), ...w.find("kw-glow"), ...w.find("kl")]).flatMap((e) => e.getAnimations());
+    expect(all.length).toBeGreaterThan(10);
+    expect(new Set(all.map((x) => x.options.duration))).toEqual(new Set([span]));
   });
 });
 
 // Regressions (drift-perspective-overlap, drift-wrapped-offscreen, drift-small-neighbors).
 describe("Drift geometry", () => {
-  it("recedes toward the focus line, wherever Height puts it", () => {
+  it("recedes toward the focus line, in the middle of the stage whatever yPos says", () => {
     for (const yPos of [5, 46, 95]) {
       const look = lookFor({ yPos });
       const { host } = drift(1, look);
-      expect(host.find("drift")[0]?.style["perspectiveOrigin"]).toBe(`50% ${look.y.toFixed(1)}px`);
+      expect(look.y).toBe(360);
+      expect(host.find("drift")[0]?.style["perspectiveOrigin"]).toBe("50% 360.0px");
     }
   });
 
@@ -353,19 +427,18 @@ describe("Drift geometry", () => {
     expect(rows[1]?.style["fontSize"]).toBeUndefined();
   });
 
-  it("keeps a tall focus line whole on screen at the Height extremes", () => {
+  it("centers a tall focus line, whole on screen", () => {
     const text = "a wrapped placeholder line that takes a few rows on this stage ".repeat(3);
     const lines = parseLrc(`[00:01.00]one\n[00:03.00]${text}\n[00:09.00]three`, 12_000);
-    for (const yPos of [0, 100]) {
-      const look = lookFor({ yPos });
-      const { mode, rows } = drift(0, look, lines);
-      mode.paint(cue(1, 4000));
-      const height = rows[1]?.offsetHeight ?? 0;
-      expect(height).toBeGreaterThan(look.size * 1.12 * 2);
-      const center = look.y + yOf(rows[1]);
-      expect(center - height / 2, `yPos ${yPos}`).toBeGreaterThanOrEqual(0);
-      expect(center + height / 2, `yPos ${yPos}`).toBeLessThanOrEqual(720);
-    }
+    const look = lookFor();
+    const { mode, rows } = drift(0, look, lines);
+    mode.paint(cue(1, 4000));
+    const height = rows[1]?.offsetHeight ?? 0;
+    expect(height).toBeGreaterThan(look.size * 1.12 * 2);
+    const center = look.y + yOf(rows[1]);
+    expect(center).toBeCloseTo(360, 6);
+    expect(center - height / 2).toBeGreaterThanOrEqual(0);
+    expect(center + height / 2).toBeLessThanOrEqual(720);
   });
 
   it("keeps neighbor lines at least 11 px tall at a small size", () => {
@@ -379,18 +452,28 @@ describe("Drift geometry", () => {
 
 describe("Drift restyle", () => {
   it("takes new colors without rebuilding or stopping a glide", () => {
-    const { mode, rows } = drift();
+    const { mode, rows, host } = drift();
     mode.paint(cue(0, 2000));
     clock += 16;
     mode.paint(cue(1, 4300));
     clock += 100;
     mode.paint(cue(1, 4400));
+    const glide = scrolling(rows[1]);
+    expect(glide.length).toBe(1);
     const red = { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" };
     mode.restyle(lookFor({ colors: red, glow: 80 }));
     clock += 16;
-    expect(mode.paint(cue(1, 4416))).toBe(true);
-    expect(rows[1]?.children[0]?.style.getPropertyValue("color")).toBe("#ff0000");
-    expect(rows[0]?.children[0]?.style.getPropertyValue("color")).toBe("#333333");
+    expect(mode.paint(cue(1, 4416))).toBe(false);
+    expect(scrolling(rows[1])).toEqual(glide);
+    expect(host.find("drift")[0]?.style.getPropertyValue("--ut-hl")).toBe("#ff0000");
+    // the new colors reach every row's words, those the line change had left for later frames too,
+    // and the line leaving focus as it hands back (200 ms after a change made mid-line)
+    for (const txt of rows[1]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("color")).toBe("#ffffff");
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+    clock += 84;
+    mode.paint(cue(1, 4500));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    for (const txt of rows[0]?.find("kw-txt") ?? []) expect(txt.style.getPropertyValue("text-shadow")).toMatch(/rgba\(51, 51, 51, 1\.000\)/u);
   });
 });
 
@@ -400,10 +483,14 @@ function reduceMotion(): void {
 }
 
 /** A stage on a fake host, mid-song, with the clock and opacities under the test's control. */
+/** The house look in another style: the stage draws the picked look's style, not Settings.mode. */
+const pick = (style: PickedLook["style"], over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, style, ...over });
+
 function stage(): { stage: LyricStage; root: FakeElement; scenes: () => FakeElement[] } {
   const host = new FakeElement("main");
-  const s = new LyricStage(asHtml(host));
-  s.setSettings(settings({ mode: "stack" }));
+  const s = keep(new LyricStage(asHtml(host)));
+  s.setPickedLook(pick("stack"));
+  s.setSettings(settings());
   const root = host.children[0] as FakeElement;
   return { stage: s, root, scenes: () => root.children.filter((c) => c.classList.contains("ut-scene")) };
 }
@@ -489,14 +576,198 @@ describe("fades start from what is on screen", () => {
 });
 
 describe("frames on a boundary", () => {
-  it("asks for one more frame when a frame lands exactly on a word start, once", () => {
+  it("knows every word boundary, and the line boundaries alone", () => {
+    const map = cueMap(lyricsView.timeline);
+    expect(untilNextChange(map, 4800)).toBe(200);
+    expect(untilNextChange(map, 5016)).toBe(584);
+    // Paper Lanterns' line starts (1, 4.2, 9 (the gap stamp), 12.5, 16.4 s). Its lingers ("river" 3.7 s
+    // + 2.5, "home" 8.5 s + 2.5) would end after the next stamp, when they no longer change anything.
+    expect(untilNextChange(map, 4800, false)).toBe(9000 - 4800);
+    expect(untilNextChange(map, 9000, false)).toBe(12_500 - 9000);
+    // a linger that ends before the next line does hand over to it
+    const rest = cueMap({ lines: parseLrc("[00:01.00]one two\n[00:09.00]three", 12_000), unsynced: false });
+    const end = rest.lyrics[0]?.words[1]?.end ?? 0;
+    expect(untilNextChange(rest, end, false)).toBe(LINGER_MS);
+  });
+
+  it("lets Stack sleep through words (they run on the compositor), still following up a frame on a line start", () => {
     const { stage: s } = stage();
     s.show(lyricsView, "a");
-    expect(s.nextChange(4800)).toBe(0);
-    expect(s.nextChange(4800)).toBe(200);
-    expect(s.nextChange(4900)).toBe(100);
-    expect(s.nextChange(5000)).toBe(0);
-    expect(s.nextChange(5016)).toBe(584);
+    expect(s.wakesForWords).toBe(false);
+    expect(s.nextChange(4200)).toBe(0);
+    // the next thing is the dots of the break after "home" (8.5 s), coming in at 8.95 s
+    expect(s.nextChange(4200)).toBe(8950 - 4200);
+    expect(s.nextChange(4800)).toBe(8950 - 4800);
+    expect(s.nextChange(8600)).toBe(350);
+  });
+
+  it("also wakes for the mode's own events: Stack's dots at the start of an instrumental break", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    s.render(8600);
+    // Paper Lanterns: "home" ends at 8.5 s, the empty stamp at 9 s; the dots come in at 8.95 s
+    expect(s.nextChange(8600)).toBe(350);
+  });
+
+  it("passes the clock's rate to the mode: 0 while paused", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    const seen: (number | undefined)[] = [];
+    const scene = (s as unknown as { scene: { mode: DriftMode } }).scene;
+    const paint = scene.mode.paint.bind(scene.mode);
+    scene.mode.paint = (c: Cue): boolean => {
+      seen.push(c.rate);
+      return paint(c);
+    };
+    s.render(5000, 1.1);
+    s.setPaused(true);
+    s.render(5000, 1);
+    expect(seen).toEqual([1.1, 0]);
+  });
+});
+
+describe("Drift instrumental breaks", () => {
+  // a glide hands the line leaving focus back to plain text on the frame after it starts
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("brings three dots into focus for a long break, then the next line, then drops the dots", () => {
+    const { mode, host, rows } = drift(0);
+    mode.paint(cue(1, 8000));
+    expect(host.find("ut-dot")).toHaveLength(0);
+    clock += 16;
+    mode.paint(cue(2, 10_000, true, true));
+    expect(host.find("ut-dot")).toHaveLength(3);
+    expect(host.find("drift-break")[0]?.style.getPropertyValue("visibility")).toBe("visible");
+    // the dots run on the compositor: the group's pop and fade, each dot and its glow
+    expect(host.find("ut-dots")[0]?.getAnimations()).toHaveLength(2);
+    expect(host.find("ut-dot").every((d) => d.getAnimations().length === 1)).toBe(true);
+    // no line sings karaoke during the break (the one before it hands back 200 ms on: the break
+    // began before the list moved to it)
+    vi.advanceTimersByTime(16);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(mode.nextChange(10_016)).toBe(184);
+    clock += 184;
+    mode.paint(cue(2, 10_200, true, true));
+    expect(rows.some((r) => r.classList.contains("has-fx"))).toBe(false);
+    clock += 16;
+    mode.paint(cue(2, 12_600));
+    expect(rows[2]?.classList.contains("is-focus")).toBe(true);
+    clock += 16;
+    mode.paint(cue(2, 17_000));
+    expect(host.find("ut-dot")).toHaveLength(0);
+  });
+
+  it("sends the line before a break back to plain text, its overlay fading out until the list rests", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(1, 8000));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(1);
+    clock += 16;
+    mode.paint(cue(1, 8960, true, false));
+    // lit while the list starts moving, stopped still on the next frame
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    vi.advanceTimersByTime(16);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    const rest = (scrolling(rows[1])[0]?.duration ?? 0) - RELEASE_MS;
+    expect(rest).toBeGreaterThan(420);
+    // 200 ms on (the break began before the list moved) it hands back, its overlay fading out until
+    // the list comes to rest...
+    expect(mode.nextChange(8976)).toBe(184);
+    clock += 184;
+    mode.paint(cue(1, 9160, true, true));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    const fade = wordsOf(rows[1])[0]?.find("kw-fx")[0]?.getAnimations()[0];
+    expect(fade?.keyframes.map((k) => k.opacity)).toEqual([1, 0]);
+    expect(fade?.options.easing).toBe("ease-out");
+    expect(fade?.duration).toBeCloseTo(rest - 200 + RELEASE_MS, 6);
+    expect(mode.nextChange(9160)).toBeCloseTo(rest - 200, 6);
+    // ...and is taken down then, in the frame that lets go of the scroll, the fade all but over
+    clock += rest - 200;
+    mode.paint(cue(1, 8960 + rest, true, true));
+    expect(wordsOf(rows[1])[0]?.find("kw-fx")).toHaveLength(0);
+    expect(fade?.cancelled).toBe(true);
+    expect(scrolling(rows[1])).toEqual([]);
+  });
+});
+
+describe("Drift's karaoke leaving focus", () => {
+  // a glide stops the line leaving focus on the frame after it starts, and hands it back to its plain
+  // text as the new line starts
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Animations on a row's word boxes and everything in their overlays (the row's own scroll aside). */
+  const wordMotion = (row: FakeElement | undefined): number =>
+    wordsOf(row).reduce((n, w) => n + w.getAnimations().length + [...w.find("kw-fx"), ...w.find("kw-track"), ...w.find("kw-in"), ...w.find("kw-glow"), ...w.find("kl")].reduce((m, e) => m + e.getAnimations().length, 0), 0);
+
+  it("stops a line sung through as it leaves, so its overlay is put away still", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(0, 2000));
+    expect(wordMotion(rows[0])).toBeGreaterThan(0);
+    clock += 16;
+    // Paper Lanterns: "river" ends the first line at 3.7 s, the next one starts at 4.2 s
+    mode.paint(cue(1, 4200));
+    // the frame that starts the scroll leaves it as it is; the next one stops it, still lit
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+    vi.advanceTimersByTime(16);
+    expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+    expect(wordMotion(rows[0])).toBe(0);
+    expect(wordMotion(rows[1])).toBeGreaterThan(0);
+    // it hands back 200 ms on (the change came as line 1 started), only its overlays fading out
+    clock += 200;
+    mode.paint(cue(1, 4400));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(wordsOf(rows[0]).every((w) => w.find("kw-fx")[0]?.getAnimations().length === 1)).toBe(true);
+    expect(wordMotion(rows[0])).toBe(wordsOf(rows[0]).length);
+  });
+
+  it("keeps a fading overlay as it shows when the stage copies the scene", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4200));
+    vi.advanceTimersByTime(16);
+    clock += 200;
+    mode.paint(cue(1, 4400));
+    const fx = wordsOf(rows[0])[0]?.find("kw-fx")[0];
+    const fade = fx?.getAnimations()[0];
+    // the engine starts it on its next frame; 100 ms on it is partly faded
+    if (fade) fade.startTime = clock;
+    clock += 100;
+    const shown = Number(fade?.values().opacity);
+    expect(shown).toBeGreaterThan(0);
+    expect(shown).toBeLessThan(1);
+    mode.freeze();
+    expect(fade?.cancelled).toBe(true);
+    expect(Number(fx?.style.getPropertyValue("opacity"))).toBeCloseTo(shown, 3);
+  });
+
+  it("keeps a line left before it was sung (a seek back) moving with the song", () => {
+    const { mode, rows } = drift(0);
+    mode.paint(cue(1, 5000));
+    // the rest of the line mounts on the frames after
+    vi.advanceTimersByTime(16 * 12);
+    const before = wordMotion(rows[1]);
+    expect(before).toBeGreaterThan(0);
+    clock += 16;
+    mode.paint(cue(0, 2500));
+    vi.advanceTimersByTime(16);
+    expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+    expect(wordMotion(rows[1])).toBe(before);
+    // handing back, its words still move (their overlays fading out on top)
+    clock += 200;
+    mode.paint(cue(0, 2700));
+    expect(rows[1]?.classList.contains("has-fx")).toBe(false);
+    expect(wordMotion(rows[1])).toBe(before + wordsOf(rows[1]).filter((w) => w.find("kw-fx").length > 0).length);
   });
 });
 
@@ -580,13 +851,14 @@ describe("the stage's reference height", () => {
   it("asks for one given as a function on every layout (the overlay's follows its screen)", () => {
     let reference = 720;
     const host = new FakeElement("main");
-    const s = new LyricStage(asHtml(host), { referenceHeight: () => reference });
-    s.setSettings(settings({ mode: "stack" }));
+    const s = keep(new LyricStage(asHtml(host), { referenceHeight: () => reference }));
+    s.setPickedLook(pick("stack"));
+    s.setSettings(settings());
     s.show(lyricsView, "a");
     const drift = (): FakeElement | undefined => host.find("drift")[0];
     expect(drift()?.style["fontSize"]).toBe("58px");
     reference = 360;
-    s.setSettings(settings({ mode: "stack", glow: 41 }));
+    s.setSettings(settings({ glow: 41 }));
     expect(drift()?.style["fontSize"]).toBe("116px");
   });
 });
@@ -614,9 +886,9 @@ describe("the stage while paused", () => {
     const { stage: s, scenes } = stage();
     s.show(lyricsView, "a");
     const before = scenes()[0]?.find("drift")[0];
-    s.setSettings(settings({ mode: "stack", glow: 90, opacity: 50, colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" } }));
+    s.setSettings(settings({ glow: 90, opacity: 50, colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#333333" } }));
     expect(scenes()[0]?.find("drift")[0]).toBe(before);
-    s.setSettings(settings({ mode: "stack", size: 80 }));
+    s.setSettings(settings({ size: 80 }));
     expect(scenes()[0]?.find("drift")[0]).not.toBe(before);
   });
 });
@@ -770,14 +1042,476 @@ describe("the stage with nothing to sing", () => {
   it("asks for none once the last line has lingered", () => {
     const { stage: s } = stage();
     s.show(lyricsView, "a");
-    // Paper Lanterns' last word ends at 20 s; its line stays lit for LINGER_MS, then nothing changes
+    // Paper Lanterns' last word ends at 20 s; its line stays lit, and nothing changes after it (Stack
+    // draws the last word's end on the compositor: no frame for it; the last line has nothing to linger for)
     s.render(19_500);
-    expect(s.nextChange(19_500)).toBe(500);
-    expect(s.nextChange(20_000 + LINGER_MS - 100)).toBe(100);
+    expect(s.nextChange(19_500)).toBe(Infinity);
     for (const t of [20_000 + LINGER_MS + 1, 30_000]) {
       expect(s.render(t)).toBe(false);
       expect(s.nextChange(t)).toBe(Infinity);
     }
+  });
+});
+
+/** A transform's translate y, px. */
+const yIn = (transform: string | undefined): number => Number(/translate(?:3d)?\([-\d.]+px, (-?[\d.]+)px/u.exec(transform ?? "")?.[1]);
+/** A wipe track's translateX, px. */
+const xIn = (transform: string | undefined): number => Number(/translateX\((-?[\d.]+)px\)/u.exec(transform ?? "")?.[1]);
+
+describe("the stage and the picked look", () => {
+  it("draws the picked look's style, whatever Settings.mode says", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    s.render(5000);
+    const rowTransform = (): string => scenes()[0]?.find("drift-row")[0]?.style.getPropertyValue("transform") ?? "";
+    // Stack: flat transforms
+    expect(rowTransform()).toMatch(/^translate\(/u);
+    s.setSettings(settings({ mode: "lens" }));
+    s.render(5016);
+    expect(rowTransform()).toMatch(/^translate\(/u);
+    s.setPickedLook(pick("drift"));
+    s.render(5032);
+    expect(rowTransform()).toMatch(/^translate3d\(/u);
+    expect(s.pickedLook.style).toBe("drift");
+    // no pick: the house look
+    const fresh = keep(new LyricStage(asHtml(new FakeElement("main"))));
+    expect(fresh.pickedLook).toBe(DEFAULT_PICK);
+    fresh.setPickedLook(pick("lens"));
+    fresh.setPickedLook(null);
+    expect(fresh.pickedLook).toBe(DEFAULT_PICK);
+  });
+
+  it("restyles for colors, glow and bloom, re-plans the focus line for the motion, and rebuilds for a new shape", () => {
+    const { stage: s, scenes } = stage();
+    s.show(lyricsView, "a");
+    s.render(4800);
+    const box = scenes()[0]?.find("drift")[0];
+    const word = (): FakeElement | undefined => scenes()[0]?.find("drift-row")[1]?.find("kw")[1];
+    const before = word()?.getAnimations() ?? [];
+    expect(before.length).toBeGreaterThan(0);
+    s.setSettings(settings({ glow: 90 }));
+    expect(scenes()[0]?.find("drift")[0]).toBe(box);
+    expect(box?.style.getPropertyValue("--ut-bloom")).toBe(bloomShadow(DEFAULT_SETTINGS.colors.highlight, bloomOf(DEFAULT_PICK.glow, 90)));
+    expect(before.every((a) => !a.cancelled)).toBe(true);
+    // a livelier pick: the same rows, the focus line planned again where the song is
+    s.setPickedLook(pick("stack", { energy: 0.9 }));
+    expect(scenes()[0]?.find("drift")[0]).toBe(box);
+    expect(before.every((a) => a.cancelled)).toBe(true);
+    const after = word()?.getAnimations() ?? [];
+    expect(after.length).toBeGreaterThan(0);
+    expect(after[0]?.currentTime).toBeCloseTo(4800 - 4200, 6);
+    // a face is a shape
+    s.setPickedLook(pick("stack", { energy: 0.9, font: { family: "Syne", weight: 800 } }));
+    expect(scenes()[0]?.find("drift")[0]).not.toBe(box);
+  });
+
+  it("crossfades a new shape in behind a still copy of what was on screen", () => {
+    const { stage: s, root, scenes } = stage();
+    s.show(lyricsView, "a");
+    clock += 1000;
+    s.render(4800);
+    clock += 100;
+    // "the" (4.8-5.0 s) is mid-pop: what it draws now
+    const sung = scenes()[0]?.find("drift-row")[1]?.find("kw")[1];
+    const shown = sung?.getAnimations()[0]?.values().transform;
+    expect(shown).toBeDefined();
+    expect(shown).not.toBe("none");
+    s.setPickedLook(pick("drift"), "crossfade");
+    const ghost = root.children.find((c) => c.classList.contains("ut-ghost"));
+    expect(ghost).toBeDefined();
+    expect(fadeOut(ghost)?.options.duration).toBe(170);
+    // the copy shows the word as it was drawn, not as its line ends
+    const copy = ghost?.find("drift-row")[1]?.find("kw")[1];
+    expect(copy?.style.getPropertyValue("transform")).toBe(shown);
+    // and the scene behind it is the new look, fading in
+    s.render(4916);
+    expect(scenes()[0]?.find("drift-row")[0]?.style.getPropertyValue("transform")).toMatch(/^translate3d\(/u);
+  });
+
+  it("calls safe points at the first paint before the first line, at each line change and as a long break starts", () => {
+    let safe = 0;
+    const host = new FakeElement("main");
+    const s = keep(new LyricStage(asHtml(host), { onSafePoint: () => safe++ }));
+    s.setPickedLook(pick("stack"));
+    s.setSettings(settings());
+    s.show(lyricsView, "a");
+    s.render(500);
+    expect(safe).toBe(1);
+    s.render(1200);
+    expect(safe).toBe(1);
+    s.render(4300);
+    expect(safe).toBe(2);
+    // "home" ends at 8.5 s, the next line comes at 12.5 s: a break, woken for (once the line change's
+    // scroll has come to rest and the line before has dropped its overlay)
+    s.render(5600);
+    expect(s.nextChange(7000)).toBe(1500);
+    s.render(8000);
+    s.render(8600);
+    expect(safe).toBe(3);
+    s.render(9100);
+    expect(safe).toBe(4);
+    expect([500, 5000, 9000, 12_300, 17_000].map((t) => s.atSafePoint(t))).toEqual([true, false, true, false, false]);
+  });
+
+  it("follows a quiet sample with retime, and says when a paint is due after all", () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    expect(s.retime(3800)).toBe(true);
+    s.render(3800);
+    expect(s.retime(3850, 1, 3870)).toBe(false);
+    // line 1's lead (3.9 s) comes before the stage's line changes (4.2 s): the list wants a paint
+    expect(s.retime(3950, 1, 3950)).toBe(true);
+    // a new line on the stage: a paint
+    expect(s.retime(4300, 1, 4300)).toBe(true);
+  });
+});
+
+// Regression (line-change-long-task): a line change restyled every row in reach, handed the karaoke
+// over, started the scroll and every animation of the new line in one frame, the longest of the song.
+describe("a line change, spread over the frames after it", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const lyric = DEFAULT_SETTINGS.colors.lyric;
+  /** The style a row's words show: their color and their blur (0 for the crisp focus line). */
+  const styleOf = (row: FakeElement | undefined): string => {
+    const txt = row?.find("kw-txt")[0];
+    const blur = /^0 0 ([\d.]+)px rgba\(141/u.exec(txt?.style.getPropertyValue("text-shadow") ?? "")?.[1] ?? "0";
+    return `${txt?.style.getPropertyValue("color")}/${blur}`;
+  };
+
+  it("restyles the new focus at once, then the other rows a few a frame, nearest first, the line leaving as the new one starts", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    // line 3 (7 s) in focus, and everything around it styled
+    mode.paint(cue(3, 7100, false));
+    const before = rows.map(styleOf);
+    expect(before[3]).toBe(`${lyric}/0`);
+    // a glide to line 4 (9 s): its lead
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    expect(styleOf(rows[4])).toBe(`${lyric}/0`);
+    expect(rows[4]?.classList.contains("has-fx")).toBe(true);
+    // nothing else yet: the line leaving keeps its overlay and look, the rest their blur
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(rows.map(styleOf).filter((_, i) => i !== 4)).toEqual(before.filter((_, i) => i !== 4));
+    // the next frames: the other rows, the nearest first (one line away, then two, ...), a few a frame
+    const order = [5, 2, 6, 1, 7, 0];
+    const restyled = (): number[] => order.filter((i) => styleOf(rows[i]) !== before[i]);
+    vi.advanceTimersByTime(16);
+    let frames = 1;
+    let last = restyled().length;
+    expect(last).toBeLessThan(order.length);
+    while (restyled().length < order.length && frames < 20) {
+      expect(restyled()).toEqual(order.slice(0, restyled().length));
+      vi.advanceTimersByTime(16);
+      frames++;
+      expect(restyled().length).toBeGreaterThan(last);
+      last = restyled().length;
+    }
+    expect(restyled()).toEqual(order);
+    expect(frames).toBeGreaterThan(1);
+    // the line leaving stays lit until line 4 starts (9 s), then hands back to its plain text, dimmed
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(styleOf(rows[3])).toBe(before[3]);
+    clock += 300;
+    mode.paint(cue(4, 9000));
+    expect(rows[3]?.classList.contains("has-fx")).toBe(false);
+    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
+    // every row ends as a paused cut would have drawn it at once
+    const spread = rows.map(styleOf);
+    const cut = drift(0, lookFor(), EIGHT);
+    cut.mode.paint(cue(4, 9100, false));
+    expect(cut.rows.map(styleOf)).toEqual(spread);
+  });
+
+  it("restyles everything still waiting at once before the stage copies the scene, or for a new look", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    mode.freeze();
+    // the line leaving is still lit on screen, and the copy shows it so
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    const frozen = rows.map(styleOf);
+    vi.advanceTimersByTime(16 * 12);
+    expect(rows.map(styleOf)).toEqual(frozen);
+    // a new look in the middle of the spread restyles every row in it
+    clock += 16;
+    mode.paint(cue(4, 10_700));
+    mode.restyle(lookFor({ colors: { lyric: "#ffffff", highlight: "#ff0000", dim: "#8d93a0" } }));
+    expect(styleOf(rows[5])).toBe("#ffffff/0");
+    // the line leaving now (lit until line 5 starts) and the one before (handed back and taken down
+    // as this change found it long past its time)
+    expect(styleOf(rows[4])).toBe("#ffffff/0");
+    expect(styleOf(rows[3])).toMatch(/^transparent\//u);
+    expect(rows[3]?.find("kw-fx")).toEqual([]);
+  });
+
+  it("leaves a line that is back in focus before its frame came with its overlay", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    // a seek straight back to line 3, before it hands back
+    clock += 16;
+    mode.paint(cue(3, 7500));
+    vi.advanceTimersByTime(16 * 12);
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+    expect(styleOf(rows[3])).toBe(`${lyric}/0`);
+    // line 4, left in its turn, hands back 200 ms on
+    clock += 200;
+    mode.paint(cue(3, 7700));
+    expect(rows[4]?.classList.contains("has-fx")).toBe(false);
+    expect(rows[3]?.classList.contains("has-fx")).toBe(true);
+  });
+
+  it("rests letters on an identity transform, never none, and word boxes out of focus on none", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    // the letters that move (a word that can't split draws one still run instead)
+    const letters = (r: FakeElement | undefined): string[] =>
+      (r?.find("kl") ?? []).filter((l) => l.getAnimations().length > 0).map((l) => l.style.getPropertyValue("transform"));
+    const boxes = (r: FakeElement | undefined): string[] => wordsOf(r).map((w) => w.style.getPropertyValue("transform"));
+    mode.paint(cue(3, 7100, false));
+    clock += 16;
+    mode.paint(cue(3, 8700));
+    vi.advanceTimersByTime(16 * 12);
+    // the line in focus: every letter of every copy has a transform at rest (its overlay's final pose)
+    expect(letters(rows[4]).length).toBeGreaterThan(0);
+    expect(letters(rows[4]).every((t) => t !== "" && t !== "none")).toBe(true);
+    // the rows around it: their word boxes carry none (an identity transform on every box cost the
+    // compositor a render pass a frame)
+    expect(new Set([...boxes(rows[2]), ...boxes(rows[3]), ...boxes(rows[5])])).toEqual(new Set(["none"]));
+  });
+});
+
+describe("Stack and Drift on the motion engine", () => {
+  it("move to a line 300 ms before it starts", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode, rows } = drift(0);
+      mode.paint(cue(0, 3800));
+      clock += 99;
+      mode.paint(cue(0, 3899));
+      expect(rows[0]?.classList.contains("is-focus")).toBe(true);
+      expect(scrolling(rows[1])).toEqual([]);
+      clock += 1;
+      // line 1 starts at 4.2 s: the list is on its way there at 3.9 s, the line waiting in focus
+      mode.paint(cue(0, 3900));
+      expect(rows[1]?.classList.contains("is-focus")).toBe(true);
+      expect(rows[1]?.classList.contains("has-fx")).toBe(true);
+      expect(scrolling(rows[1])).toHaveLength(1);
+      // that frame starts only the scroll; the line's words mount on the frames after, long before
+      // its first word, and the line leaving focus stops, still lit
+      expect(partOf(rows[1], 0, "kw-track")?.getAnimations() ?? []).toEqual([]);
+      expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+      vi.advanceTimersByTime(16 * 4);
+      expect(rows[0]?.classList.contains("has-fx")).toBe(true);
+      const wipe = partOf(rows[1], 0, "kw-track")?.getAnimations()[0];
+      expect(xIn(wipe?.values().transform)).toBeLessThan(0);
+      // the mode wakes for its own events: the old line hands back as line 1 starts (4.2 s), and its
+      // overlay goes as the list comes to rest (letting go of the scroll's animations in the same
+      // frame); then the break's dots at 8.95 s
+      expect(mode.nextChange(4000)).toBe(200);
+      clock += 300;
+      mode.paint(cue(1, 4200));
+      expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+      const rest = (scrolling(rows[1])[0]?.duration ?? 0) - RELEASE_MS;
+      expect(rest).toBeGreaterThan(420);
+      expect(mode.nextChange(4200)).toBeCloseTo(3900 + rest - 4200, 6);
+      clock += rest - 316;
+      mode.paint(cue(1, 3900 + rest));
+      expect(rows[0]?.find("kw-fx")).toEqual([]);
+      expect(scrolling(rows[1])).toEqual([]);
+      expect(mode.nextChange(4400)).toBe(8950 - 4400);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("glide from what is on screen when the song seeks one to three lines, either way", () => {
+    const { mode, rows } = drift(0, lookFor(), EIGHT);
+    mode.paint(cue(1, 3500));
+    clock += 16;
+    expect(mode.crossfades(cue(3, 7500))).toBe(false);
+    mode.paint(cue(3, 7500));
+    const down = scrolling(rows[2])[0];
+    expect(down?.startTime).toBe(clock);
+    clock += 150;
+    const shown = yIn(down?.values().transform);
+    // a seek back two lines, mid-glide: the list turns around from where it is, moving
+    expect(mode.crossfades(cue(1, 3700))).toBe(false);
+    mode.paint(cue(1, 3700));
+    expect(down?.cancelled).toBe(true);
+    const up = scrolling(rows[2])[0];
+    expect(up?.startTime).toBe(clock);
+    expect(Math.abs(yIn(valuesAt(up?.keyframes ?? [], 0).transform) - shown)).toBeLessThan(0.3);
+  });
+
+  it("re-light the focus line after a seek back past what its animations still cover", () => {
+    // Paper Lanterns' last line: "Light is a promise the water keeps" 16.4-20 s; its motion is over by
+    // about 21.3 s, and a paint at 21.7 s drops it. Seeking back to 17 s must not leave it fully lit.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { mode, rows } = drift(0);
+    // a paint, then the frames after it that mount the rest of the line
+    const paintAll = (c: Cue): void => {
+      mode.paint(c);
+      vi.advanceTimersByTime(16 * 12);
+    };
+    paintAll(cue(3, 16_500));
+    // the wipes drawing anything (an engine drops finished animations; the fake keeps them)
+    const tracks = (): FakeAnimation[] =>
+      wordsOf(rows[3])
+        .flatMap((w) => w.find("kw-track"))
+        .flatMap((e) => e.getAnimations())
+        .filter((a) => a.playState !== "finished");
+    const first = tracks();
+    expect(first).toHaveLength(7);
+    clock += 16;
+    paintAll(cue(3, 18_000));
+    // a seek the animations still cover needs nothing new
+    expect(tracks()).toEqual(first);
+    clock += 16;
+    paintAll(cue(3, 21_700));
+    clock += 16;
+    paintAll(cue(3, 17_000));
+    const after = tracks();
+    expect(after).toHaveLength(first.length);
+    expect(after.some((a) => first.includes(a))).toBe(false);
+    // "promise" (17.3 s) waits unlit at 17 s, "is" (16.9-17.1 s) is being lit
+    const drawing = (el: FakeElement | undefined): FakeAnimation | undefined => el?.getAnimations().find((a) => a.playState !== "finished");
+    const promise = drawing(partOf(rows[3], 3, "kw-track"));
+    expect(xIn(promise?.values().transform)).toBeLessThan(-50);
+    const is = drawing(partOf(rows[3], 1, "kw-track"));
+    expect(xIn(is?.values().transform)).toBeLessThan(0);
+    expect(xIn(is?.values().transform)).toBeGreaterThan(xIn(promise?.values().transform));
+  });
+
+  it("leave a ghost on a far seek that shows what was on screen, not the line's end", () => {
+    const { stage: s, root, scenes } = stage();
+    s.show({ kind: "lyrics", timeline: { lines: EIGHT, unsynced: false } }, "a");
+    clock += 1000;
+    s.render(1100);
+    clock += 300;
+    const word = scenes()[0]?.find("drift-row")[0]?.find("kw")[0];
+    const shown = word?.getAnimations()[0]?.values().transform;
+    expect(shown).not.toBe("translate(0px, 0px) scale(1)");
+    s.render(13_500);
+    const ghost = root.children.find((c) => c.classList.contains("ut-ghost"));
+    expect(ghost?.find("drift-row")[0]?.find("kw")[0]?.style.getPropertyValue("transform")).toBe(shown);
+  });
+
+  it("keep the scroll but draw the reduced karaoke in the lite tier", () => {
+    const { mode, rows } = drift(0, lookFor({}, { power: "lite" }));
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    expect(scrolling(rows[1])).toHaveLength(1);
+    const w = wordsOf(rows[1])[0];
+    expect(w?.getAnimations()).toEqual([]);
+    expect(w?.find("kw-win")[0]?.getAnimations()).toHaveLength(1);
+    expect(w?.find("kw-win")[0]?.style.getPropertyValue("mask-image")).toBe("");
+    expect(w?.find("kw-dark")[0]?.find("kl")).toEqual([]);
+    // a steady 0.6 bloom while it is sung, faded in and out
+    expect(w?.find("kw-glow")[0]?.getAnimations()[0]?.keyframes.map((k) => k.opacity)).toEqual([0, 0.6, 0.6, 0, 0]);
+    // an engine that wouldn't composite stepped keyframes (node's, WebKit) glides and fades smoothly
+    expect(scrolling(rows[1])[0]?.keyframes.every((k) => k.easing === undefined)).toBe(true);
+    expect(w?.find("kw-glow")[0]?.getAnimations()[0]?.keyframes.every((k) => k.easing === undefined)).toBe(true);
+  });
+
+  it("step the lite tier's scroll and fades where the compositor runs stepped keyframes", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36" });
+    const { mode, rows } = drift(0, lookFor({}, { power: "lite" }));
+    mode.paint(cue(0, 2000));
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    // the scroll holds each place for a 30th of a second, every row on the same beat
+    const glide = scrolling(rows[1])[0];
+    const frames = glide?.keyframes ?? [];
+    expect(frames.length).toBeGreaterThan(3);
+    expect(frames.slice(0, -1).every((k) => k.easing === HOLD)).toBe(true);
+    const beats = frames.slice(0, -1).map((k) => (Number(k.offset) * Number(glide?.duration)) / LITE_SCROLL_MS);
+    expect(beats.every((b) => Math.abs(b - Math.round(b)) < 1e-6)).toBe(true);
+    expect(scrolling(rows[2])[0]?.startTime).toBe(glide?.startTime);
+    // ending where the full tier's glide ends
+    expect(frames[frames.length - 1]?.transform).toBe(rows[1]?.style.getPropertyValue("transform"));
+    // the lit copy and the bloom fade in three steps
+    const w = wordsOf(rows[1])[0];
+    const eases = (el: FakeElement | undefined): Set<string> => new Set((el?.getAnimations()[0]?.keyframes ?? []).flatMap((k) => (k.easing ? [k.easing] : [])));
+    expect(eases(w?.find("kw-win")[0])).toEqual(new Set(["steps(3, start)"]));
+    expect(eases(w?.find("kw-glow")[0])).toEqual(new Set(["steps(3, start)"]));
+    // and the line leaving fades out in steps as it hands back (200 ms after a change made mid-line)
+    clock += 200;
+    mode.paint(cue(1, 4500));
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(wordsOf(rows[0])[0]?.find("kw-fx")[0]?.getAnimations()[0]?.options.easing).toBe("steps(3, start)");
+  });
+
+  it("only fade under reduced motion, and cut every line change for the stage to crossfade", () => {
+    const { mode, rows } = drift(0, lookFor({}, { motion: false }));
+    mode.paint(cue(0, 2000));
+    expect(mode.crossfades(cue(1, 4300))).toBe(true);
+    clock += 16;
+    mode.paint(cue(1, 4300));
+    expect(scrolling(rows[1])).toEqual([]);
+    expect(wordsOf(rows[1]).every((w) => w.getAnimations().length === 0)).toBe(true);
+    // no lead without motion: the list follows the stage's line, the old line handing back at once,
+    // its overlay gone without a fade; next, the dots
+    expect(rows[0]?.classList.contains("has-fx")).toBe(false);
+    expect(rows[0]?.find("kw-fx")).toEqual([]);
+    expect(mode.nextChange(4300)).toBe(8950 - 4300);
+    clock += 500;
+    mode.paint(cue(1, 4800));
+    expect(mode.nextChange(4800)).toBe(8950 - 4800);
+  });
+
+  it("fold the break's slot away once the list has moved past it", () => {
+    const { mode, host } = drift(0);
+    const slot = host.find("drift-break")[0];
+    mode.paint(cue(1, 8000));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("hidden");
+    clock += 16;
+    mode.paint(cue(2, 10_000, true, true));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("visible");
+    expect(slot?.style.getPropertyValue("will-change")).toBe("transform, opacity");
+    // E = 12.2 s: the list moves on to "Fold a wish...", the slot folding as it goes
+    clock += 16;
+    mode.paint(cue(2, 12_250, true, true));
+    expect(host.find("drift-row")[2]?.classList.contains("is-focus")).toBe(true);
+    clock += 3000;
+    mode.paint(cue(2, 15_000));
+    expect(slot?.style.getPropertyValue("visibility")).toBe("hidden");
+    expect(slot?.style.getPropertyValue("will-change")).toBe("auto");
+  });
+
+  it("set the look's letter-spacing and case, and measure with them", () => {
+    const l = resolveLook(settings(), null, { width: 1280, height: 720, dpr: 1, motion: true, unsynced: false }, pick("stack", { letterSpacing: 0.04, textCase: "upper" }));
+    const { mode, host, rows } = drift(0, l);
+    expect(host.find("drift")[0]?.style["letterSpacing"]).toBe("0.04em");
+    expect(rows[0]?.textContent).toBe("PAPER LANTERNS OVER THE RIVER");
+    mode.paint(cue(0, 2000));
+    expect(wordsOf(rows[0])[0]?.find("kw-win")[0]?.find("kl").map((x) => x.textContent).join("")).toBe("PAPER");
+  });
+
+  it("carry the karaoke's CSS variables, the dark shadow drawn for each row's own size", () => {
+    const long = parseLrc(`[00:01.00]${"placeholder words that keep on going ".repeat(9)}\n[00:09.00]short line`, 12_000);
+    const look = lookFor({ size: 140 });
+    const { host, rows } = drift(0, look, long);
+    const box = host.find("drift")[0];
+    expect(box?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, look.size));
+    expect(box?.style.getPropertyValue("--ut-bloom")).toBe(bloomShadow(look.colors.highlight, look.bloom));
+    expect(box?.style.getPropertyValue("--ut-hl")).toBe(look.colors.highlight);
+    // the color the sung words blend into: the cover's second one, or the highlight's neighbor
+    expect(box?.style.getPropertyValue("--ut-hl2")).toBe(look.colors.accent ?? accentFor(look.colors.highlight));
+    const size = Number.parseFloat(String(rows[0]?.style["fontSize"]));
+    expect(size).toBeLessThan(look.size);
+    expect(rows[0]?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, size));
+    expect(rows[1]?.style.getPropertyValue("--ut-dark")).toBe("");
   });
 });
 
@@ -866,42 +1600,51 @@ describe("the overlay's frame loop on a real stage", () => {
     source: "lrclib",
   });
 
-  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; controller: OverlayController }> {
+  async function overlay(): Promise<{ bridge: StubBridge; host: FakeElement; paints: number[]; checks: number[]; controller: OverlayController }> {
     const bridge = new StubBridge();
-    bridge.answers.get_settings = settings({ mode: "stack" });
+    bridge.answers.get_settings = settings();
     bridge.answers.get_now_playing = track("a");
     bridge.answers.get_lyrics = result("a", "loading");
-    // as overlay/main.ts wires them
+    // as overlay/main.ts wires them (with `?look=stack`)
     const host = new FakeElement("main");
     let controller: OverlayController | null = null;
-    const s = new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick() });
+    const s = keep(new LyricStage(asHtml(host), { onInvalidate: () => controller?.kick(), onSafePoint: () => controller?.safePoint() }));
     controller = new OverlayController(bridge, s, { gate: true, palettes: new PaletteCache(async () => null) });
+    controller.forceLook({ style: "stack" });
     const paints: number[] = [];
     const render = s.render.bind(s);
     s.render = (t: number): boolean => {
       paints.push(Date.now());
       return render(t);
     };
+    // the loop's check-ins without a frame (and quiet resyncs) go through retime
+    const checks: number[] = [];
+    const retime = s.retime.bind(s);
+    s.retime = (t: number, rate?: number, target?: number): boolean => {
+      checks.push(Date.now());
+      return retime(t, rate, target);
+    };
     await controller.start();
-    return { bridge, host, paints, controller };
+    return { bridge, host, paints, checks, controller };
   }
 
   /**
-   * Over the next `ms`, the loop only takes its 250 ms safety wake: the timer (246 ms) plus the next
-   * vsync, never two paints closer together, yet still awake.
+   * Over the next `ms`, the loop only takes its safety wake (every `sleep` ms): the timer plus the next
+   * vsync, never two paints closer, yet awake. `wakes` are the paints, or for a mode whose words run on
+   * the compositor (sleep 1000), the check-ins that follow the clock without a frame.
    */
-  function expectAsleep(paints: number[], ms: number, what: string): void {
-    const from = paints.length;
+  function expectAsleep(wakes: number[], ms: number, what: string, sleep = 250): void {
+    const from = wakes.length;
     run(ms);
-    const times = paints.slice(from);
+    const times = wakes.slice(from);
     const gaps = times.slice(1).map((t, i) => t - (times[i] ?? t));
-    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / 262));
-    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / 246));
-    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(246);
+    expect(times.length, what).toBeGreaterThanOrEqual(Math.floor(ms / (sleep + 12)));
+    expect(times.length, what).toBeLessThanOrEqual(Math.ceil(ms / (sleep - 4)));
+    expect(Math.min(...gaps), what).toBeGreaterThanOrEqual(sleep - 4);
   }
 
   it("sleeps through loading, after the last line and in empty states, and stops on pause", async () => {
-    const { bridge, host, paints, controller } = await overlay();
+    const { bridge, host, paints, checks, controller } = await overlay();
     // past the start-up kicks and the 1.5 s wait for artwork
     run(1600);
     expectAsleep(paints, 2000, "loading");
@@ -910,7 +1653,11 @@ describe("the overlay's frame loop on a real stage", () => {
     bridge.emit("lyrics", result("a", "found", paperLanterns));
     expect(host.find("drift-row").length).toBeGreaterThan(0);
     run(20_000 + LINGER_MS + 600 - (Date.now() - T0));
-    expectAsleep(paints, 5000, "after the last line");
+    // Stack's words run on the compositor: past its last line it only checks in once a second, and
+    // without a frame
+    const painted = paints.length;
+    expectAsleep(checks, 5000, "after the last line", 1000);
+    expect(paints.length).toBe(painted);
 
     for (const status of ["instrumental", "not-found"] as const) {
       bridge.emit("now-playing", track(status));
@@ -926,5 +1673,55 @@ describe("the overlay's frame loop on a real stage", () => {
     run(10_000);
     expect(paints.length - from).toBe(0);
     controller.destroy();
+  });
+});
+
+// Regression (prepare-timer-after-teardown): a Drift's next-line prepare timer outlived the mode (and
+// its DOM), and a stage built again when a face finished loading after it was destroyed.
+describe("teardown", () => {
+  it("leaves no timer of a destroyed Drift behind", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode } = drift(0);
+      mode.paint(cue(0, 1200));
+      // the next line's prepare is waiting for its idle slice
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      mode.destroy();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does nothing in a prepare step that was already due when the Drift was destroyed", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { mode } = drift(0);
+      mode.paint(cue(0, 1200));
+      // the step is already on its way: clearing its timer no longer stops it
+      const clear = vi.spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+      mode.destroy();
+      clear.mockRestore();
+      const made = vi.fn((tag: string) => new FakeElement(tag));
+      vi.stubGlobal("document", { createElement: made });
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      vi.runAllTimers();
+      expect(made).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("builds nothing in a destroyed stage when its face finishes loading", async () => {
+    const { stage: s } = stage();
+    s.show(lyricsView, "a");
+    const build = vi.spyOn(DriftMode.prototype, "build");
+    // a face of its own to load: the stage builds again once it is in
+    s.setPickedLook(pick("stack", { font: { family: "Syne", weight: 800 } }));
+    const before = build.mock.calls.length;
+    s.destroy();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(build.mock.calls.length).toBe(before);
   });
 });

@@ -1,4 +1,7 @@
-/** The prototype's procedural demo covers (original art), drawn on demand as PNG data URLs. */
+/**
+ * The demo covers (original procedural art), drawn on demand as PNG data URLs: the prototype's three,
+ * then one each for the look demos (tracks 7–9).
+ */
 type Draw = (x: CanvasRenderingContext2D) => void;
 
 const DRAWINGS: readonly Draw[] = [
@@ -53,6 +56,62 @@ const DRAWINGS: readonly Draw[] = [
       x.stroke();
     }
     x.globalAlpha = 1;
+  },
+  // Ledger Lines: a ruled page in black and white, a dark band with an ink stamp
+  (x) => {
+    x.fillStyle = "#e9e9e7";
+    x.fillRect(0, 0, 240, 240);
+    x.fillStyle = "#161616";
+    x.fillRect(0, 0, 240, 92);
+    x.strokeStyle = "#f2f2f2";
+    x.lineWidth = 5;
+    x.beginPath();
+    x.arc(184, 46, 24, 0, 7);
+    x.stroke();
+    x.fillStyle = "#a8a8a8";
+    for (let y = 112; y < 232; y += 15) x.fillRect(16, y, 208, 2);
+    x.fillStyle = "#262626";
+    [150, 188, 120, 172, 96, 160, 136, 182].forEach((w, i) => x.fillRect(16, 104 + i * 15, w, 6));
+    x.fillStyle = "#6e6e6e";
+    x.fillRect(36, 92, 3, 148);
+  },
+  // Strobe Hearts: neon on black, a magenta ring over a lime one, cyan strobe bars
+  (x) => {
+    x.fillStyle = "#07060a";
+    x.fillRect(0, 0, 240, 240);
+    x.lineWidth = 14;
+    x.strokeStyle = "#a8ff3e";
+    x.beginPath();
+    x.arc(148, 128, 56, 0, 7);
+    x.stroke();
+    x.strokeStyle = "#ff2fd0";
+    x.beginPath();
+    x.arc(94, 104, 56, 0, 7);
+    x.stroke();
+    x.fillStyle = "#3df2ff";
+    for (let i = 0; i < 5; i++) x.fillRect(0, 202 + i * 8, 240, 3);
+  },
+  // Glacier Nocturne: a cold night, a pale moon over two ridges of ice
+  (x) => {
+    const g = x.createLinearGradient(0, 0, 0, 240);
+    g.addColorStop(0, "#040b16");
+    g.addColorStop(1, "#0e2236");
+    x.fillStyle = g;
+    x.fillRect(0, 0, 240, 240);
+    x.fillStyle = "#c9dcea";
+    x.beginPath();
+    x.arc(170, 62, 20, 0, 7);
+    x.fill();
+    const ridge = (color: string, points: readonly [number, number][]): void => {
+      x.fillStyle = color;
+      x.beginPath();
+      x.moveTo(0, 240);
+      for (const [px, py] of points) x.lineTo(px, py);
+      x.lineTo(240, 240);
+      x.fill();
+    };
+    ridge("#3f6684", [[0, 170], [58, 118], [104, 160], [150, 112], [240, 180]]);
+    ridge("#16324a", [[0, 204], [80, 168], [140, 196], [200, 160], [240, 186]]);
   },
 ];
 

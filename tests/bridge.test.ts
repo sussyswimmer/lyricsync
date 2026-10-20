@@ -172,6 +172,13 @@ describe("mock bridge: initial state", () => {
     expect((await bridge.invoke("get_now_playing"))?.positionMs).toBe(0);
   });
 
+  it("takes Effects from ?settings=, clamped like update_settings", async () => {
+    const { bridge } = await mock(`?settings=${encodeURIComponent('{"effects":80}')}`);
+    expect((await bridge.invoke("get_settings")).effects).toBe(80);
+    const { bridge: loud } = await mock(`?settings=${encodeURIComponent('{"effects":400,"glow":"x"}')}`);
+    expect(await loud.invoke("get_settings")).toMatchObject({ effects: 100, glow: DEFAULT_SETTINGS.glow });
+  });
+
   it("ignores a malformed ?settings=", async () => {
     const { bridge } = await mock("?settings=%7Bnot-json");
     expect(await bridge.invoke("get_settings")).toEqual(DEFAULT_SETTINGS);
@@ -457,16 +464,22 @@ describe("mock bridge: settings", () => {
     expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: -9000 })).trackOffsetsMs).toEqual({ a: -2000, b: 2000 });
   });
 
-  it("removes a song's offset when it is set to zero", async () => {
+  it("keeps a song's own 0 and drops its offset (and its place among the nudged songs) for null", async () => {
     const { bridge, seen } = await mock();
     await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
     await bridge.invoke("set_track_offset", { trackKey: "b", ms: -50 });
-    expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: 0 })).trackOffsetsMs).toEqual({ b: -50 });
-    expect((await bridge.invoke("set_track_offset", { trackKey: "b", ms: -0 })).trackOffsetsMs).toEqual({});
+    expect((await bridge.invoke("set_track_offset", { trackKey: "a", ms: 0 })).trackOffsetsMs).toEqual({ a: 0, b: -50 });
+    const s = await bridge.invoke("set_track_offset", { trackKey: "b", ms: -0 });
+    expect(s.trackOffsetsMs).toEqual({ a: 0, b: 0 });
+    expect(Object.is(s.trackOffsetsMs["b"], 0)).toBe(true);
+    expect(s.nudgedTracks).toEqual(["a", "b"]);
+    const reset = await bridge.invoke("set_track_offset", { trackKey: "a", ms: null });
+    expect(reset.trackOffsetsMs).toEqual({ b: 0 });
+    expect(reset.nudgedTracks).toEqual(["b"]);
     await tick();
     seen.clear();
-    // Zero for a song without an offset changes nothing.
-    await bridge.invoke("set_track_offset", { trackKey: "c", ms: 0 });
+    // Dropping the offset of a song without one changes nothing.
+    await bridge.invoke("set_track_offset", { trackKey: "c", ms: null });
     await tick();
     expect(seen.settings).toEqual([]);
   });
@@ -480,12 +493,12 @@ describe("mock bridge: settings", () => {
     expect(seen.settings).toEqual([]);
   });
 
-  it("replaces trackOffsetsMs whole from update_settings, dropping zero and invalid entries", async () => {
+  it("replaces trackOffsetsMs whole from update_settings, keeping 0 and dropping invalid entries", async () => {
     const { bridge } = await mock();
     await bridge.invoke("set_track_offset", { trackKey: "a", ms: 100 });
     const offsets = { b: 50, c: 0, d: 5000, e: "x", f: Number.NaN } as unknown as Record<string, number>;
     const s = await bridge.invoke("update_settings", { patch: { trackOffsetsMs: offsets } });
-    expect(s.trackOffsetsMs).toEqual({ b: 50, d: 2000 });
+    expect(s.trackOffsetsMs).toEqual({ b: 50, c: 0, d: 2000 });
   });
 
   it("emits settings-changed only for a real change", async () => {
@@ -534,9 +547,12 @@ describe("mergeSettings", () => {
     displays: "all",
     globalOffsetMs: 250,
     trackOffsetsMs: { "a|b|c|1": -150 },
+    nudgedTracks: ["a|b|c|1"],
     enabled: false,
     launchAtLogin: true,
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
+    effects: 80,
+    effectsMode: false,
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -551,17 +567,35 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled and launchAtLogin.
-      expect(next).toEqual(junk === true ? { ...custom, autoColor: true, enabled: true, launchAtLogin: true } : custom);
+      // A boolean is a valid autoColor, enabled, launchAtLogin and effectsMode; an array a valid
+      // nudgedTracks, its entries that aren't strings dropped.
+      const kept = Array.isArray(junk) ? { ...custom, nudgedTracks: [] } : custom;
+      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true } : kept);
     }
   });
 
   it("clamps every number to the SPEC range, ends included", () => {
-    const high = mergeSettings(custom, { size: 500, curve: 300, yPos: 150, glow: 101, opacity: 120, globalOffsetMs: 9999, font: { weight: 1000 } });
-    expect(high).toMatchObject({ size: 140, curve: 100, yPos: 100, glow: 100, opacity: 100, globalOffsetMs: 2000, font: { family: "Syne", weight: 900 } });
-    const low = mergeSettings(custom, { size: 10, curve: -300, yPos: -1, glow: -5, opacity: 5, globalOffsetMs: -9999, font: { weight: 50 } });
-    expect(low).toMatchObject({ size: 22, curve: -100, yPos: 0, glow: 0, opacity: 20, globalOffsetMs: -2000, font: { weight: 100 } });
-    expect(mergeSettings(custom, { size: 22, opacity: 100, glow: 12.5 })).toMatchObject({ size: 22, opacity: 100, glow: 12.5 });
+    const high = mergeSettings(custom, { size: 500, curve: 300, yPos: 150, glow: 101, opacity: 120, globalOffsetMs: 9999, font: { weight: 1000 }, effects: 150 });
+    expect(high).toMatchObject({ size: 140, curve: 100, yPos: 100, glow: 100, opacity: 100, globalOffsetMs: 2000, font: { family: "Syne", weight: 900 }, effects: 100 });
+    const low = mergeSettings(custom, { size: 10, curve: -300, yPos: -1, glow: -5, opacity: 5, globalOffsetMs: -9999, font: { weight: 50 }, effects: -0.5 });
+    expect(low).toMatchObject({ size: 22, curve: -100, yPos: 0, glow: 0, opacity: 20, globalOffsetMs: -2000, font: { weight: 100 }, effects: 0 });
+    expect(mergeSettings(custom, { size: 22, opacity: 100, glow: 12.5, effects: 62.5 })).toMatchObject({ size: 22, opacity: 100, glow: 12.5, effects: 62.5 });
+    expect(mergeSettings(custom, { effects: 0 }).effects).toBe(0);
+    expect(mergeSettings(custom, { effects: 100 }).effects).toBe(100);
+  });
+
+  it("takes effects as a number only, as the Rust store does (contract v4)", () => {
+    for (const junk of ["50", "lively", true, null, [50], { level: 50 }, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(mergeSettings(custom, { effects: junk }).effects).toBe(80);
+    }
+    expect(mergeSettings(custom, { effects: 20 })).toEqual({ ...custom, effects: 20 });
+  });
+
+  it("takes effectsMode as a boolean only, as the Rust store does (contract v5)", () => {
+    for (const junk of ["true", 1, 0, null, [true], { on: true }]) {
+      expect(mergeSettings(custom, { effectsMode: junk }).effectsMode).toBe(false);
+    }
+    expect(mergeSettings(custom, { effectsMode: true })).toEqual({ ...custom, effectsMode: true });
   });
 
   it("changes only the keys a partial colors or font object has", () => {
@@ -595,10 +629,19 @@ describe("mergeSettings", () => {
     for (const patch of [null, undefined, [{ size: 30 }], "size", 30]) expect(mergeSettings(custom, patch)).toEqual(custom);
   });
 
-  it("replaces track offsets whole: each clamped, zero and junk entries dropped", () => {
+  it("replaces track offsets whole: each clamped, 0 kept, junk entries dropped", () => {
     const s = mergeSettings(custom, { trackOffsetsMs: { a: 5000, b: -10, c: Number.NaN, d: "x", e: 0, f: -0, g: null } });
-    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10 });
+    expect(s.trackOffsetsMs).toEqual({ a: 2000, b: -10, e: 0, f: 0 });
+    expect(Object.is(s.trackOffsetsMs["f"], 0)).toBe(true);
     expect(mergeSettings(custom, { trackOffsetsMs: [5] }).trackOffsetsMs).toEqual(custom.trackOffsetsMs);
+  });
+
+  it("replaces nudgedTracks whole: strings only, each once at its last place, the newest nine (contract v7)", () => {
+    const keys = Array.from({ length: 12 }, (_, i) => `k${i}`);
+    const s = mergeSettings(custom, { nudgedTracks: [...keys, 5, "k10", null] });
+    expect(s.nudgedTracks).toEqual(["k3", "k4", "k5", "k6", "k7", "k8", "k9", "k11", "k10"]);
+    expect(mergeSettings(custom, { nudgedTracks: "k1" }).nudgedTracks).toEqual(custom.nudgedTracks);
+    expect(mergeSettings(custom, { nudgedTracks: [] }).nudgedTracks).toEqual([]);
   });
 
   it("takes enabled and launchAtLogin as booleans only (contract v3)", () => {
@@ -650,7 +693,8 @@ describe("migrateSettings", () => {
       opacity: 55,
       displays: "all",
       globalOffsetMs: 120.5,
-      trackOffsetsMs: { "x|y|z|200": 90, far: -2000 },
+      // a 0 is a song's own offset since contract v7
+      trackOffsetsMs: { "x|y|z|200": 90, zero: 0, far: -2000 },
     });
   });
 
@@ -661,6 +705,20 @@ describe("migrateSettings", () => {
     expect(s).toMatchObject({ enabled: true, launchAtLogin: false, shortcuts: DEFAULT_SETTINGS.shortcuts });
     s.shortcuts.toggleLyrics = "";
     expect(DEFAULT_SETTINGS.shortcuts.toggleLyrics).toBe("CmdOrCtrl+Alt+Shift+L");
+  });
+
+  it("gives contract v3 settings the v4 default: Effects at 50, as picked", () => {
+    const v3: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), size: 70 };
+    delete v3["effects"];
+    expect(migrateSettings(v3)).toEqual({ ...DEFAULT_SETTINGS, size: 70 });
+    expect(migrateSettings(v3).effects).toBe(50);
+  });
+
+  it("gives contract v4 settings the v5 default: Effects mode on", () => {
+    const v4: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effects: 30 };
+    delete v4["effectsMode"];
+    expect(migrateSettings(v4)).toEqual({ ...DEFAULT_SETTINGS, effects: 30 });
+    expect(migrateSettings(v4).effectsMode).toBe(true);
   });
 
   it("keeps what it knows from a newer version", () => {
@@ -678,15 +736,20 @@ describe("migrateSettings", () => {
 });
 
 describe("withTrackOffset", () => {
-  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), trackOffsetsMs: { a: -150 } };
+  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), trackOffsetsMs: { a: -150 }, nudgedTracks: ["a"] };
 
-  it("sets, clamps and removes a song's offset without touching the others", () => {
-    expect(withTrackOffset(base, "k", 50).trackOffsetsMs).toEqual({ a: -150, k: 50 });
+  it("sets and clamps a song's own offset (0 included) without touching the others, and makes it the newest nudged", () => {
+    expect(withTrackOffset(base, "k", 50)).toMatchObject({ trackOffsetsMs: { a: -150, k: 50 }, nudgedTracks: ["a", "k"] });
     expect(withTrackOffset(base, "k", 5000).trackOffsetsMs).toEqual({ a: -150, k: 2000 });
     expect(withTrackOffset(base, "a", -9000).trackOffsetsMs).toEqual({ a: -2000 });
-    expect(withTrackOffset(base, "a", 0).trackOffsetsMs).toEqual({});
-    expect(withTrackOffset(base, "a", -0).trackOffsetsMs).toEqual({});
+    expect(withTrackOffset(base, "a", 0).trackOffsetsMs).toEqual({ a: 0 });
+    expect(Object.is(withTrackOffset(base, "a", -0).trackOffsetsMs["a"], 0)).toBe(true);
     expect(base.trackOffsetsMs).toEqual({ a: -150 });
+  });
+
+  it("drops the song's own offset and its place for null", () => {
+    expect(withTrackOffset(base, "a", null)).toMatchObject({ trackOffsetsMs: {}, nudgedTracks: [] });
+    expect(withTrackOffset(base, "other", null)).toEqual(base);
   });
 
   it("throws for a non-finite offset", () => {
@@ -1509,19 +1572,22 @@ describe("demo covers with a canvas", () => {
 
   it("draws every cover once at 240 px and caches the data URL", async () => {
     const { covers, canvases, calls } = await withCanvas(true);
-    expect(covers.COVER_COUNT).toBe(3);
+    // the prototype's three, then one for each look demo (tracks 7–9)
+    expect(covers.COVER_COUNT).toBe(6);
     const urls = Array.from({ length: covers.COVER_COUNT }, (_, i) => covers.demoCover(i));
-    expect(urls).toEqual(["data:image/png;base64,cover1", "data:image/png;base64,cover2", "data:image/png;base64,cover3"]);
-    expect(canvases.map((c) => [c.width, c.height])).toEqual([
-      [240, 240],
-      [240, 240],
-      [240, 240],
-    ]);
+    expect(urls).toEqual(Array.from({ length: 6 }, (_, i) => `data:image/png;base64,cover${i + 1}`));
+    expect(canvases.map((c) => [c.width, c.height])).toEqual(Array.from({ length: 6 }, () => [240, 240]));
     expect(calls).toContain("fillRect");
     const drawn = calls.length;
     expect(covers.demoCover(1)).toBe(urls[1]);
-    expect(canvases).toHaveLength(3);
+    expect(canvases).toHaveLength(6);
     expect(calls).toHaveLength(drawn);
+  });
+
+  it("has a cover for every demo track that names one, each used once from track 7 on", async () => {
+    const { covers } = await withCanvas(true);
+    for (const t of MOCK_TRACKS) if (t.cover !== null) expect(t.cover, t.title).toBeLessThan(covers.COVER_COUNT);
+    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5]);
   });
 
   it("returns null for an unknown cover or when there is no 2D context", async () => {

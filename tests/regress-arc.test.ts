@@ -1,22 +1,25 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import { parseLrc, type Line } from "../src/core/lrc";
-import { dropShadow, resolveLook, rgba, snap, type Frame, type Look } from "../src/overlay/look";
+import { dropShadow, resolveLook, snap, withBloom, type Frame, type Look } from "../src/overlay/look";
 import {
   arcGeometry,
   arcLength,
   ArcMode,
   clearNeighbor,
-  glideFrames,
+  glideAt,
   glideFrom,
   isRtl,
-  leaveFrames,
+  leaveAt,
   reach,
   type Placed,
   type Run,
   type Slot,
 } from "../src/overlay/modes/arc";
 import type { Cue } from "../src/overlay/modes/types";
+import { findInterludes, type Interlude } from "../src/overlay/motion/interlude";
+import { leadTimes } from "../src/overlay/motion/schedule";
+import { FakeAnimation, FakeAnimationHost } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 const look = (over: Partial<Settings>, frame: Partial<Frame> = {}): Look =>
@@ -50,59 +53,54 @@ const FRAMES: [string, Partial<Frame>][] = [
   ["settings preview", { width: 340, height: 191, referenceHeight: 680 }],
 ];
 
-// Regression (arc-height-clamp): resolveLook keeps a flat line on screen, but the curve lifted the
-// middle (or the ends) half a bend further, so at Height 0–10% the active word was off the top at
-// 1080p with the default curve, and near 100% a sag (or a long arched line) ran off the bottom.
-describe("Arc geometry: the focus line stays on screen at any Height and Curve", () => {
+// Regression (arc-height-clamp): the curve lifted the middle (or the ends) half a bend past where the
+// line was placed, so with the line high on screen (Height 0–10%, before contract v6) the active word
+// was off the top at 1080p with the default curve, and with it low a sag (or a long arched line) ran
+// off the bottom. The song's widest line is always centered now, and a bend that would take its middle
+// or its ends closer than EDGE font sizes to an edge gets flatter.
+describe("Arc geometry: the focus line stays on screen at any Curve and Size", () => {
   it.each(FRAMES)("%s", (_, frame) => {
     for (const size of [22, 58, 140])
       for (const curve of [-100, -60, -38, 0, 38, 60, 100])
-        for (const yPos of [0, 5, 10, 25, 46, 75, 90, 95, 100])
-          for (const r of [0, 0.3, 0.6, 0.94, 1]) {
-            const l = look({ size, curve, yPos }, frame);
-            const [top, bottom] = baselineSpan(l, r);
-            const where = `size ${size} curve ${curve} yPos ${yPos} reach ${r}`;
-            expect(top - ABOVE * l.size, where).toBeGreaterThanOrEqual(0);
-            expect(bottom + BELOW * l.size, where).toBeLessThanOrEqual(l.height);
-          }
+        for (const r of [0, 0.3, 0.6, 0.94, 1]) {
+          const l = look({ size, curve }, frame);
+          const [top, bottom] = baselineSpan(l, r);
+          const where = `size ${size} curve ${curve} reach ${r}`;
+          expect(top - ABOVE * l.size, where).toBeGreaterThanOrEqual(0);
+          expect(bottom + BELOW * l.size, where).toBeLessThanOrEqual(l.height);
+        }
   });
 
-  it("puts the arched middle, active word included, on screen at Height 0 (the reported case)", () => {
-    const l = look({ yPos: 0, curve: 38 });
-    const g = arcGeometry(l, 0.6);
-    expect(g.bend).toBeGreaterThan(150);
-    expect(g.mid - ABOVE * l.size).toBeGreaterThanOrEqual(0);
-  });
-
-  it("leaves mid-screen placement exactly as before: the bend split evenly around the Height", () => {
-    const l = look({ yPos: 46, curve: 38 });
-    const g = arcGeometry(l, 1);
+  it("centers the song's widest line on the middle of the stage: its middle as far above it as its ends below", () => {
+    for (const curve of [-100, -38, 38, 100])
+      for (const r of [0, 0.4, 0.75, 1]) {
+        const l = look({ curve });
+        const g = arcGeometry(l, r);
+        expect(l.y).toBe(540);
+        // the glyphs' middle, at the line's middle and where it ends
+        const middle = g.mid - 0.35 * l.size;
+        expect(middle + (middle + g.bend * r * r), `curve ${curve} reach ${r}`).toBeCloseTo(2 * l.y, 6);
+      }
+    const g = arcGeometry(look({ curve: 38 }));
     expect(g.bend).toBeCloseTo(0.38 * 1080 * 0.42, 6);
-    expect(g.mid).toBeCloseTo(l.y + 0.35 * l.size - g.bend / 2, 6);
+    expect(g.mid).toBeCloseTo(540 + 0.35 * 58 - g.bend / 2, 6);
+    // a song of short lines sits its arch lower than one whose lines run the whole path
+    expect(arcGeometry(look({ curve: 38 }), 0.5).mid).toBeGreaterThan(g.mid);
   });
 
-  it("matches a flat line's placement at curve 0, across the whole Height range", () => {
+  it("matches a flat line's placement at curve 0, whatever yPos says", () => {
     for (const yPos of [0, 10, 46, 90, 100]) {
       const l = look({ yPos, curve: 0 });
-      expect(arcGeometry(l, 1)).toMatchObject({ bend: 0, mid: l.y + 0.35 * l.size });
-    }
-  });
-
-  it("still moves the line down as Height rises, and uses more of the range when the lines are short", () => {
-    for (const curve of [-100, 38, 100]) {
-      const mids = [0, 10, 25, 46, 75, 90, 100].map((yPos) => arcGeometry(look({ yPos, curve }), 0.6).mid);
-      for (let i = 1; i < mids.length; i++) expect(mids[i]).toBeGreaterThanOrEqual(mids[i - 1] ?? Infinity);
-      const full = arcGeometry(look({ yPos: 100, curve }), 1).mid;
-      expect(arcGeometry(look({ yPos: 100, curve }), 0.5).mid).toBeGreaterThanOrEqual(full);
+      expect(arcGeometry(l)).toMatchObject({ bend: 0, mid: 540 + 0.35 * l.size });
     }
   });
 
   it("flattens a curve too deep for a tiny stage instead of cutting it off, and never yields NaN", () => {
-    const l = look({ size: 140, curve: 100, yPos: 0 }, { width: 400, height: 120, referenceHeight: 120 });
-    const g = arcGeometry(l, 1);
+    const l = look({ size: 140, curve: 100 }, { width: 400, height: 120, referenceHeight: 120 });
+    const g = arcGeometry(l);
     expect(Math.abs(g.bend)).toBeLessThanOrEqual(l.height);
     expect(Number.isFinite(g.mid)).toBe(true);
-    const empty = arcGeometry(look({}, { width: 0, height: 0 }), 1);
+    const empty = arcGeometry(look({}, { width: 0, height: 0 }));
     expect([empty.bend, empty.mid, empty.minFit].every(Number.isFinite)).toBe(true);
   });
 });
@@ -240,9 +238,11 @@ describe("clearNeighbor: the outer neighbor's ends stay clear of the focus line"
 const slot = (k: number): Slot => ({ name: k < 0 ? "prev" : k > 0 ? "next" : "focus", k, rise: k < 0 ? -1.25 : k > 0 ? 1.4 : 0 });
 const placed = (k: number, i: number, size: number, mid: number): Placed => ({ slot: slot(k), i, size, natural: 500, mid, bend: 172 });
 
+
 // Regression (arc-glide-overlap): stepping lines, the incoming next line faded in from the first
 // frame, only half a focus size below its slot, and drew through the descenders of the line gliding
-// up into focus for the first ~130 ms.
+// up into focus for the first ~130 ms. Glides run on a spring now: each band's shape is a function of
+// how far along the spring is (past 1 while it overshoots).
 describe("Arc step glide", () => {
   it("starts each line where it was drawn a moment ago, pushes included", () => {
     // the old next line had been pushed 20 px down (under a sag); the new previous line is pushed 20 px up
@@ -254,25 +254,26 @@ describe("Arc step glide", () => {
     expect(next).toEqual({ dy: 29, scale: 1, appear: true });
   });
 
-  it("keeps the incoming next line transparent until the line gliding into focus has left its slot", () => {
-    const frames = glideFrames({ dy: 29, scale: 1, appear: true });
-    const hold = frames.find((f) => f.offset !== 0 && f.opacity === 0);
-    expect(frames[0]).toMatchObject({ offset: 0, opacity: 0, transform: "translateY(29.00px) scale(1.0000)" });
-    expect(hold?.offset).toBeGreaterThanOrEqual(0.35);
-    expect(hold?.transform).toBeUndefined(); // the move itself runs the whole glide
-    expect(frames[frames.length - 1]).toMatchObject({ offset: 1, opacity: 1, transform: "none" });
+  it("keeps a line coming into view transparent until the line gliding out of its slot has left", () => {
+    const from = { dy: 29, scale: 1, appear: true };
+    expect(glideAt(from, 0)).toEqual({ dy: 29, scale: 1, opacity: 0 });
+    expect(glideAt(from, 0.4).opacity).toBe(0);
+    expect(glideAt(from, 0.7).opacity).toBeGreaterThan(0);
+    expect(glideAt(from, 1)).toEqual({ dy: 0, scale: 1, opacity: 1 });
+    // past its place while the spring overshoots, and fully there
+    expect(glideAt(from, 1.05).dy).toBeCloseTo(-1.45, 9);
+    expect(glideAt(from, 1.05).opacity).toBe(1);
   });
 
   it("moves lines that stay on screen without touching their opacity", () => {
-    for (const f of glideFrames({ dy: -90, scale: 2.08, appear: false })) expect(f.opacity).toBeUndefined();
+    for (const x of [0, 0.3, 0.8, 1.05]) expect(glideAt({ dy: -90, scale: 2.08, appear: false }, x).opacity).toBe(1);
+    expect(glideAt({ dy: -90, scale: 2.08, appear: false }, 0).scale).toBe(2.08);
   });
 
-  it("has the outgoing previous line gone by halfway, before the old focus line shrinks into its slot", () => {
-    const frames = leaveFrames(-120);
-    const gone = frames.find((f) => f.opacity === 0);
-    expect(gone?.offset).toBeLessThanOrEqual(0.5);
-    expect(frames[frames.length - 1]).toMatchObject({ transform: "translateY(-120.00px)", opacity: 0 });
-    expect(leaveFrames(0)).toEqual([{ opacity: 1 }, { opacity: 0 }]);
+  it("has a line leaving view gone by halfway, before the old focus line shrinks into its slot", () => {
+    expect(leaveAt(-120, 0).opacity).toBe(1);
+    expect(leaveAt(-120, 0.5).opacity).toBe(0);
+    expect(leaveAt(-120, 1)).toEqual({ dy: -120, opacity: 0 });
   });
 });
 
@@ -283,30 +284,37 @@ describe("arc.css", () => {
   // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node, so
   // an import made this test pass on an empty string. A non-literal specifier, because the strict type
   // check runs without node's types.
-  let arcCss = "";
+  let css = "";
   beforeAll(async () => {
     const fsModule = "node:fs";
     const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-    arcCss = fs.readFileSync(new URL("../src/styles/arc.css", import.meta.url), "utf8");
+    css = fs.readFileSync(new URL("../src/styles/arc.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   });
 
-  it("has no transitions on the filtered bands", () => {
-    expect(arcCss.trim()).not.toBe("");
-    const css = arcCss.replace(/\/\*[\s\S]*?\*\//g, "");
+  it("has no transitions on the filtered bands: only the whole stage of lines fades (on the compositor)", () => {
+    expect(css.trim()).not.toBe("");
     expect(css).toContain(".arc-line");
-    expect(css).not.toMatch(/transition\s*:/);
+    const transitions = [...css.matchAll(/([^{}]+)\{[^{}]*transition\s*:\s*([^;}]+)/gu)].map((m) => [m[1]?.trim(), m[2]?.trim()]);
+    expect(transitions).toEqual([
+      [".arc", "opacity 0.4s ease"],
+      [".arc", "none"],
+    ]);
+  });
+
+  it("sets the focus line's word boxes at the line-height arc.ts places letters by", () => {
+    expect(css).toMatch(/\.arc-focus\s*\{[^}]*line-height:\s*1\.2;/u);
+    expect(css).toMatch(/\.arc-word\s*\{[^}]*transform-origin:\s*0 0;/u);
   });
 });
 
 /*
- * Just enough DOM, HTML and SVG, for Arc to build, paint and restyle in node: elements with inline
- * styles and attributes, text half an em wide per character, Web Animations that only record
- * themselves, and counts of what a build costs (elements made, layout reads).
+ * Just enough DOM, HTML and SVG, for Arc to build, paint, glide and restyle in node: elements with
+ * inline styles and attributes, Web Animations that keep time on the mocked performance.now
+ * (tests/fake-motion.ts), and a count of the elements made. No layout (Arc falls back on its baseline
+ * estimate) and no canvas (text measures half an em per character).
  */
-const cost = { created: 0, measured: 0 };
-/** What the shared path measures: about 90% of a 1280 px stage, unless a test sets its own stage's. */
-const DEFAULT_PATH = 1160;
-let pathLength = DEFAULT_PATH;
+const cost = { created: 0 };
+let clock = 0;
 
 class FakeStyle {
   readonly props = new Map<string, string>();
@@ -314,34 +322,38 @@ class FakeStyle {
   setProperty(name: string, value: string): void {
     this.props.set(name, value);
   }
-}
-
-class FakeAnimation {
-  cancelled = false;
-  /** never settles: a band fading out stays in the tree */
-  readonly finished = new Promise<void>(() => undefined);
-  cancel(): void {
-    this.cancelled = true;
+  getPropertyValue(name: string): string {
+    return this.props.get(name) ?? "";
   }
 }
 
-class FakeNode {
+class FakeNode extends FakeAnimationHost {
   readonly tagName: string;
   readonly style = new FakeStyle();
   readonly attrs = new Map<string, string>();
-  readonly animations: FakeAnimation[] = [];
   children: FakeNode[] = [];
   parent: FakeNode | null = null;
+  dir = "";
   private own = "";
   private readonly classes = new Set<string>();
   readonly classList = {
     add: (...names: string[]): void => {
       for (const n of names) this.classes.add(n);
     },
+    remove: (...names: string[]): void => {
+      for (const n of names) this.classes.delete(n);
+    },
+    toggle: (name: string, force?: boolean): boolean => {
+      const on = force ?? !this.classes.has(name);
+      if (on) this.classes.add(name);
+      else this.classes.delete(name);
+      return on;
+    },
     contains: (name: string): boolean => this.classes.has(name),
   };
 
   constructor(tag: string) {
+    super();
     this.tagName = tag;
     cost.created++;
   }
@@ -364,12 +376,28 @@ class FakeNode {
   get isConnected(): boolean {
     return this.parent !== null;
   }
+  get parentNode(): FakeNode | null {
+    return this.parent;
+  }
   append(...nodes: FakeNode[]): void {
     for (const n of nodes) {
       n.remove();
       n.parent = this;
       this.children.push(n);
     }
+  }
+  prepend(...nodes: FakeNode[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeNode | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeNode | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
   }
   remove(): void {
     const p = this.parent;
@@ -379,175 +407,485 @@ class FakeNode {
   }
   setAttribute(name: string, value: string): void {
     if (name === "class") this.className = value;
-    else this.attrs.set(name, value);
+    else this.attrs.set(name, String(value));
   }
   setAttributeNS(_ns: string, name: string, value: string): void {
     this.setAttribute(name, value);
   }
-  animate(): FakeAnimation {
-    const anim = new FakeAnimation();
-    this.animations.push(anim);
-    return anim;
-  }
-  /** the shared path (see pathLength) */
-  getTotalLength(): number {
-    cost.measured++;
-    return pathLength;
-  }
-  getComputedTextLength(): number {
-    cost.measured++;
-    return this.textContent.length * Number(this.attrs.get("font-size") ?? "16") * 0.5;
+  getAttribute(name: string): string | null {
+    return this.attrs.get(name) ?? null;
   }
   find(className: string): FakeNode[] {
     return this.children.flatMap((c) => [...(c.classList.contains(className) ? [c] : []), ...c.find(className)]);
   }
-  /** The subtree as data, band ids (fresh per build and instance) left out. */
-  snapshot(): unknown {
-    const plain = (v: string): string => v.replace(/ut-arc\d+-\d+/g, "ut-arc");
-    const style = Object.entries(this.style).filter(([k]) => k !== "props");
-    return {
-      tag: this.tagName,
-      className: this.className,
-      attrs: [...this.attrs].map(([k, v]) => [k, plain(v)]).sort(),
-      style: [...style, ...this.style.props].sort(),
-      own: this.own,
-      children: this.children.map((c) => c.snapshot()),
-    };
+  /** This node and every node under it. */
+  all(): FakeNode[] {
+    return [this, ...this.children.flatMap((c) => c.all())];
   }
 }
 
+const fakeDocument = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+  createElement: (tag: string) => new FakeNode(tag),
+  createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
+  ...extra,
+});
+
+/** Modes a test made: destroyed after it, while its fake document is still in place. */
+const live: ArcMode[] = [];
+
+beforeEach(() => {
+  clock = 10_000;
+  cost.created = 0;
+  vi.stubGlobal("document", fakeDocument());
+  vi.spyOn(performance, "now").mockImplementation(() => clock);
+});
+
+afterEach(() => {
+  for (const mode of live.splice(0)) mode.destroy();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
 const asHost = (el: FakeNode): HTMLElement => el as unknown as HTMLElement;
 const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
-const cue = (line: number, t: number, running = true): Cue => ({ line, t, waiting: false, running });
-const stageLook = (over: Partial<Settings>, frame: Partial<Frame> = {}): Look => look(over, { width: 1280, height: 720, ...frame });
+const LEADS = leadTimes(LINES);
+const BREAK = findInterludes(LINES)[0] as Interlude;
+const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, waiting, running, rate: running ? 1 : 0, target: t });
+const stageLook = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look => look({ curve: 38, ...over }, { width: 1280, height: 720, ...frame });
 const RED = { lyric: "#ffffff", highlight: "#ff3030", dim: "#404040" };
 
-function arcOn(l: Look): { mode: ArcMode; host: FakeNode; box: () => FakeNode | undefined } {
+function arcOn(l: Look, lines: readonly Line[] = LINES): { mode: ArcMode; box: () => FakeNode } {
   const host = new FakeNode("main");
   const mode = new ArcMode();
-  mode.build(asHost(host), LINES, l);
-  return { mode, host, box: () => host.children[0] };
+  live.push(mode);
+  mode.build(asHost(host), lines, l);
+  return { mode, box: () => host.children[0] as FakeNode };
 }
 
-/** A band's font size: its <text> (after <defs>) carries it. */
-const sizeOf = (band: FakeNode): number => Number(band.children[1]?.attrs.get("font-size") ?? "NaN");
-/** The focus line's word fills: band > text > textPath > tspans. */
-const focusFills = (box: FakeNode | undefined): (string | undefined)[] =>
-  (box?.find("arc-focus")[0]?.children[1]?.children[0]?.children ?? []).map((t) => t.style.props.get("fill"));
+/** Every SVG band: neighbors, and an unsynced focus line. */
+const bandsOf = (box: FakeNode): FakeNode[] => box.find("arc-line");
+const band = (box: FakeNode, name: "prev" | "next" | "calm"): FakeNode | undefined => box.find(`arc-${name}`)[0];
+/** A band's <text> (after its <defs>), which carries its size and fill. */
+const textOf = (b: FakeNode | undefined): FakeNode | undefined => b?.children[1];
+const sizeOf = (b: FakeNode | undefined): number => Number(textOf(b)?.attrs.get("font-size") ?? "NaN");
+/** The HTML focus lines: on screen, leaving, or prepared. */
+const groupsOf = (box: FakeNode): FakeNode[] => box.find("arc-focus");
+const wordsOf = (g: FakeNode | undefined): FakeNode[] => g?.find("arc-word") ?? [];
+const anims = (el: FakeNode | undefined): FakeAnimation[] => el?.getAnimations() ?? [];
+const scaleOf = (transform: unknown): number => Number(/scale\((-?[\d.]+)\)/u.exec(String(transform))?.[1] ?? "1");
+const angleOf = (transform: unknown): number => Number(/rotate\((-?[\d.]+)deg\)/u.exec(String(transform))?.[1] ?? "NaN");
+const xOf = (transform: unknown): number => Number(/^translate\((-?[\d.]+)px/u.exec(String(transform))?.[1] ?? "NaN");
+/** A focus line's words as read: each plain text (the hidden whole-word run, once letters are placed). */
+const textOfGroup = (g: FakeNode | undefined): string => (g?.find("kw-txt") ?? []).map((t) => (t.find("kw-hold")[0] ?? t).textContent).join(" ");
+const wordsText = (i: number): string => (LINES[i]?.words ?? []).map((w) => w.text.trimEnd()).join(" ");
 
-// Regression (arc-restyle-rebuild): Arc had no restyle, so every Glow, color or Size step rebuilt it,
-// and every build asked FontFaceSet.check about the whole song against the whole fallback stack at the
-// current size (about 30 ms a step). Settings drags in Arc, the default style, ran at 21-26 fps.
-describe("Arc restyle", () => {
-  beforeEach(() => {
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeNode(tag),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
+/** Steps from line 0 to line 1 at line 1's lead: the stage still says line 0. */
+function stepToLine1(mode: ArcMode): number {
+  mode.paint(cue(0, 2000));
+  const lead = LEADS[1] as number;
+  clock += lead + 1 - 2000;
+  mode.paint(cue(0, lead + 1));
+  return lead + 1;
+}
+
+describe("Arc focus line: HTML words on the curve, SVG neighbors", () => {
+  it("draws the focus line as karaoke word boxes in frames turned to the curve, with no glow band", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
+    expect(mode.paint(cue(1, 5000))).toBe(false);
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(1);
+    const g = groups[0] as FakeNode;
+    expect(g.tagName).toBe("div");
+    expect(g.classList.contains("kw-host")).toBe(true);
+    expect(g.classList.contains("has-fx")).toBe(true);
+    expect(g.style.props.get("--ut-hl")).toBe(l.colors.highlight);
+    expect(textOfGroup(g)).toBe(wordsText(1));
+    const words = wordsOf(g);
+    for (const w of words) {
+      expect(w.children[0]?.classList.contains("kw")).toBe(true);
+      expect(w.style.props.get("transform")).toMatch(/^translate\(-?[\d.]+px, -?[\d.]+px\) rotate\(-?[\d.]+deg\) translate\(-?[\d.]+px, -?[\d.]+px\)$/u);
+    }
+    // an arch: the words on the left tilt up, those on the right down, turning more toward the ends
+    const angles = words.map((w) => angleOf(w.style.props.get("transform")));
+    expect(angles[0]).toBeLessThan(0);
+    expect(angles[angles.length - 1]).toBeGreaterThan(0);
+    for (let k = 1; k < angles.length; k++) expect(angles[k]).toBeGreaterThan(angles[k - 1] ?? Infinity);
+    expect(box().find("arc-glow").length).toBe(0);
+    expect(bandsOf(box()).some((b) => b.classList.contains("arc-focus"))).toBe(false);
   });
 
-  it("takes new colors and glow in place: nothing built or measured, and a step's glide carries on", () => {
-    const { mode, box } = arcOn(stageLook({ glow: 30 }));
+  it("keeps the previous and next lines as dim, drop-shadowed SVG text on parallel paths", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
+    mode.paint(cue(1, 5000));
+    const bands = bandsOf(box());
+    expect(bands.map((b) => [b.tagName, b.textContent])).toEqual([
+      ["svg", LINES[0]?.text],
+      ["svg", LINES[2]?.text],
+    ]);
+    expect(band(box(), "prev")?.textContent).toBe(LINES[0]?.text);
+    for (const b of bands) {
+      expect(b.style.props.get("filter")).toBe(dropShadow(l, sizeOf(b)));
+      expect(textOf(b)?.style.props.get("fill")).toBe(l.colors.dim);
+      expect(textOf(b)?.children[0]?.tagName).toBe("textPath");
+      expect(sizeOf(b)).toBeLessThan(l.size);
+      expect(b.attrs.get("aria-hidden")).toBe("true");
+    }
+  });
+
+  it("places every copy of each letter on the curve: the lit, base, dark and bloom copies and the plain text", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { mode, box } = arcOn(stageLook({ curve: 60 }));
+    mode.paint(cue(1, 5000));
+    vi.advanceTimersByTime(16 * 20);
+    const counting = groupsOf(box())[0]?.find("kw")[0] as FakeNode;
+    const copies = ["kw-dark", "kw-glow", "kw-bwin", "kw-win", "kw-txt"].map((c) => counting.find(c)[0]?.find("kl") ?? []);
+    const placeOf = (letters: FakeNode[]): string[] => letters.map((k) => `${k.style.props.get("translate")} / ${k.style.props.get("rotate")}`);
+    const first = placeOf(copies[0] ?? []);
+    expect(first.length).toBe("Counting".length);
+    for (const letters of copies) expect(placeOf(letters)).toEqual(first);
+    // each letter turns a little further than the one before it, along the arch
+    const turns = (copies[0] ?? []).map((k) => Number.parseFloat(k.style.props.get("rotate") ?? "NaN"));
+    for (let k = 1; k < turns.length; k++) expect(turns[k]).toBeGreaterThan(turns[k - 1] ?? Infinity);
+  });
+
+  it("lays a right-to-left line out from the right, its words whole", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const rtl = parseLrc("[00:01.00]שלום עולם יפה\n[00:05.00]a second line", 20_000);
+    const { mode, box } = arcOn(stageLook(), rtl);
+    mode.paint(cue(0, 1500));
+    vi.advanceTimersByTime(16 * 10);
+    const g = groupsOf(box())[0];
+    const xs = wordsOf(g).map((w) => xOf(w.style.props.get("transform")));
+    expect(xs[0]).toBeGreaterThan(xs[1] ?? Infinity);
+    expect(xs[1]).toBeGreaterThan(xs[2] ?? Infinity);
+    for (const kw of g?.find("kw") ?? []) {
+      const letters = kw.find("kw-dark")[0]?.find("kl") ?? [];
+      expect(letters.length).toBe(1);
+      expect(letters[0]?.style.props.has("rotate")).toBe(false);
+    }
+  });
+});
+
+describe("Arc line change: a spring from the lead", () => {
+  it("moves to the next line at its lead, its words gliding up from where the next band drew them", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
     mode.paint(cue(0, 2000));
-    mode.paint(cue(1, 4300));
-    const bands = box()?.find("arc-line") ?? [];
-    expect(bands.length).toBe(4);
-    const gliding = bands.flatMap((b) => b.animations);
-    expect(gliding.length).toBeGreaterThan(0);
-    const before = { ...cost };
+    const old = groupsOf(box())[0] as FakeNode;
+    const nextSize = sizeOf(band(box(), "next"));
+    const lead = LEADS[1] as number;
+    expect(lead).toBeLessThan(LINES[1]?.start ?? 0);
+    expect(mode.nextChange(2000)).toBeCloseTo(lead - 2000, 6);
+    clock += lead + 1 - 2000;
+    expect(mode.paint(cue(0, lead + 1))).toBe(false);
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(2);
+    const g = groups.find((x) => x !== old) as FakeNode;
+    expect(textOfGroup(g)).toBe(wordsText(1));
+    for (const w of wordsOf(g)) {
+      const [glide] = anims(w);
+      expect(glide?.startTime).toBe(clock);
+      const frames = glide?.keyframes ?? [];
+      expect(frames.length).toBeGreaterThan(3);
+      expect(scaleOf(frames[0]?.transform)).toBeCloseTo(nextSize / l.size, 3);
+      expect(scaleOf(frames[frames.length - 1]?.transform)).toBe(1);
+      // a spring: it overshoots, then settles
+      expect(Math.max(...frames.map((k) => scaleOf(k.transform)))).toBeGreaterThan(1.005);
+      expect(Number(glide?.duration)).toBeGreaterThan(600);
+    }
+    // the line arrives dim, brightening to full
+    const arrive = anims(g).find((a) => a.keyframes[0]?.opacity !== undefined);
+    expect(arrive?.keyframes[0]?.opacity).toBe("0.6");
+    expect(arrive?.keyframes[arrive.keyframes.length - 1]?.opacity).toBe("1");
+    expect(g.style.props.get("opacity")).toBe("1");
+  });
+
+  it("glides the old focus line onto the previous band, then hands back to it", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
+    mode.paint(cue(0, 2000));
+    const old = groupsOf(box())[0] as FakeNode;
+    stepToLine1(mode);
+    expect(old.isConnected).toBe(true);
+    expect(old.classList.contains("has-fx")).toBe(true);
+    const prev = band(box(), "prev");
+    expect(prev?.textContent).toBe(LINES[0]?.text);
+    // its words end where the band draws them: at the band's size
+    for (const w of wordsOf(old)) {
+      const frames = anims(w)[0]?.keyframes ?? [];
+      expect(scaleOf(frames[0]?.transform)).toBe(1);
+      expect(scaleOf(frames[frames.length - 1]?.transform)).toBeCloseTo(sizeOf(prev) / l.size, 3);
+    }
+    // it dims as it goes and fades out once there, while the band shows under it
+    const fade = anims(old).find((a) => a.keyframes[0]?.opacity !== undefined);
+    const ops = (fade?.keyframes ?? []).map((k) => Number(k.opacity));
+    expect(ops[0]).toBe(1);
+    expect(ops[ops.length - 1]).toBe(0);
+    expect(old.style.props.get("opacity")).toBe("0");
+    const show = anims(prev)[0]?.keyframes ?? [];
+    expect(show[0]?.opacity).toBe("0");
+    expect(show[show.length - 1]?.opacity).toBe("1");
+    // the band is in place before the line has faded out: the two never thin out together
+    const at = (frames: Keyframe[], o: number): number => Number(frames.find((k) => Number(k.offset) >= o)?.opacity);
+    const bandIn = Number(show.find((k) => Number(k.opacity) >= 1)?.offset);
+    expect(at(fade?.keyframes ?? [], bandIn)).toBeGreaterThan(0);
+    // the new next line rises in, transparent at first
+    const next = band(box(), "next");
+    expect(next?.textContent).toBe(LINES[2]?.text);
+    expect(anims(next)[0]?.keyframes[0]?.opacity).toBe("0");
+  });
+
+  it("takes the leaving line down once its glide is over, in a paint it wakes for, and lets go of the glides", () => {
+    const { mode, box } = arcOn(stageLook());
+    mode.paint(cue(0, 2000));
+    const old = groupsOf(box())[0] as FakeNode;
+    const t = stepToLine1(mode);
+    const wake = mode.nextChange(t);
+    expect(wake).toBeGreaterThan(500);
+    expect(wake).toBeLessThan(1500);
+    clock += wake;
+    mode.paint(cue(1, t + wake));
+    expect(old.isConnected).toBe(false);
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(1);
+    for (const w of wordsOf(groups[0])) expect(anims(w)).toEqual([]);
+    for (const b of bandsOf(box())) expect(anims(b)).toEqual([]);
+  });
+
+  it("takes a line back that comes into focus again while it is still on its way out", () => {
+    const { mode, box } = arcOn(stageLook());
+    const t = stepToLine1(mode);
+    expect(groupsOf(box()).length).toBe(2);
+    // a seek back one line while playing: a glide back
+    clock += 50;
+    mode.paint(cue(0, 2500));
+    const focus = groupsOf(box()).filter((g) => textOfGroup(g) === wordsText(0));
+    expect(focus.length).toBe(1);
+    expect(focus[0]?.style.props.get("opacity")).toBe("1");
+    expect(anims(wordsOf(focus[0])[0]).length).toBe(1);
+    void t;
+  });
+});
+
+describe("Arc instrumental breaks", () => {
+  it("shows the dots at the apex of the focus curve, between the line just sung and the next one", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
+    const t = (BREAK.start + BREAK.end) / 2;
+    mode.paint(cue(BREAK.next, t, true, true));
+    expect(groupsOf(box()).length).toBe(0);
+    const host = box().find("arc-dots")[0] as FakeNode;
+    expect(host.find("ut-dot").length).toBe(3);
+    expect(anims(host.find("ut-dots")[0]).length).toBeGreaterThan(0);
+    const prev = band(box(), "prev");
+    const next = band(box(), "next");
+    expect(prev?.textContent).toBe(LINES[BREAK.next - 1]?.text);
+    expect(next?.textContent).toBe(LINES[BREAK.next]?.text);
+    // the apex: the focus curve's middle, NEXT_DROP (1.4) sizes above the next band's middle
+    const nextMid = Number.parseFloat(String(next?.style["top"])) + Number(String(next?.style["transformOrigin"]).split(" ")[1]?.replace("px", ""));
+    const apex = nextMid - 1.4 * l.size;
+    expect(Number.parseFloat(String(host.style["top"]))).toBeCloseTo(apex - 0.32 * l.size, 0);
+    expect(mode.nextChange(t)).toBeCloseTo(BREAK.end - t, 6);
+  });
+
+  it("hands over to the next line at its lead: the dots go, the line glides into focus, the line just sung stays put", () => {
+    const { mode, box } = arcOn(stageLook());
+    const t = (BREAK.start + BREAK.end) / 2;
+    mode.paint(cue(BREAK.next, t, true, true));
+    const host = box().find("arc-dots")[0] as FakeNode;
+    const prev = band(box(), "prev");
+    clock += BREAK.end + 1 - t;
+    mode.paint(cue(BREAK.next, BREAK.end + 1, true, true));
+    expect(host.isConnected).toBe(false);
+    const g = groupsOf(box())[0];
+    expect(textOfGroup(g)).toBe(wordsText(BREAK.next));
+    expect(anims(wordsOf(g)[0]).length).toBe(1);
+    expect(band(box(), "prev")).toBe(prev);
+    expect(anims(prev)).toEqual([]);
+  });
+});
+
+describe("Arc restyle", () => {
+  it("takes new colors and glow in place: nothing built, and a line change's glides carry on", () => {
+    const { mode, box } = arcOn(stageLook({ glow: 30 }));
+    stepToLine1(mode);
+    const flying = box()
+      .all()
+      .flatMap((n) => n.getAnimations());
+    expect(flying.length).toBeGreaterThan(0);
+    const before = cost.created;
     const after = stageLook({ glow: 80, autoColor: false, colors: RED });
     mode.restyle(after);
-    expect(cost).toEqual(before);
-    expect(box()?.find("arc-line")).toEqual(bands);
-    expect(gliding.every((a) => !a.cancelled)).toBe(true);
-    for (const band of bands) {
-      const filter = band.style.props.get("filter") ?? "";
-      if (band.classList.contains("arc-glow")) {
-        // just the highlight halo, in the new highlight at the new glow
-        expect(filter).toContain(rgba(RED.highlight, 0.35 + 0.5 * 0.8));
-        expect(filter).not.toContain("rgba(0, 0, 0,");
-        expect(band.children[1]?.style.props.get("fill")).toBe(RED.highlight);
-      } else {
-        expect(filter).toBe(dropShadow(after, sizeOf(band)));
-      }
-      if (band.classList.contains("arc-prev") || band.classList.contains("arc-next")) expect(band.children[1]?.style.props.get("fill")).toBe(RED.dim);
+    expect(cost.created).toBe(before);
+    expect(flying.every((a) => !a.cancelled)).toBe(true);
+    for (const b of bandsOf(box())) {
+      expect(b.style.props.get("filter")).toBe(dropShadow(after, sizeOf(b)));
+      expect(textOf(b)?.style.props.get("fill")).toBe(RED.dim);
     }
-    // the next paint recolors the focus line's words: sung in the highlight, upcoming in the lyric color
-    mode.paint(cue(1, 4320));
-    const words = focusFills(box());
-    expect(words.length).toBe(LINES[1]?.words.length);
-    expect(words[0]).toBe(RED.highlight);
-    expect(words[words.length - 1]).toBe(RED.lyric);
+    for (const g of groupsOf(box())) {
+      expect(g.style.props.get("--ut-hl")).toBe(RED.highlight);
+      expect(g.style.props.get("--ut-lyric")).toBe(RED.lyric);
+    }
   });
 
-  it("draws exactly what a fresh build with the same settings draws", () => {
-    const restyled = arcOn(stageLook({ glow: 20 }));
-    restyled.mode.paint(cue(1, 4300));
-    restyled.mode.restyle(stageLook({ glow: 65, autoColor: false, colors: RED }));
-    restyled.mode.paint(cue(1, 4300));
-    const fresh = arcOn(stageLook({ glow: 65, autoColor: false, colors: RED }));
-    fresh.mode.paint(cue(1, 4300));
-    expect(restyled.host.snapshot()).toEqual(fresh.host.snapshot());
+  it("plans the focus line again at the current time when the motion changes, keeping the line where it is", () => {
+    const l = stageLook();
+    const { mode, box } = arcOn(l);
+    mode.paint(cue(1, 5000));
+    const g = groupsOf(box())[0] as FakeNode;
+    const kw = g.find("kw")[0];
+    const old = anims(kw);
+    expect(old.length).toBeGreaterThan(0);
+    mode.restyle(withBloom({ ...l, energy: 0.9 }, l.bloom));
+    expect(groupsOf(box())[0]).toBe(g);
+    expect(old.every((a) => a.cancelled)).toBe(true);
+    expect(anims(kw).length).toBeGreaterThan(0);
+  });
+});
+
+describe("Arc unsynced lyrics", () => {
+  it("draws plain lyrics calmly: the focus line an SVG band in the lyric color, no karaoke", () => {
+    const l = stageLook({}, { unsynced: true });
+    const { mode, box } = arcOn(l);
+    mode.paint(cue(1, 5000));
+    expect(groupsOf(box()).length).toBe(0);
+    expect(box().find("kw").length).toBe(0);
+    const calm = band(box(), "calm");
+    expect(calm?.textContent).toBe(LINES[1]?.text);
+    expect(textOf(calm)?.style.props.get("fill")).toBe(l.colors.lyric);
+    expect(calm?.attrs.has("aria-hidden")).toBe(false);
+    expect(box().find("arc-dots").length).toBe(0);
   });
 
-  it("rebuilds when glow reaches or leaves 0 (the glow band exists only with a glow), and draws at once", () => {
-    const { mode, box } = arcOn(stageLook({ glow: 30 }));
-    mode.paint(cue(1, 4300));
-    const first = box();
-    expect(first?.find("arc-glow").length).toBe(1);
-    mode.restyle(stageLook({ glow: 0 }));
-    expect(box()).not.toBe(first);
-    expect(box()?.find("arc-glow").length).toBe(0);
-    expect(box()?.find("arc-line").length).toBe(3);
-    const second = box();
-    mode.restyle(stageLook({ glow: 45 }));
-    expect(box()).not.toBe(second);
-    expect(box()?.find("arc-glow").length).toBe(1);
-    // unsynced lyrics never draw a glow band: their glow changes stay in place
-    const calm = arcOn(stageLook({ glow: 30 }, { unsynced: true }));
-    calm.mode.paint(cue(1, 4300));
-    const calmBox = calm.box();
-    calm.mode.restyle(stageLook({ glow: 0 }, { unsynced: true }));
-    expect(calm.box()).toBe(calmBox);
+  it("glides plain lyrics on the calm spring", () => {
+    const { mode, box } = arcOn(stageLook({}, { unsynced: true }));
+    stepToLine1(mode);
+    const calm = band(box(), "calm");
+    expect(calm?.textContent).toBe(LINES[1]?.text);
+    const [glide] = anims(calm);
+    expect(Number(glide?.duration)).toBeGreaterThan(2000);
+    expect(scaleOf(glide?.keyframes[0]?.transform)).toBeLessThan(1);
+  });
+});
+
+describe("Arc under reduced motion and in the lite tier", () => {
+  it("lets the stage crossfade every line change: no lead, nothing glides, words only fade in", () => {
+    const l = stageLook({}, { motion: false });
+    const { mode, box } = arcOn(l);
+    mode.paint(cue(0, 2000));
+    expect(mode.nextChange(2000)).toBeGreaterThan((LEADS[1] as number) - 2000);
+    expect(mode.crossfades(cue(1, 4200))).toBe(true);
+    clock += 2205;
+    mode.paint(cue(1, 4205));
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(1);
+    expect(textOfGroup(groups[0])).toBe(wordsText(1));
+    for (const w of wordsOf(groups[0])) expect(anims(w)).toEqual([]);
+    for (const b of bandsOf(box())) expect(anims(b)).toEqual([]);
+    const kw = groups[0]?.find("kw")[0];
+    expect(anims(kw)).toEqual([]);
+    expect(anims(kw?.find("kw-win")[0]).some((a) => a.keyframes.some((k) => k.opacity !== undefined))).toBe(true);
+    expect(kw?.find("kw-dark")[0]?.find("kl")[0]?.style.props.has("rotate")).toBe(true);
   });
 
-  it("rebuilds rather than restyles a look that moves the layout", () => {
-    const { mode, box } = arcOn(stageLook({ glow: 30 }));
-    mode.paint(cue(1, 4300));
-    const first = box();
-    mode.restyle(stageLook({ glow: 30, size: 70 }));
-    expect(box()).not.toBe(first);
-    expect(box()?.find("arc-line").length).toBe(4);
+  it("keeps the glides in the lite tier, with the reduced-motion karaoke", () => {
+    const { mode, box } = arcOn(stageLook({}, { power: "lite" }));
+    stepToLine1(mode);
+    const g = groupsOf(box()).find((x) => textOfGroup(x) === wordsText(1));
+    for (const w of wordsOf(g)) expect(anims(w).length).toBe(1);
+    expect(anims(g?.find("kw")[0])).toEqual([]);
+  });
+});
+
+describe("Arc transport", () => {
+  it("glides to a neighboring view while playing, and leaves anything else to the stage's crossfade", () => {
+    const { mode } = arcOn(stageLook());
+    mode.paint(cue(1, 5000));
+    expect(mode.crossfades(cue(0, 2000))).toBe(false);
+    expect(mode.crossfades(cue(BREAK.next, BREAK.end + 400))).toBe(true);
+    expect(mode.crossfades(cue(0, 2000, false))).toBe(true);
+    expect(mode.crossfades(cue(-1, 23_000))).toBe(false);
+    expect(mode.cuts(cue(1, 5100))).toBe(false);
+    expect(mode.cuts(cue(BREAK.next, BREAK.start + 100, true, true))).toBe(false);
+    expect(mode.cuts(cue(BREAK.next, BREAK.start + 100, false, true))).toBe(true);
   });
 
-  it("asks about the lyric face once per face and lyrics, for the bundled family at one size (a Size drag rebuilds every step)", () => {
-    const check = vi.fn((_spec: string, _text?: string) => true);
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeNode(tag),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
-      fonts: { check, load: vi.fn(async () => []) },
-    });
-    for (let size = 40; size < 60; size++) arcOn(stageLook({ size, font: { family: "Syne", weight: 800 } }));
-    expect(check).toHaveBeenCalledTimes(1);
-    const [spec, chars] = check.mock.calls[0] ?? [];
-    expect(spec).toBe('800 16px "Syne"');
-    expect(chars?.length).toBe(new Set(LINES.map((l) => l.text).join("")).size);
+  it("sleeps between its own events: the next break's start, the next lead", () => {
+    const { mode } = arcOn(stageLook());
+    mode.paint(cue(1, 5000));
+    expect(mode.nextChange(5000)).toBeCloseTo(BREAK.start - 5000, 6);
+    mode.paint(cue(2, 13_000));
+    expect(mode.nextChange(13_000)).toBeCloseTo((LEADS[3] as number) - 13_000, 6);
   });
 
-  it("still waits for the bundled face when a song's CJK families lead the stack's fallbacks", () => {
-    const load = vi.fn(async (_spec: string, _text?: string) => []);
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeNode(tag),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
-      fonts: { check: () => false, load },
-    });
-    const l = stageLook({ font: { family: "Unbounded", weight: 700 } }, { lang: "ko" });
-    expect(l.font).toMatch(/^"Unbounded", system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo"/);
-    arcOn(l);
-    expect(load).toHaveBeenCalledWith('700 16px "Unbounded"', expect.any(String));
+  it("holds every animation at its song time while paused", () => {
+    const { mode, box } = arcOn(stageLook());
+    mode.paint(cue(1, 5000));
+    mode.paint(cue(1, 5000, false));
+    const all = box()
+      .all()
+      .flatMap((n) => n.getAnimations());
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.every((a) => a.paused)).toBe(true);
+  });
+
+  it("re-lights the focus line after a seek back past where its motion began", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { mode, box } = arcOn(stageLook());
+    mode.paint(cue(1, 4250));
+    const kw = groupsOf(box())[0]?.find("kw")[0];
+    const before = anims(kw);
+    expect(before.length).toBeGreaterThan(0);
+    mode.paint(cue(0, 3950));
+    expect(before.every((a) => a.cancelled)).toBe(true);
+    vi.advanceTimersByTime(16 * 10);
+    expect(anims(kw).length).toBeGreaterThan(0);
+  });
+
+  it("freezes what is on screen for the stage's copy, and draws the view afresh after", () => {
+    const { mode, box } = arcOn(stageLook());
+    stepToLine1(mode);
+    // a word's picture that has already played draws nothing more ("lanterns", in line 0)
+    const flying = box()
+      .all()
+      .flatMap((n) => n.getAnimations())
+      .filter((a) => a.playState !== "finished");
+    mode.freeze();
+    expect(flying.every((a) => a.cancelled)).toBe(true);
+    expect(flying.some((a) => a.commits > 0)).toBe(true);
+    clock += 30;
+    mode.paint(cue(1, (LEADS[1] as number) + 31));
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(1);
+    for (const w of wordsOf(groups[0])) expect(anims(w)).toEqual([]);
+  });
+
+  it("fades out after the last line, and comes back on a seek", () => {
+    const { mode, box } = arcOn(stageLook());
+    mode.paint(cue(3, 18_000));
+    mode.paint(cue(-1, 23_000));
+    expect(box().style.props.get("opacity")).toBe("0");
+    mode.paint(cue(3, 18_000));
+    expect(box().style.props.get("opacity")).toBe("1");
+  });
+
+  it("prepares the next line ahead, hidden, and brings it in at its lead", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { mode, box } = arcOn(stageLook());
+    mode.paint(cue(0, 2000));
+    vi.advanceTimersByTime(2000);
+    const groups = groupsOf(box());
+    expect(groups.length).toBe(2);
+    const ready = groups.find((g) => textOfGroup(g) === wordsText(1)) as FakeNode;
+    expect(ready.style.props.get("opacity")).toBe("0");
+    expect(ready.classList.contains("has-fx")).toBe(false);
+    expect(ready.find("kw-fx").length).toBe(LINES[1]?.words.length);
+    stepToLine1(mode);
+    expect(groupsOf(box()).includes(ready)).toBe(true);
+    expect(ready.classList.contains("has-fx")).toBe(true);
   });
 });
 
@@ -555,91 +893,65 @@ describe("Arc restyle", () => {
 // past its path's ends and off both screen edges, so at Size 100 and up an ordinary 60-70 character
 // line on a 16:9 display lost its first and last words.
 describe("Arc long lines", () => {
-  beforeEach(() => {
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeNode(tag),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
   /** A 106-character line between two short ones. */
   const LONG = "this placeholder line keeps going well past the point where any style could hold it whole on one row again";
   const SONG: Line[] = parseLrc(`[00:01.00]a short line first\n[00:04.00]${LONG}\n[00:09.00]and a short line after`, 20_000);
+  const pathOf = (l: Look): number => {
+    const half = (snap(l.width * 0.95, l.dpr) - snap(l.width * 0.05, l.dpr)) / 2;
+    return 2 * arcLength(half, half, arcGeometry(l).bend);
+  };
+  const focusSize = (box: FakeNode): number => Number.parseFloat(String(groupsOf(box)[0]?.style["fontSize"]));
 
   it.each([22, 58, 100, 140])("never draws a line longer than its path at Size %s", (size) => {
-    const host = new FakeNode("main");
-    const mode = new ArcMode();
-    mode.build(asHost(host), SONG, stageLook({ size }));
-    // the long line in focus, then as the previous line
-    for (const [line, t] of [[1, 5000], [2, 9500]] as const) {
+    const l = stageLook({ size });
+    for (const [line, t] of [
+      [1, 5000],
+      [2, 9500],
+    ] as const) {
+      const { mode, box } = arcOn(l, SONG);
       mode.paint(cue(line, t));
-      const bands = host.children[0]?.find("arc-line") ?? [];
-      expect(bands.length).toBeGreaterThanOrEqual(2);
-      for (const band of bands) {
-        const natural = sizeOf(band) * 0.5 * band.textContent.length;
-        expect(natural, `${band.className} at size ${size}`).toBeLessThanOrEqual(1160 + 0.5);
-      }
+      expect(focusSize(box()) * 0.5 * (SONG[line]?.text.length ?? 0)).toBeLessThanOrEqual(pathOf(l) + 0.5);
+      for (const b of bandsOf(box())) expect(sizeOf(b) * 0.5 * b.textContent.length, `${b.className} at size ${size}`).toBeLessThanOrEqual(pathOf(l) + 0.5);
     }
   });
 
   it("leaves lines that fit at their size, and shrinks a slightly long one only to FIT of its path", () => {
-    const host = new FakeNode("main");
-    const mode = new ArcMode();
     const l = stageLook({ size: 58 });
-    mode.build(asHost(host), SONG, l);
-    mode.paint(cue(0, 2000));
-    expect(sizeOf(host.children[0]?.find("arc-focus")[0] as FakeNode)).toBeCloseTo(l.size, 2);
-    // 64 characters at 0.5 em: a little longer than 94% of the path at Size 58 on 1280x720
-    const near = parseLrc(`[00:01.00]${"placeholder words ".repeat(4).slice(0, 64)}`, 20_000);
-    const m = new ArcMode();
-    const h = new FakeNode("main");
-    m.build(asHost(h), near, l);
-    m.paint(cue(0, 2000));
-    const focus = h.children[0]?.find("arc-focus")[0] as FakeNode;
-    expect(sizeOf(focus) * 0.5 * focus.textContent.length).toBeCloseTo(1160 * 0.94, 0);
+    const short = arcOn(l, SONG);
+    short.mode.paint(cue(0, 2000));
+    expect(focusSize(short.box())).toBeCloseTo(l.size, 2);
+    const text = "placeholder words ".repeat(4).slice(0, 64);
+    const near = arcOn(l, parseLrc(`[00:01.00]${text}`, 20_000));
+    near.mode.paint(cue(0, 2000));
+    expect(focusSize(near.box()) * 0.5 * text.length).toBeCloseTo(pathOf(l) * 0.94, 0);
   });
 });
 
-// Regression (arc-preview-floor): the cap at the path's length stopped shrinking at MIN_TEXT_PX, which
-// is above 55% of the settings preview's sizes (15 px at the default Size, 11 px neighbors), so a long
-// line there barely shrank (below Size 42, not at all) and ran off both edges of the stage.
-describe("Arc long lines in the settings preview", () => {
-  beforeEach(() => {
-    vi.stubGlobal("document", {
-      createElement: (tag: string) => new FakeNode(tag),
-      createElementNS: (_ns: string, tag: string) => new FakeNode(tag),
-    });
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    pathLength = DEFAULT_PATH;
+describe("Arc fonts", () => {
+  it("asks about the lyric face once per face and lyrics, for the bundled family at one size (a Size drag rebuilds every step)", () => {
+    const check = vi.fn((_spec: string, _text?: string) => true);
+    vi.stubGlobal("document", fakeDocument({ fonts: { check, load: vi.fn(async () => []) } }));
+    for (let size = 40; size < 60; size++) arcOn(stageLook({ size, font: { family: "Syne", weight: 800 } }));
+    expect(check).toHaveBeenCalledTimes(1);
+    const [spec, chars] = check.mock.calls[0] ?? [];
+    expect(spec).toBe('800 16px "Syne"');
+    expect(chars?.length).toBe(new Set(LINES.map((l) => l.text).join("")).size);
   });
 
-  /** 65 characters of placeholder text. */
-  const LONG = "placeholder words drift on ".repeat(3).slice(0, 65);
-
-  it.each([
-    [58, 352, 176],
-    [40, 352, 176],
-    [58, 340, 191],
-    [40, 340, 191],
-  ])("fits a 65-character line, in focus and as the next line, at Size %s on %sx%s", (size, width, height) => {
-    const l = look({ size }, { width, height, referenceHeight: 680 });
-    const half = (snap(l.width * 0.95, l.dpr) - snap(l.width * 0.05, l.dpr)) / 2;
-    pathLength = 2 * arcLength(half, half, arcGeometry(l, 1).bend);
-    const song = parseLrc(`[00:01.00]a short one\n[00:04.00]${LONG}\n[00:09.00]${LONG}\n[00:14.00]a short two`, 30_000);
-    const host = new FakeNode("main");
-    const mode = new ArcMode();
-    mode.build(asHost(host), song, l);
+  it("measures and places the lines again once the face loads, and draws the view afresh", async () => {
+    let loaded: () => void = () => undefined;
+    const load = vi.fn((_spec: string, _text?: string) => new Promise<unknown[]>((resolve) => (loaded = () => resolve([]))));
+    vi.stubGlobal("document", fakeDocument({ fonts: { check: () => false, load } }));
+    const { mode, box } = arcOn(stageLook({ font: { family: "Unbounded", weight: 700 } }));
+    expect(load).toHaveBeenCalledWith('700 16px "Unbounded"', expect.any(String));
     mode.paint(cue(1, 5000));
-    const long = (host.children[0]?.find("arc-line") ?? []).filter((b) => b.textContent === LONG && !b.classList.contains("arc-glow"));
-    expect(long.map((b) => (b.classList.contains("arc-focus") ? "focus" : "next")).sort()).toEqual(["focus", "next"]);
-    for (const band of long) {
-      const natural = sizeOf(band) * 0.5 * band.textContent.length;
-      expect(natural, `${band.className}: ${sizeOf(band).toFixed(2)} px`).toBeLessThanOrEqual(pathLength + 0.5);
-    }
+    const first = groupsOf(box())[0] as FakeNode;
+    loaded();
+    await Promise.resolve();
+    await Promise.resolve();
+    const second = groupsOf(box())[0];
+    expect(second).not.toBe(first);
+    expect(first.isConnected).toBe(false);
+    expect(textOfGroup(second)).toBe(wordsText(1));
   });
 });

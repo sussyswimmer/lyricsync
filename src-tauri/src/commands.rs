@@ -67,11 +67,12 @@ pub async fn refetch_lyrics(
 ) -> Result<(), String> {
     service.inner().refetch(&track_key)
 }
+/// `ms` null (contract v7) drops the song's own offset: it follows the learned one again.
 #[tauri::command]
 pub async fn set_track_offset(
     app: AppHandle,
     track_key: String,
-    ms: f64,
+    ms: Option<f64>,
 ) -> Result<Settings, String> {
     blocking(move || crate::settings::runtime::set_track_offset(&app, &track_key, ms)).await
 }

@@ -1,6 +1,6 @@
 [package]
 name = "undertone"
-version = "0.1.0"
+version = "0.1.1"
 description = "Lyrics on the desktop layer"
 edition = "2021"
 

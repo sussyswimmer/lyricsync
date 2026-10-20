@@ -1,4 +1,4 @@
-"""Writes assets/banner.svg, the README banner and GitHub social preview (1280x640).
+"""Writes docs/media/social-preview.svg, the repository's GitHub social preview (1280x640).
 
 The wordmark is set the way Arc draws a lyric line: bent along a gentle arch, with "Under" sung
 (highlight color plus glow) and "tone" still to come, over the dusk stand-in wallpaper the mock
@@ -6,10 +6,10 @@ bridge paints. Every glyph is an outline, so the SVG needs no font to render.
 
     pip install fonttools brotli uharfbuzz
     pnpm install                # for the @fontsource files
-    python3 scripts/banner.py   # writes assets/banner.svg
+    python3 scripts/banner.py   # writes docs/media/social-preview.svg
 
-Render assets/banner.png from it at 1280x640 in any browser (Chromium: open the SVG in a
-1280x640 window and take a screenshot), then commit both.
+`node scripts/readme-media.mjs social-preview` renders docs/media/social-preview.png from it;
+commit both, and upload the PNG under the repository's Settings > General > Social preview.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from fontTools.ttLib import TTFont
 
 ROOT = Path(__file__).resolve().parent.parent
 FONTS = ROOT / "node_modules" / "@fontsource"
-OUT = ROOT / "assets" / "banner.svg"
+OUT = ROOT / "docs" / "media" / "social-preview.svg"
 
 W, H = 1280, 640
 SUNG = "#F2A65A"  # the app icon's highlight
@@ -115,7 +115,7 @@ def main() -> None:
 
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-labelledby="title">
   <title id="title">Undertone: your desktop, singing along.</title>
-  <!-- Undertone README banner and GitHub social preview, 1280x640. Written by scripts/banner.py; edit that
+  <!-- Undertone's GitHub social preview, 1280x640. Written by scripts/banner.py; edit that
        and run it again rather than editing this file.
        The wordmark is drawn the way Arc draws a lyric line: bent along a gentle arch, "Under" sung in the
        highlight color with its glow, "tone" still to come, and the soft dark shadow the renderer puts under

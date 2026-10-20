@@ -54,8 +54,8 @@ export function buildState(host: HTMLElement, kind: StateKind, look: Look, elaps
     el.style.fontSize = `${fontSize}px`;
     // the dark legibility shadow every lyric carries, on top of the pill's own dark fill
     el.style.textShadow = textShadow(look, fontSize);
-    // The pill is 2.1em tall (1em of text plus 0.55em padding each side) and can be taller than the
-    // margin that keeps a lyric line on screen: keep the whole pill, plus its shadow, inside the stage.
+    // The pill is 2.1em tall (1em of text plus 0.55em padding each side), which a very short stage
+    // may not have around its middle: keep the whole pill, plus its shadow, inside the stage.
     const half = fontSize * 1.05 + 2;
     el.style.top = `${Math.min(Math.max(look.y, half), Math.max(half, look.height - half))}px`;
   } else if (kind === "instrumental") {

@@ -53,8 +53,8 @@ jobs:
           BODY: |
             Unsigned test build.
 
-            - **macOS 14 or later** (Apple silicon and Intel): download the `.dmg`.
-            - **Windows 10/11**: download the `-setup.exe`.
+            - **macOS 14 or later** (Apple silicon and Intel): download `Undertone_universal.dmg`.
+            - **Windows 10/11**: download `Undertone_x64-setup.exe`.
 
             macOS and Windows warn about unsigned apps the first time you open them. [docs/INSTALL.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/INSTALL.md) shows how to get past the warning.
         run: |
@@ -112,7 +112,9 @@ jobs:
           workspaces: src-tauri -> target
       - run: pnpm install --frozen-lockfile
       # Runs `pnpm tauri build` and uploads the bundles to the draft: the .dmg (plus the .app as a
-      # .tar.gz) on macOS, the NSIS setup .exe on Windows. No updater, so no latest.json.
+      # .tar.gz) on macOS, the NSIS setup .exe on Windows. No updater, so no latest.json. The names
+      # leave out the version (Undertone_universal.dmg, Undertone_x64-setup.exe), so the README's
+      # releases/latest/download/... buttons keep working from one release to the next.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,3 +122,4 @@ jobs:
           releaseId: ${{ needs.draft.outputs.release-id }}
           args: ${{ matrix.args }}
           includeUpdaterJson: false
+          assetNamePattern: "[name]_[arch][setup][ext]"

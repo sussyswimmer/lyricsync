@@ -3,6 +3,8 @@ import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from ".
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { PaletteCache, type Palette } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
+import type { SongLook } from "../src/core/songlook";
+import { DEFAULT_PICK, pickedOf, type PickedLook } from "../src/overlay/look";
 import type { LyricStage, StageView } from "../src/overlay/stage";
 
 const T0 = 1_760_000_000_000;
@@ -69,16 +71,54 @@ class FakeStage {
   }
   /** What render returns: true while the stage has motion of its own in flight (a glide, Lens following a word). */
   busy = false;
-  /** What nextChange returns: song time to the next word boundary, Infinity when nothing will change. */
+  /** What nextChange returns: song time to the next word boundary, Infinity when nothing will change... */
   next = Infinity;
+  /** ...or, when set, the song time of the next change, which nextChange counts down to as a real stage's does. */
+  nextAt: number | null = null;
   /** When each paint happened (fake wall-clock ms). */
   frames: number[] = [];
-  render(): boolean {
+  /** The clock's target handed with each paint. */
+  targets: number[] = [];
+  render(t: number, _rate?: number, target = t): boolean {
     this.frames.push(Date.now());
+    this.targets.push(target);
+    // painted at (or past) its next change: there is none after it
+    if (this.nextAt !== null && t >= this.nextAt) this.nextAt = null;
     return this.busy;
   }
-  nextChange(): number {
-    return this.next;
+  nextChange(t: number): number {
+    return this.nextAt === null ? this.next : this.nextAt - t;
+  }
+  /** false: words drawn on the compositor (Stack, Drift), so quiet resyncs go through retime. */
+  wakesForWords: boolean | undefined = undefined;
+  /** Each retime: song time, rate, target. */
+  retimes: [number, number, number][] = [];
+  /** What retime answers: true when a paint is due after all. */
+  retimeAnswer = false;
+  retime(t: number, rate: number, target: number): boolean {
+    this.retimes.push([t, rate, target]);
+    return this.retimeAnswer;
+  }
+  /** Each look the controller handed over, and how. */
+  looks: [PickedLook | null, string][] = [];
+  setPickedLook(look: PickedLook | null, how = "now"): void {
+    this.looks.push([look, how]);
+  }
+  /** What atSafePoint answers. */
+  safe = false;
+  atSafePoint(): boolean {
+    return this.safe;
+  }
+  private readonly safeListeners = new Set<() => void>();
+  addSafePointListener(fn: () => void): () => void {
+    this.safeListeners.add(fn);
+    return () => {
+      this.safeListeners.delete(fn);
+    };
+  }
+  /** The stage reaches a safe point (a line change, a break starting). */
+  reachSafePoint(): void {
+    for (const fn of [...this.safeListeners]) fn();
   }
 }
 
@@ -741,5 +781,220 @@ describe("the frame loop", () => {
     display.setVisibility("hidden");
     display.setVisibility("visible");
     expect(paintsIn(stage, 5000)).toHaveLength(0);
+  });
+});
+
+// SPEC §2.7: a player sample that changes nothing on screen reaches a stage drawing its words on the
+// compositor without a frame (stage.retime); the stage's own wakes (a slew ending) wake the loop.
+describe("quiet resyncs", () => {
+  let display: FakeDisplay;
+
+  beforeEach(() => {
+    display = new FakeDisplay();
+    display.install();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const paintsIn = (stage: FakeStage, ms: number): number[] => {
+    const from = stage.frames.length;
+    display.run(ms);
+    return stage.frames.slice(from);
+  };
+
+  /** A gated controller playing track "a" from 0, its stage drawing words on the compositor (or not). */
+  async function playing(compositor = true): Promise<ReturnType<typeof setup> & { started: number; resync: (errorMs: number) => void }> {
+    const env = setup(true);
+    env.stage.wakesForWords = compositor ? false : undefined;
+    await env.controller.start();
+    const started = Date.now();
+    env.bridge.emit("now-playing", np("a", { artwork: "data:cover", sampledAt: started }));
+    await settle();
+    display.run(100);
+    // the player's resync: where it says the song is, `errorMs` off the clock's own extrapolation
+    const resync = (errorMs: number): void => {
+      const at = Date.now();
+      env.bridge.emit("now-playing", np("a", { artwork: "data:cover", positionMs: at - started + errorMs, sampledAt: at }));
+    };
+    return { ...env, started, resync };
+  }
+
+  it("go through retime, with the clock's target, and paint nothing", async () => {
+    const { stage, controller, resync, started } = await playing();
+    stage.next = Infinity;
+    paintsIn(stage, 1500);
+    const painted = stage.frames.length;
+    stage.retimes = [];
+    resync(60);
+    expect(stage.retimes).toHaveLength(1);
+    const [t, rate, target] = stage.retimes[0] ?? [0, 0, 0];
+    const song = Date.now() - started;
+    expect(t).toBeCloseTo(song, 6);
+    // the clock follows the middle of its readings: the first (on time) and this one, 60 ms ahead
+    expect(target).toBeCloseTo(song + 30, 6);
+    expect(rate).toBeCloseTo(1 + 30 / 300, 6);
+    expect(stage.frames).toHaveLength(painted);
+    expect(paintsIn(stage, 200)).toEqual([]);
+    controller.destroy();
+  });
+
+  it("paint after all when the stage says one is due", async () => {
+    const { stage, controller, resync } = await playing();
+    stage.next = Infinity;
+    paintsIn(stage, 1500);
+    stage.retimeAnswer = true;
+    resync(20);
+    expect(paintsIn(stage, 16)).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("wake the loop sooner when the stage's next change comes closer (a slew ending)", async () => {
+    const { stage, controller, resync, started } = await playing();
+    stage.next = Infinity;
+    paintsIn(stage, 1100);
+    // asleep for its 1 s idle wait; the resync starts a slew that ends in 300 ms
+    stage.nextAt = Date.now() - started + 300;
+    resync(80);
+    const times = paintsIn(stage, 600);
+    expect(times.length).toBeGreaterThanOrEqual(1);
+    expect((times[0] ?? 0) - Date.now() + 600).toBeLessThanOrEqual(300 + 16);
+    controller.destroy();
+  });
+
+  it("check in once a second without a frame while nothing is due, and frame for what is", async () => {
+    const { stage, controller, started } = await playing();
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    stage.retimes = [];
+    // asleep: each check-in follows the clock (retime) and sleeps on
+    expect(paintsIn(stage, 5000)).toEqual([]);
+    expect(stage.retimes.length).toBeGreaterThanOrEqual(4);
+    expect(stage.retimes.length).toBeLessThanOrEqual(6);
+    // a change 2.5 s on: the check-ins before it sleep on, and it is painted within a frame of it
+    const due = Date.now() + 2500;
+    stage.nextAt = due - started;
+    const times = paintsIn(stage, 3000);
+    expect(times).toHaveLength(1);
+    expect(Math.abs((times[0] ?? 0) - due)).toBeLessThanOrEqual(16);
+    // a check-in that finds a paint due (the stage's retime says so) frames at once
+    stage.nextAt = null;
+    stage.retimeAnswer = true;
+    const answered = paintsIn(stage, 1100);
+    expect(answered).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("frame at every safety wake when the stage paints words itself", async () => {
+    const { stage, controller } = await playing(false);
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    expect(paintsIn(stage, 1000).length).toBeGreaterThanOrEqual(3);
+    expect(stage.retimes).toEqual([]);
+    controller.destroy();
+  });
+
+  it("still get a frame each when the stage paints words itself, or for a real change", async () => {
+    const { bridge, stage, controller, resync } = await playing(false);
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    resync(60);
+    expect(stage.retimes).toEqual([]);
+    expect(paintsIn(stage, 16)).toHaveLength(1);
+    // a pause is a real change on any stage
+    stage.wakesForWords = false;
+    bridge.emit("now-playing", np("a", { artwork: "data:cover", isPlaying: false, positionMs: 5000, sampledAt: Date.now() }));
+    expect(paintsIn(stage, 16)).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("hand every frame the clock's target", async () => {
+    const { stage, controller, resync } = await playing(false);
+    stage.next = Infinity;
+    paintsIn(stage, 300);
+    // 200 ms ahead: the clock converges on 100 ms ahead, the middle of its two readings
+    resync(200);
+    paintsIn(stage, 16);
+    // the frame's target is where the clock is converging, ahead of the position it still slews from
+    const target = stage.targets[stage.targets.length - 1] ?? 0;
+    const at = stage.frames[stage.frames.length - 1] ?? 0;
+    expect(target).toBeCloseTo(controller.clock.target(at), 6);
+    expect(target - controller.clock.position(at)).toBeGreaterThan(50);
+    controller.destroy();
+  });
+});
+
+// The song's look in full (commit timing, refinement, memory) is tests/look-wiring.test.ts's.
+describe("the look", () => {
+  it("is DEFAULT_PICK until a track brings its own; onLook hears the song's look, forced parts win, null without a track", async () => {
+    const bridge = new FakeBridge();
+    bridge.answers.get_settings = () => structuredClone(DEFAULT_SETTINGS);
+    bridge.answers.get_now_playing = () => null;
+    bridge.answers.get_lyrics = () => lyrics("x");
+    const stage = new FakeStage();
+    const heard: (SongLook | null)[] = [];
+    const controller = new OverlayController(bridge, stage as unknown as LyricStage, { palettes: new PaletteCache(async () => null), onLook: (l) => heard.push(l) });
+    await controller.start();
+    expect(controller.look).toEqual(DEFAULT_PICK);
+    expect(controller.songLook).toBeNull();
+    expect(heard).toEqual([]);
+    bridge.emit("now-playing", np("a"));
+    // the track's provisional look: no lyrics yet
+    expect(heard).toHaveLength(1);
+    const provisional = heard[0] ?? null;
+    expect(provisional?.traits).toContain("no lyrics");
+    expect(controller.songLook).toBe(provisional);
+    const song = pickedOf(provisional ?? DEFAULT_PICK);
+    expect(controller.look).toEqual(song);
+    // resyncs of the same track say nothing
+    bridge.emit("now-playing", np("a", { positionMs: 1000 }));
+    expect(heard).toHaveLength(1);
+
+    controller.forceLook({ style: "lens" });
+    expect(stage.looks[stage.looks.length - 1]).toEqual([{ ...song, style: "lens" }, "now"]);
+    expect(heard[heard.length - 1]).toEqual({ ...provisional, style: "lens" });
+    // the same again changes nothing anyone hears
+    controller.forceLook({ style: "lens" });
+    expect(heard).toHaveLength(2);
+    // nothing valid in it: no override, and onLook has the keeper's own look again
+    controller.forceLook({ style: "flow" as PickedLook["style"] });
+    expect(controller.look).toEqual(song);
+    expect(heard[heard.length - 1]).toBe(provisional);
+    // forced parts stay forced; the rest is the song's
+    controller.forceLook({ style: "drift", font: "Caveat" });
+    expect(controller.look).toEqual({ ...song, style: "drift", font: { family: "Caveat", weight: 600 } });
+    // nothing waits for a safe point
+    const count = stage.looks.length;
+    stage.reachSafePoint();
+    controller.safePoint();
+    expect(stage.looks).toHaveLength(count);
+
+    bridge.emit("now-playing", null);
+    expect(heard[heard.length - 1]).toBeNull();
+    expect(controller.songLook).toBeNull();
+    controller.destroy();
+  });
+});
+
+// Regression (palette-after-teardown): a palette worked out after the controller was destroyed still
+// went to the stage, and a track without art still armed its grace timer.
+describe("teardown", () => {
+  it("hands the stage nothing that arrives after destroy", async () => {
+    const { bridge, stage, controller } = setup();
+    await controller.start();
+    bridge.emit("now-playing", np("a", { artwork: "data:cover" }));
+    controller.destroy();
+    await settle();
+    expect(stage.palettes).toHaveLength(0);
+
+    const other = setup();
+    await other.controller.start();
+    other.bridge.emit("now-playing", np("b"));
+    other.controller.destroy();
+    await settle();
+    vi.advanceTimersByTime(5000);
+    await settle();
+    expect(other.stage.palettes).toHaveLength(0);
   });
 });

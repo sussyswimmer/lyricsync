@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../contract/contract";
 import type { Line } from "../src/core/lrc";
 import { parseLrc } from "../src/core/lrc";
 import { pacePlain, type Timeline } from "../src/core/timing";
-import { LINGER_MS, cueAt, cueMap, untilNextChange } from "../src/overlay/stage";
+import { fontFor, stackFor } from "../src/overlay/fonts";
+import { DEFAULT_PICK, type PickedLook } from "../src/overlay/look";
+import { LINGER_MS, LyricStage, cueAt, cueMap, untilNextChange } from "../src/overlay/stage";
+import { FakeAnimationHost } from "./fake-motion";
 import neonMonsoon from "./fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
@@ -59,7 +63,17 @@ describe("cueMap", () => {
   });
 
   it("collects every visible change: line starts, word bounds and linger ends, sorted and unique", () => {
-    expect(cueMap(SONG).boundaries).toEqual([1000, 1500, 2400, 3000, 2400 + LINGER_MS, 8000, 9000, 10000, 12000, 10000 + LINGER_MS]);
+    // SONG's lingers end after its gap stamps (3 s, 12 s), when they no longer change anything
+    expect(cueMap(SONG).boundaries).toEqual([1000, 1500, 2400, 3000, 8000, 9000, 10000, 12000]);
+    // a linger that ends before the next line does
+    expect(cueMap(UNMARKED).boundaries).toEqual([1000, 1400, 2000, 2000 + LINGER_MS, 10000, 11000]);
+    expect(cueMap(UNMARKED).lineBoundaries).toEqual([1000, 2000 + LINGER_MS, 10000]);
+  });
+
+  it("knows the long rests between lines (safe points for a new look)", () => {
+    expect(cueMap(SONG).breaks).toEqual([{ start: 2400, end: 8000 }]);
+    expect(cueMap(UNMARKED).breakStarts).toEqual([2000]);
+    expect(cueMap({ lines: parseLrc(paperLanterns, 24_000), unsynced: false }).breaks.map((b) => b.start)).toEqual([8500]);
   });
 
   it("handles an empty timeline", () => {
@@ -130,12 +144,13 @@ describe("cueAt: linger", () => {
     expect(cueAt(calm, 9999).line).toBe(0);
   });
 
-  it("does not apply to evenly paced plain lyrics either", () => {
+  it("does not apply to paced plain lyrics either", () => {
     const plain = pacePlain("First placeholder line\nSecond placeholder line", 60_000);
     const calm = cueMap(plain);
     expect(calm.unsynced).toBe(true);
-    expect(cueAt(calm, 29_000)).toEqual({ line: 0, waiting: false, t: 29_000 });
-    expect(cueAt(calm, 30_000).line).toBe(1);
+    const second = plain.lines[1]?.start ?? 0;
+    expect(cueAt(calm, second - 1)).toEqual({ line: 0, waiting: false, t: second - 1 });
+    expect(cueAt(calm, second).line).toBe(1);
   });
 });
 
@@ -160,7 +175,7 @@ describe("untilNextChange", () => {
     expect(untilNextChange(map, 999)).toBe(1);
     expect(untilNextChange(map, 1200)).toBe(300);
     expect(untilNextChange(map, 2400)).toBe(600);
-    expect(untilNextChange(map, 4000)).toBe(2400 + LINGER_MS - 4000);
+    expect(untilNextChange(map, 4000)).toBe(8000 - 4000);
   });
 
   it("looks past a boundary it is sitting on", () => {
@@ -174,8 +189,8 @@ describe("untilNextChange", () => {
   });
 
   it("is Infinity once nothing else will change", () => {
-    expect(untilNextChange(map, 10_000 + LINGER_MS - 1)).toBe(1);
-    expect(untilNextChange(map, 10_000 + LINGER_MS)).toBe(Number.POSITIVE_INFINITY);
+    expect(untilNextChange(map, 12_000 - 1)).toBe(1);
+    expect(untilNextChange(map, 12_000)).toBe(Number.POSITIVE_INFINITY);
     expect(untilNextChange(map, 1e9)).toBe(Number.POSITIVE_INFINITY);
     expect(untilNextChange(cueMap({ lines: [], unsynced: false }), 0)).toBe(Number.POSITIVE_INFINITY);
   });
@@ -235,3 +250,256 @@ function firstChange(map: ReturnType<typeof cueMap>, t: number, sleep: number): 
   for (const b of map.boundaries) if (b > t && b < end) probes.push(b, b + 0.5);
   return probes.filter((p) => p > t && p < end).find((p) => shape(map, p) !== before) ?? null;
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The stage and the song's look (SPEC §4.6): a real LyricStage drawing Stack on just enough DOM.
+
+class FakeStyle {
+  readonly props = new Map<string, string>();
+  [key: string]: unknown;
+  setProperty(name: string, value: string): void {
+    this.props.set(name, value);
+  }
+  getPropertyValue(name: string): string {
+    return this.props.get(name) ?? "";
+  }
+  removeProperty(name: string): void {
+    this.props.delete(name);
+  }
+}
+
+/** Elements with inline styles, rows about 0.5 em per glyph and 1.12 em per row, and Web Animations that record themselves. */
+class FakeElement extends FakeAnimationHost {
+  readonly tagName: string;
+  className = "";
+  dir = "";
+  lang = "";
+  style = new FakeStyle();
+  children: FakeElement[] = [];
+  parent: FakeElement | null = null;
+  ownText = "";
+  readonly attrs = new Map<string, string>();
+  readonly classList = {
+    add: (...names: string[]): void => {
+      this.className = [...new Set([...this.className.split(" ").filter(Boolean), ...names])].join(" ");
+    },
+    remove: (...names: string[]): void => {
+      this.className = this.className
+        .split(" ")
+        .filter((c) => c && !names.includes(c))
+        .join(" ");
+    },
+    toggle: (name: string, force?: boolean): boolean => {
+      const on = force ?? !this.classList.contains(name);
+      if (on) this.classList.add(name);
+      else this.classList.remove(name);
+      return on;
+    },
+    contains: (name: string): boolean => this.className.split(" ").includes(name),
+  };
+  constructor(tag: string) {
+    super();
+    this.tagName = tag.toUpperCase();
+  }
+  get textContent(): string {
+    return this.ownText + this.children.map((c) => c.textContent).join("");
+  }
+  set textContent(value: string) {
+    for (const c of this.children) c.parent = null;
+    this.children = [];
+    this.ownText = value;
+  }
+  get isConnected(): boolean {
+    return this.parent !== null;
+  }
+  get parentNode(): FakeElement | null {
+    return this.parent;
+  }
+  get clientWidth(): number {
+    return 1280;
+  }
+  get clientHeight(): number {
+    return 720;
+  }
+  get offsetHeight(): number {
+    let size = 16;
+    for (let el: FakeElement | null = this; el; el = el.parent) {
+      const v = el.style["fontSize"];
+      if (typeof v === "string" && v) {
+        size = Number.parseFloat(v);
+        break;
+      }
+    }
+    return Math.round(Math.max(1, Math.ceil((this.textContent.length * size * 0.5) / (1280 * 0.88))) * size * 1.12);
+  }
+  append(...nodes: FakeElement[]): void {
+    for (const n of nodes) {
+      n.remove();
+      n.parent = this;
+      this.children.push(n);
+    }
+  }
+  appendChild(node: FakeElement): FakeElement {
+    this.append(node);
+    return node;
+  }
+  after(node: FakeElement): void {
+    const p = this.parent;
+    if (!p) return;
+    node.remove();
+    node.parent = p;
+    p.children.splice(p.children.indexOf(this) + 1, 0, node);
+  }
+  prepend(...nodes: FakeElement[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeElement | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeElement | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
+  }
+  remove(): void {
+    const p = this.parent;
+    if (!p) return;
+    p.children.splice(p.children.indexOf(this), 1);
+    this.parent = null;
+  }
+  setAttribute(name: string, value: string): void {
+    this.attrs.set(name, value);
+  }
+  toggleAttribute(name: string, force?: boolean): boolean {
+    const on = force ?? !this.attrs.has(name);
+    if (on) this.attrs.set(name, "");
+    else this.attrs.delete(name);
+    return on;
+  }
+  cloneNode(deep = false): FakeElement {
+    const copy = new FakeElement(this.tagName);
+    copy.className = this.className;
+    copy.ownText = this.ownText;
+    for (const [k, v] of Object.entries(this.style)) if (k !== "props") copy.style[k] = v;
+    for (const [k, v] of this.style.props) copy.style.props.set(k, v);
+    if (deep) copy.append(...this.children.map((c) => c.cloneNode(true)));
+    return copy;
+  }
+  find(className: string): FakeElement[] {
+    return this.children.flatMap((c) => [...(c.classList.contains(className) ? [c] : []), ...c.find(className)]);
+  }
+}
+
+describe("the stage and the song's look", () => {
+  let clock = 0;
+  const made: LyricStage[] = [];
+
+  beforeEach(() => {
+    clock = 10_000;
+    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+    vi.stubGlobal("getComputedStyle", (el: FakeElement) => ({ opacity: String(el.style["opacity"] ?? 1) }));
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    for (const s of made.splice(0)) s.destroy();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const pick = (style: PickedLook["style"], over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, style, ...over });
+  const lyrics = (timeline: Timeline = SONG) => ({ kind: "lyrics" as const, timeline });
+
+  /** A stage drawing Stack with the default settings, on a fake host; `onSafePoint` as given. */
+  function stage(onSafePoint?: () => void): { s: LyricStage; root: FakeElement } {
+    const host = new FakeElement("main");
+    const s = new LyricStage(host as unknown as HTMLElement, onSafePoint ? { onSafePoint } : {});
+    made.push(s);
+    s.setSettings(structuredClone(DEFAULT_SETTINGS));
+    s.setPickedLook(pick("stack"));
+    const root = host.children[0];
+    if (!root) throw new Error("no root");
+    return { s, root };
+  }
+  const ghosts = (root: FakeElement): number => root.children.filter((c) => c.classList.contains("ut-ghost")).length;
+  const scenes = (root: FakeElement): FakeElement[] => root.children.filter((c) => c.classList.contains("ut-scene") && !c.classList.contains("ut-ghost"));
+
+  it("brings a new scene in with the look it is shown with, leaving the old one as it was drawn", () => {
+    const { s, root } = stage();
+    s.show({ kind: "instrumental" }, "a");
+    clock += 1000;
+    const syne = pick("stack", { font: { family: "Syne", weight: 800 } });
+    s.show({ kind: "instrumental" }, "b", syne);
+    expect(s.pickedLook).toBe(syne);
+    const notes = scenes(root).map((sc) => sc.find("state-instrumental")[0]?.style["fontFamily"]);
+    expect(notes).toEqual([stackFor(fontFor("Fraunces"), null), stackFor(fontFor("Syne"), null)]);
+    // null: the house look
+    s.show({ kind: "loading" }, "c", null);
+    expect(s.pickedLook).toBe(DEFAULT_PICK);
+  });
+
+  it("crossfades a new look into lyrics only: a state rebuilds where its animation was, with no copy", () => {
+    const { s, root } = stage();
+    s.show({ kind: "not-found" }, "a");
+    clock += 1000;
+    s.setPickedLook(pick("stack", { scale: 1.1 }), "crossfade");
+    expect(ghosts(root)).toBe(0);
+    expect(scenes(root)).toHaveLength(1);
+    s.show(lyrics(), "b");
+    clock += 1000;
+    s.render(9000);
+    s.setPickedLook(pick("drift"), "crossfade");
+    expect(ghosts(root)).toBe(1);
+  });
+
+  it("is at a safe point while lyrics wait for the scene before them to fade out", () => {
+    const { s } = stage();
+    s.show(lyrics(), "a");
+    clock += 1000;
+    s.render(9000);
+    // mid-line, on screen
+    expect(s.atSafePoint(9000)).toBe(false);
+    // new lyrics for the song (plain upgraded to synced): nothing of them shows until the old fade out
+    s.show(lyrics({ ...SONG }), "a");
+    expect(s.atSafePoint(9000)).toBe(true);
+    clock += 260;
+    expect(s.atSafePoint(9000)).toBe(false);
+    // a state is always one
+    s.show({ kind: "loading" }, "b");
+    expect(s.atSafePoint(9000)).toBe(true);
+  });
+
+  it("tells its safe point listeners, as it does onSafePoint, until they stop listening", () => {
+    let option = 0;
+    let listener = 0;
+    const { s } = stage(() => option++);
+    const off = s.addSafePointListener(() => listener++);
+    s.show(lyrics(), "a");
+    // the first paint before the first line (line 0, waiting)...
+    s.render(500);
+    s.render(1200);
+    s.render(2300);
+    // ...a long break starting (the last word ends at 2.4 s), and the focus moving on (the gap at 3 s)
+    s.render(2500);
+    s.render(3100);
+    expect([option, listener]).toEqual([3, 3]);
+    off();
+    s.show(lyrics({ ...SONG }), "b");
+    s.render(500);
+    expect([option, listener]).toEqual([4, 3]);
+  });
+
+  it("wakes for a long break starting only when someone listens for safe points", () => {
+    const { s: quiet } = stage();
+    quiet.show(lyrics(), "a");
+    quiet.render(2300);
+    const { s: heard } = stage();
+    heard.addSafePointListener(() => undefined);
+    heard.show(lyrics(), "a");
+    heard.render(2300);
+    expect(heard.nextChange(2300)).toBe(100);
+    expect(quiet.nextChange(2300)).toBeGreaterThan(100);
+  });
+});

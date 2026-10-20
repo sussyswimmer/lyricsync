@@ -26,6 +26,7 @@ use crate::{
     media::{
         applescript::{
             classify, Failure, FailureKind, Instance, Player, PlayerState, Reading, LAUNCH_GRACE,
+            QUIET_CHECK_WAIT,
         },
         RawTrack, Watcher,
     },
@@ -304,8 +305,9 @@ pub fn header_section(header: &Header) -> Section {
             field(
                 "build",
                 format!(
-                    "{}, contract v{CONTRACT_VERSION}",
-                    if header.release { "release" } else { "debug" }
+                    "{}, contract v{CONTRACT_VERSION}, commit {}",
+                    if header.release { "release" } else { "debug" },
+                    crate::BUILD
                 ),
             ),
             field("executable", path(&header.executable)),
@@ -411,12 +413,12 @@ pub struct PlayerInfo {
     pub reading: Option<Result<Option<Reading>, Failure>>,
     pub selected: bool,
 }
-/// Whether Undertone runs its read script for an Automation answer: only a refusal (or a player
-/// that quit) stops it. Mirrors `applescript::Consent::answered`.
+/// Whether Undertone runs its read script for an Automation answer: a refusal, a player that quit
+/// or no answer in time stops it. Mirrors `applescript::Consent::answered`.
 pub fn automation_allows(status: i32) -> bool {
     !matches!(
         classify(Some(status.into())),
-        FailureKind::NotPermitted | FailureKind::NotRunning
+        FailureKind::NotPermitted | FailureKind::NotRunning | FailureKind::Timeout
     )
 }
 pub fn automation_text(player: Player, status: i32) -> String {
@@ -432,6 +434,11 @@ pub fn automation_text(player: Player, status: i32) -> String {
             player.name()
         ),
         -600 | -609 => "quit before Automation could be checked".into(),
+        -1712 => format!(
+            "macOS did not answer the Automation check within {} s (macOS 26 can hang it); \
+             Undertone asks with an Apple event instead",
+            QUIET_CHECK_WAIT.as_secs()
+        ),
         other => format!("Automation answered {other}; Undertone reads it anyway"),
     }
 }
@@ -575,17 +582,16 @@ fn track_lines(track: &NowPlaying, settings: Option<&Settings>, now_ms: f64) -> 
         field("track key", &track.track_key),
     ];
     if let Some(settings) = settings {
-        let song = settings
-            .track_offsets_ms
-            .get(&track.track_key)
-            .copied()
-            .unwrap_or(0.0);
+        let song = crate::settings::song_offset_ms(settings, &track.track_key);
+        let learned =
+            crate::settings::own_offset_ms(settings, &track.track_key).is_none() && song != 0.0;
         lines.push(field(
             "sync offset",
             format!(
-                "{} ms global, {} ms for this song",
+                "{} ms global, {} ms for this song{}",
                 signed(settings.global_offset_ms, 0),
-                signed(song, 0)
+                signed(song, 0),
+                if learned { " (learned)" } else { "" }
             ),
         ));
     }
@@ -2368,9 +2374,26 @@ mod native {
         Failure::new(number, message)
     }
 
+    /// `automation_status_now` on its own thread, or errAETimeout (-1712) when it doesn't answer
+    /// within `QUIET_CHECK_WAIT`: on macOS 26 it can block forever, which would stop the report.
+    fn automation_status(bundle_id: &'static str) -> i32 {
+        let (answer, answered) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("automation-check".into())
+            .spawn(move || {
+                let _ = answer.send(automation_status_now(bundle_id));
+            });
+        match spawned {
+            Ok(_) => answered
+                .recv_timeout(super::QUIET_CHECK_WAIT)
+                .unwrap_or(-1712),
+            Err(_) => -1712,
+        }
+    }
+
     /// AEDeterminePermissionToAutomateTarget without asking: 0 granted, -1743 denied, -1744 not
     /// decided yet, -600 not running. A diagnostic never shows the Automation prompt.
-    fn automation_status(bundle_id: &str) -> i32 {
+    fn automation_status_now(bundle_id: &str) -> i32 {
         const TYPE_APPLICATION_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
         const TYPE_WILD_CARD: u32 = u32::from_be_bytes(*b"****");
         /// Room for an AEDesc; only CoreServices reads or writes it (see `media/macos.rs`).
@@ -2603,10 +2626,15 @@ mod tests {
         })
         .render();
         assert!(text.starts_with("\n== Undertone 0.1.0 diagnostics ==\n"));
+        // The contract the build speaks, so a report says which frontend it goes with.
+        let build = format!(
+            "build:       release, contract v{CONTRACT_VERSION}, commit {}",
+            crate::BUILD
+        );
         for expected in [
             "generated:   2023-11-14 22:13:20 UTC",
             "os:          Windows 11 24H2 (10.0.26100), x86_64",
-            "build:       release, contract v3",
+            build.as_str(),
             "executable:  /Apps/undertone",
             "report file: not saved: read-only temp dir",
         ] {
@@ -3585,6 +3613,9 @@ mod tests {
         assert!(!automation_allows(-1743));
         assert!(!automation_allows(-1744));
         assert!(!automation_allows(-600));
+        // No answer in time (macOS 26 can hang the check): no script, which could prompt.
+        assert!(!automation_allows(-1712));
+        assert!(automation_text(Player::Spotify, -1712).contains("did not answer"));
         // Anything unexpected: the script runs and reports the real error.
         assert!(automation_allows(-50));
         assert!(automation_text(Player::Music, -1744).contains("not decided yet"));

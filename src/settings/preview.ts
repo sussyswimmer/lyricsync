@@ -1,12 +1,15 @@
-import type { NowPlaying, Settings } from "../../contract/contract";
+import type { Lyrics, NowPlaying, Settings } from "../../contract/contract";
 import type { Bridge, Unlisten } from "../bridge/types";
 import type { MockBridge } from "../bridge/mock";
-import { hexToHsl, hslToHex, type Palette, type PaletteCache } from "../core/palette";
+import { hexToHsl, hslToHex, type CoverStats, type Palette, type PaletteCache } from "../core/palette";
+import { pickLook, songFeatures, timingOf, type SongLook } from "../core/songlook";
 import { OverlayController } from "../overlay/controller";
 import { h } from "../overlay/dom";
-import { LyricStage } from "../overlay/stage";
+import { LyricStage, type StageView } from "../overlay/stage";
+import { sameLyrics, viewFor } from "../overlay/view";
 import { icon, setText } from "./controls";
 import { GAP_GRACE_MS } from "./hold";
+import { cardState, sameCard, type CardLook, type LookCardState } from "./look-card";
 
 /**
  * The preview stage counts this many px as 1× for `Settings.size` (the overlay uses 1080, which would
@@ -18,10 +21,13 @@ import { GAP_GRACE_MS } from "./hold";
 export const PREVIEW_REFERENCE_HEIGHT = 680;
 /** Same grace as the overlay controller: a song without artwork keeps the last song's colors this long. */
 const ARTWORK_GRACE_MS = 1500;
-/** The demo plays these mock tracks (both synced) in a loop... */
-const DEMO_TRACKS = [0, 1];
-/** ...starting mid-verse, so switching to it never shows an empty intro. */
-const DEMO_START_MS = 5000;
+/**
+ * The demo plays these mock tracks in a loop: Glass Harbor, whose intro dots and held words show the
+ * motion best, then the three look demos, each of which Undertone gives another look...
+ */
+export const DEMO_TRACKS: readonly number[] = [6, 7, 8, 9];
+/** ...starting a moment into Glass Harbor's intro, as its interlude dots fill. */
+export const DEMO_START_MS = 1200;
 
 const SOURCE_LABEL: Record<NowPlaying["source"], string> = {
   spotify: "Spotify",
@@ -43,6 +49,8 @@ export interface PreviewInfo {
   paletteFrom: string | null;
   /** true while the shown track's colors are still being worked out */
   artPending: boolean;
+  /** what the "Picked for this song" card shows for the shown track */
+  look: LookCardState;
 }
 
 export interface PreviewOptions {
@@ -58,9 +66,9 @@ type SourceKind = "main" | "demo";
 /**
  * A miniature desktop at the top of the settings window: the real overlay stage and controller on
  * a wallpaper, with a slim menu bar naming the song. The stage starts below the bar (settings.css),
- * so its Height clamp never tucks the focus line under it. It plays the current track, or a private
- * demo player when nothing is playing (the mock too, under `?media=` or `setMedia`). Settings come
- * from the window, not the bridge, so unsaved edits show at once.
+ * so the lyrics center in the space under it, as they do in a desktop's work area. It plays the
+ * current track, or a private demo player when nothing is playing (the mock too, under `?media=` or
+ * `setMedia`). Settings come from the window, not the bridge, so unsaved edits show at once.
  */
 export class SettingsPreview {
   readonly el: HTMLElement;
@@ -81,8 +89,26 @@ export class SettingsPreview {
   private unlistenSource: Unlisten[] = [];
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private artTimer: ReturnType<typeof setTimeout> | null = null;
-  private info: PreviewInfo = { track: null, demo: false, palette: null, paletteFrom: null, artPending: false };
+  private info: PreviewInfo = {
+    track: null,
+    demo: false,
+    palette: null,
+    paletteFrom: null,
+    artPending: false,
+    look: cardState({ key: null, demo: false, view: null, look: null }),
+  };
   private disposed = false;
+  /** the bridge the preview plays from: the window's, or the demo's */
+  private source: Bridge | null = null;
+  /** the shown track's lyrics as its bridge reports them, and what the stage makes of them */
+  private lyrics: { lyrics: Lyrics; view: StageView } | null = null;
+  /**
+   * The look the preview's controller last reported (`reportLook`), for the track it played then.
+   * Null until the first report; from then on the card shows only these.
+   */
+  private reported: { key: string | null; look: CardLook | null } | null = null;
+  /** the look picked here until the controller reports one, memoized per lyrics and cover */
+  private interim: { lyrics: Lyrics; cover: CoverStats | null; look: SongLook } | null = null;
 
   constructor(options: PreviewOptions) {
     this.options = options;
@@ -164,6 +190,17 @@ export class SettingsPreview {
     return this.info;
   }
 
+  /**
+   * The look the preview's controller draws its song with (`ControllerOptions.onLook`, given to the
+   * controller where `attach` builds it), so the card and the preview always agree. Null: no look
+   * (nothing playing). From the first report on, the card shows only reported looks.
+   */
+  reportLook(look: CardLook | null): void {
+    if (this.disposed) return;
+    this.reported = { key: this.controller?.track?.trackKey ?? null, look };
+    if (this.updateLook()) this.options.onInfo?.(this.info);
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.graceTimer) clearTimeout(this.graceTimer);
@@ -187,13 +224,17 @@ export class SettingsPreview {
     this.detach();
     this.sourceKind = kind;
     const bridge = kind === "demo" ? await this.createDemo() : this.options.bridge;
+    this.source = bridge;
     const controller = new OverlayController(bridge, this.stage, {
       followSettings: false,
       palettes: this.options.palettes,
+      onLook: (look) => this.reportLook(look),
     });
     controller.setSettings(this.settings);
     this.controller = controller;
+    // Before the controller's own listeners: the card hears of a new song, or its lyrics, first.
     this.unlistenSource.push(await bridge.listen("now-playing", (np) => this.onTrack(np)));
+    this.unlistenSource.push(await bridge.listen("lyrics", (lyrics) => this.onLyrics(lyrics)));
     await controller.start();
     this.onTrack(controller.track);
   }
@@ -206,20 +247,26 @@ export class SettingsPreview {
     this.demo?.dispose();
     this.demo = null;
     this.sourceKind = null;
+    this.source = null;
   }
 
   /** A private, silent mock player (no keys, no storage, not shared with other windows). */
   private async createDemo(): Promise<Bridge> {
     const { createMockBridge, MOCK_TRACKS, trackKeyOf } = await import("../bridge/mock");
-    const demo = createMockBridge({ shared: false, keys: false, storage: null, params: new URLSearchParams() });
+    const first = DEMO_TRACKS[0] ?? 0;
+    const demo = createMockBridge({
+      shared: false,
+      keys: false,
+      storage: null,
+      params: new URLSearchParams({ track: String(first), t: String(DEMO_START_MS) }),
+    });
     const keys = new Set(DEMO_TRACKS.flatMap((i) => (MOCK_TRACKS[i] ? [trackKeyOf(MOCK_TRACKS[i])] : [])));
-    // Loop the synced demo songs instead of moving on to the not-found and instrumental ones.
+    // Loop the demo songs instead of moving on to the others (not found, instrumental, ...).
     this.unlistenSource.push(
       await demo.listen("now-playing", (np) => {
-        if (np && !keys.has(np.trackKey)) demo.player.select(DEMO_TRACKS[0] ?? 0);
+        if (np && !keys.has(np.trackKey)) demo.player.select(first);
       }),
     );
-    demo.player.seek(DEMO_START_MS);
     this.demo = demo;
     return demo;
   }
@@ -229,6 +276,10 @@ export class SettingsPreview {
     const before = this.info;
     const sameArt = before.track?.trackKey === np?.trackKey && before.track?.artwork === np?.artwork;
     this.info = { ...before, track: np, demo: this.sourceKind === "demo" };
+    if (np?.trackKey !== before.track?.trackKey) {
+      this.lyrics = null;
+      if (np) void this.queryLyrics(np.trackKey);
+    }
     if (!np) {
       this.clearArtTimer();
       this.info = { ...this.info, palette: null, paletteFrom: null, artPending: false };
@@ -236,8 +287,63 @@ export class SettingsPreview {
     } else if (!sameArt) {
       this.loadPalette(np);
     }
+    this.updateLook();
     this.renderBar();
     this.options.onInfo?.(this.info);
+  }
+
+  /**
+   * The shown track's lyrics, from the start: its `lyrics` event may have gone by before the preview
+   * listened. An event that arrives first wins over this reply (it's newer).
+   */
+  private async queryLyrics(trackKey: string): Promise<void> {
+    const source = this.source;
+    try {
+      const lyrics = await source?.invoke("get_lyrics", { trackKey });
+      if (lyrics && source === this.source) this.onLyrics(lyrics, true);
+    } catch {
+      // the lyrics event will still arrive
+    }
+  }
+
+  private onLyrics(lyrics: Lyrics, fromQuery = false): void {
+    const track = this.info.track;
+    if (this.disposed || !track || lyrics.trackKey !== track.trackKey) return;
+    const known = this.lyrics?.lyrics ?? null;
+    if (fromQuery && known?.trackKey === lyrics.trackKey) return;
+    if (known && sameLyrics(known, lyrics)) return;
+    this.lyrics = { lyrics, view: viewFor(lyrics, track.durationMs) };
+    if (this.updateLook()) this.options.onInfo?.(this.info);
+  }
+
+  /** Brings the card's state up to date; true when it changed. */
+  private updateLook(): boolean {
+    const track = this.info.track;
+    const key = track?.trackKey ?? null;
+    let look: CardLook | null = null;
+    if (track && this.reported) look = this.reported.key === key ? this.reported.look : null;
+    else if (track) look = this.interimLook(track);
+    const next = cardState({ key, demo: this.info.demo, view: this.lyrics?.view.kind ?? null, look });
+    if (sameCard(next, this.info.look)) return false;
+    this.info = { ...this.info, look: next };
+    return true;
+  }
+
+  /**
+   * Until the controller reports its look (`reportLook`), the card picks it the way the overlay does
+   * (core/songlook, deterministic): from the shown track, its lyrics as the stage lays them out, and
+   * the cover's statistics once its artwork is decoded.
+   */
+  private interimLook(track: NowPlaying): SongLook | null {
+    const shown = this.lyrics;
+    if (!shown || shown.view.kind !== "lyrics") return null;
+    const cover = this.options.palettes.cover(track.trackKey);
+    const memo = this.interim;
+    if (memo && memo.lyrics === shown.lyrics && memo.cover === cover) return memo.look;
+    const { timeline } = shown.view;
+    const look = pickLook(songFeatures({ track, lines: timeline.lines, timing: timingOf(shown.lyrics, timeline), cover }));
+    this.interim = { lyrics: shown.lyrics, cover, look };
+    return look;
   }
 
   /**
@@ -267,6 +373,8 @@ export class SettingsPreview {
   private setPalette(palette: Palette | null, from: string | null): void {
     this.info = { ...this.info, palette, paletteFrom: from, artPending: false };
     this.paintWallpaper();
+    // the cover's statistics are in too (PaletteCache.cover), for the card's look
+    this.updateLook();
     this.options.onInfo?.(this.info);
   }
 

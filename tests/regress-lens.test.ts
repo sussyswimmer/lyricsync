@@ -2,9 +2,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { DEFAULT_SETTINGS, type Settings } from "../contract/contract";
 import { parseLrc, type Line } from "../src/core/lrc";
 import { FONTS, fontFor, whenFaceLoads } from "../src/overlay/fonts";
-import { resolveLook, shadowLayers, type Frame, type Look } from "../src/overlay/look";
+import { DEFAULT_PICK, resolveLook, shadowLayers, withBloom, type Frame, type Look } from "../src/overlay/look";
 import { drawnShadow, fitRow, focusCenter, LensMode, nextSize, pull, rowWidth, zoomAt, type Shape } from "../src/overlay/modes/lens";
+import { POSTER_LAYOUT, SPOTLIGHT_LAYOUT, type SlotLayout } from "../src/overlay/modes/slot-layouts";
 import type { Cue } from "../src/overlay/modes/types";
+import { PICTURE_EM } from "../src/overlay/motion/decor";
+import { findInterludes } from "../src/overlay/motion/interlude";
+import { leadTimes } from "../src/overlay/motion/schedule";
+import { FakeAnimationHost } from "./fake-motion";
 import paperLanterns from "./fixtures/paper-lanterns.lrc?raw";
 
 const look = (over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look =>
@@ -163,29 +168,6 @@ describe("Lens: the shadow of a word drawn small and faded", () => {
   });
 });
 
-// Regression (lens-perf): a 200 ms text-shadow transition on every word re-laid out and re-rastered
-// it on every frame of each glow change and shadow step.
-describe("Lens: styles", () => {
-  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
-  // non-literal specifier, because the strict type check runs without node's types.
-  let lensCss = "";
-  beforeAll(async () => {
-    const fsModule = "node:fs";
-    const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
-    lensCss = fs.readFileSync(new URL("../src/styles/lens.css", import.meta.url), "utf8");
-  });
-
-  it("transitions a word's color only, never its text-shadow", () => {
-    const css = lensCss.replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(css).toContain(".lens-word");
-    const rule = /\.lens-word\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    const transition = /transition:\s*([^;]*);/.exec(rule)?.[1] ?? "";
-    expect(transition).toContain("color");
-    expect(transition).not.toContain("text-shadow");
-    expect(css).not.toMatch(/transition:[^;]*text-shadow/);
-  });
-});
-
 // Regression (lens-fontcheck-freeze): every build asked FontFaceSet.check about the whole song
 // (every line joined, nothing deduplicated) against the whole fallback stack at the current size.
 // Blink looks every family up for every character, so a settings slider step cost 300-400 ms.
@@ -249,35 +231,29 @@ describe("Lens: waiting for the lyric face", () => {
 });
 
 /*
- * Just enough DOM for Lens to build and paint in node: elements with inline styles, text half an em
- * wide per character (the baseline mark 0.8 em down), and Web Animations that only record themselves.
+ * Just enough DOM for Lens and the karaoke engine to build and run in node: elements with inline
+ * styles, text half an em wide per character (the baseline mark 0.8 em down), and the Web Animations
+ * fakes from fake-motion.ts, which keep time on performance.now() (mocked: `clock`).
  */
 class FakeStyle {
   readonly props = new Map<string, string>();
+  /** every setProperty, in order: what a paint wrote */
+  readonly writes: string[] = [];
   [key: string]: unknown;
   setProperty(name: string, value: string): void {
     this.props.set(name, value);
+    this.writes.push(name);
+  }
+  getPropertyValue(name: string): string {
+    return this.props.get(name) ?? "";
   }
 }
 
-class FakeAnimation {
-  readonly keyframes: Keyframe[];
-  cancelled = false;
-  readonly finished = new Promise<void>(() => undefined);
-  constructor(keyframes: Keyframe[]) {
-    this.keyframes = keyframes;
-  }
-  cancel(): void {
-    this.cancelled = true;
-  }
-}
-
-class FakeElement {
+class FakeElement extends FakeAnimationHost {
   readonly tagName: string;
   className = "";
   dir = "";
   readonly style = new FakeStyle();
-  readonly animations: FakeAnimation[] = [];
   children: FakeElement[] = [];
   parent: FakeElement | null = null;
   private own = "";
@@ -292,10 +268,17 @@ class FakeElement {
         .filter((c) => c && !names.includes(c))
         .join(" ");
     },
+    toggle: (name: string, force?: boolean): boolean => {
+      const on = force ?? !this.classList.contains(name);
+      if (on) this.classList.add(name);
+      else this.classList.remove(name);
+      return on;
+    },
     contains: (name: string): boolean => this.className.split(" ").includes(name),
   };
 
   constructor(tag: string) {
+    super();
     this.tagName = tag.toUpperCase();
   }
 
@@ -306,6 +289,12 @@ class FakeElement {
     for (const c of this.children) c.parent = null;
     this.children = [];
     this.own = value;
+  }
+  get parentNode(): FakeElement | null {
+    return this.parent;
+  }
+  get firstChild(): FakeElement | null {
+    return this.children[0] ?? null;
   }
   private fontSize(): number {
     for (let el: FakeElement | null = this; el; el = el.parent) {
@@ -318,8 +307,12 @@ class FakeElement {
     const size = this.fontSize();
     return { width: this.textContent.length * size * 0.5, left: 0, top: this.tagName === "I" ? 0.8 * size : 0 };
   }
-  append(...nodes: FakeElement[]): void {
+  append(...nodes: (FakeElement | string)[]): void {
     for (const n of nodes) {
+      if (typeof n === "string") {
+        this.own += n;
+        continue;
+      }
       n.remove();
       n.parent = this;
       this.children.push(n);
@@ -329,12 +322,32 @@ class FakeElement {
     this.append(node);
     return node;
   }
+  insertBefore(node: FakeElement, ref: FakeElement | null): FakeElement {
+    if (!ref) return this.appendChild(node);
+    node.remove();
+    node.parent = this;
+    this.children.splice(this.children.indexOf(ref), 0, node);
+    return node;
+  }
   after(node: FakeElement): void {
     const p = this.parent;
     if (!p) return;
     node.remove();
     node.parent = p;
     p.children.splice(p.children.indexOf(this) + 1, 0, node);
+  }
+  prepend(...nodes: FakeElement[]): void {
+    for (const n of [...nodes].reverse()) {
+      n.remove();
+      n.parent = this;
+      this.children.unshift(n);
+    }
+  }
+  /** `.class` selectors only: this element or its nearest ancestor with the class. */
+  closest(selector: string): FakeElement | null {
+    const cls = selector.replace(/^\./u, "");
+    for (let el: FakeElement | null = this; el; el = el.parent) if (el.classList.contains(cls)) return el;
+    return null;
   }
   remove(): void {
     const p = this.parent;
@@ -347,144 +360,575 @@ class FakeElement {
     return false;
   }
   setAttribute(): void {}
-  animate(keyframes: Keyframe[]): FakeAnimation {
-    const anim = new FakeAnimation(keyframes);
-    this.animations.push(anim);
-    return anim;
+  find(className: string): FakeElement[] {
+    const out: FakeElement[] = [];
+    for (const c of this.children) {
+      if (c.classList.contains(className)) out.push(c);
+      out.push(...c.find(className));
+    }
+    return out;
   }
 }
 
-const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
-const cue = (line: number, t: number, running: boolean, waiting = false): Cue => ({ line, t, waiting, running });
+let clock = 0;
+const live: LensMode[] = [];
 
-function lens(): { mode: LensMode; row: () => FakeElement | undefined } {
-  const host = new FakeElement("main");
-  const mode = new LensMode();
-  mode.build(host as unknown as HTMLElement, LINES, look());
-  const box = host.children[0];
-  return { mode, row: () => box?.children.find((c) => c.classList.contains("lens-row") && !c.classList.contains("lens-leaving")) };
+function setup(): void {
+  clock = 10_000;
+  vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+  vi.spyOn(performance, "now").mockImplementation(() => clock);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 }
 
-/** Each word's drawn scale (its own fisheye scale times the row's zoom), from its transform. */
-const scales = (row: FakeElement | undefined): number[] =>
-  (row?.children ?? []).map((span) => Number(/scale\(([\d.]+)\)/.exec(span.style.props.get("transform") ?? "")?.[1] ?? "NaN"));
+function teardown(): void {
+  for (const mode of live.splice(0)) mode.destroy();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+}
 
-const glides = (row: FakeElement | undefined): boolean => (row?.animations ?? []).some((a) => !a.cancelled && a.keyframes.some((k) => "transform" in k));
+const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
+const LEADS = leadTimes(LINES);
+const BREAK = findInterludes(LINES)[0];
+const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, waiting, running });
 
-// Regression (lens-paused-step): the lens blooms over a step's glide frame by frame, but no frames
-// follow a paused paint, so a paused seek or step onto the next line left the row flat (no lens) until
-// playback resumed. Paused, a step now cuts like any other jump, with the full lens at once.
-describe("Lens: line changes while paused", () => {
-  beforeEach(() => {
-    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+/** A built Lens on a fake host, with the live focus row, the next line and the break slot to look at. */
+function lens(l: Look = look(), lines: Line[] = LINES, layout?: SlotLayout): {
+  mode: LensMode;
+  host: FakeElement;
+  row: () => FakeElement | undefined;
+  rows: () => FakeElement[];
+  next: () => FakeElement | undefined;
+  brk: () => FakeElement | undefined;
+} {
+  const host = new FakeElement("main");
+  const mode = new LensMode(layout);
+  live.push(mode);
+  mode.build(host as unknown as HTMLElement, lines, l);
+  const box = (): FakeElement | undefined => host.children[0];
+  const shown = (c: FakeElement): boolean => !c.classList.contains("lens-leaving") && c.style.getPropertyValue("visibility") !== "hidden";
+  return {
+    mode,
+    host,
+    rows: () => (box()?.children ?? []).filter((c) => c.classList.contains("lens-row")),
+    row: () => box()?.children.find((c) => c.classList.contains("lens-row") && shown(c)),
+    next: () => box()?.children.find((c) => c.classList.contains("lens-next") && !c.classList.contains("lens-leaving")),
+    brk: () => box()?.children.find((c) => c.classList.contains("lens-break") && !c.classList.contains("lens-leaving")),
+  };
+}
+
+const slotsOf = (row: FakeElement | undefined): FakeElement[] => row?.find("lens-slot") ?? [];
+/** An element and everything inside it. */
+const everything = (el: FakeElement | undefined): FakeElement[] => (el ? [el, ...el.children.flatMap((c) => everything(c))] : []);
+const wordsOf = (row: FakeElement | undefined): FakeElement[] => row?.find("kw") ?? [];
+/** Runs the mount slices (a frame each, a timer here). */
+const frames = (n = 12): void => {
+  vi.advanceTimersByTime(16 * n);
+};
+
+/** A slot's lens as drawn at its animation's current time (or its own style without one): left x, scale, opacity. */
+function lensOf(slot: FakeElement | undefined): { x: number; s: number; o: number } {
+  const anim = slot?.getAnimations()[0];
+  const values = anim ? anim.values() : { transform: slot?.style.getPropertyValue("transform") ?? "", opacity: slot?.style.getPropertyValue("opacity") ?? "1" };
+  const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/u.exec(values["transform"] ?? "");
+  return { x: Number(m?.[1]), s: Number(m?.[3]), o: Number(values["opacity"] ?? 1) };
+}
+
+const translateY = (transform: string | undefined): number => Number(/translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(transform ?? "")?.[1]);
+
+describe("Lens on the motion engine: sleeping between line changes", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it("never wakes for words: paint asks for no frames, nextChange names the leads and the break", () => {
+    const { mode } = lens();
+    expect(mode.wordWakes).toBe(false);
+    let last = 500;
+    for (const t of [500, 1200, 2400, 3000, 3700]) {
+      clock += t - last;
+      last = t;
+      expect(mode.paint(cue(0, t))).toBe(false);
+    }
+    expect(mode.nextChange(3000)).toBe((LEADS[1] ?? 0) - 3000);
+    expect(BREAK).toBeDefined();
+    if (!BREAK) return;
+    clock += 1300;
+    mode.paint(cue(1, 5000));
+    expect(mode.nextChange(5000)).toBe(BREAK.start - 5000);
+    expect(mode.nextChange(BREAK.start + 10)).toBe(BREAK.end - BREAK.start - 10);
   });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
-  it.each([
-    ["2000 → 5300", 0, 2000, 1, 5300],
-    ["4300 → 13300", 1, 4300, 2, 13300],
-  ])("shows the next line under the full lens at once after a paused step (%s)", (_, from, t0, to, t1) => {
+  it("plays the lens as a planned track on every slot, in the karaoke's batch, on song time", () => {
     const { mode, row } = lens();
-    mode.paint(cue(from, t0, false));
-    mode.paint(cue(to, t1, false));
-    expect(row()?.textContent).toBe(LINES[to]?.words.map((w) => w.text.trimEnd()).join(""));
-    expect(glides(row())).toBe(false);
-    const drawn = scales(row());
-    // the word being sung near SCALE_MAX, the far ones at SCALE_MIN
-    expect(Math.max(...drawn)).toBeGreaterThan(1.2);
-    expect(Math.min(...drawn)).toBeLessThan(0.6);
+    mode.paint(cue(0, 2000));
+    frames();
+    const slots = slotsOf(row());
+    expect(slots).toHaveLength(LINES[0]?.words.length ?? 0);
+    const anims = slots.map((s) => s.getAnimations());
+    for (const list of anims) expect(list).toHaveLength(1);
+    const first = anims[0]?.[0];
+    // the line's window starts at its first word (it came in mid-line): one window for every animation
+    const span = first?.duration ?? 0;
+    for (const list of anims) {
+      const a = list[0];
+      expect(a?.duration).toBe(span);
+      expect(a?.currentTime).toBeCloseTo(2000 - (LINES[0]?.words[0]?.start ?? 0), 6);
+      expect(Object.keys(a?.keyframes[0] ?? {})).toEqual(expect.arrayContaining(["transform", "opacity"]));
+    }
+    // the karaoke shares it: every word box pops in the same window
+    for (const w of wordsOf(row())) for (const a of w.getAnimations()) expect(a.duration).toBe(span);
+    // each word box sits in its slot, which carries the lens around it
+    for (const s of slots) expect(s.children[0]?.classList.contains("kw")).toBe(true);
   });
 
-  it("still glides during playback, the lens blooming from flat", () => {
+  it("magnifies the guessed word on a line timed by line only, as on one timed word by word", () => {
+    const guessed = LINES.map((l) => ({ ...l, estimated: true }));
+    const { mode, row } = lens(look(), guessed);
+    const words = guessed[0]?.words ?? [];
+    mode.paint(cue(0, 1000));
+    frames();
+    let last = 1000 + 16 * 12;
+    clock += 16 * 12;
+    words.forEach((w, j) => {
+      if (j === 0) return;
+      const t = (w.start + w.end) / 2 + 80;
+      clock += t - last;
+      last = t;
+      mode.paint(cue(0, t));
+      const scales = slotsOf(row()).map((s) => lensOf(s).s);
+      expect(scales.indexOf(Math.max(...scales)), `${w.text} at ${t}`).toBe(j);
+    });
+  });
+
+  it("magnifies the word being sung, and its bloom with it", () => {
     const { mode, row } = lens();
-    mode.paint(cue(0, 2000, true));
-    mode.paint(cue(1, 5300, true));
-    expect(glides(row())).toBe(true);
-    expect(scales(row()).every((x) => Math.abs(x - (scales(row())[0] ?? 0)) < 1e-9)).toBe(true);
-    mode.paint(cue(1, 5300 + 460, true));
-    expect(Math.max(...scales(row()))).toBeGreaterThan(1.2);
+    const words = LINES[0]?.words ?? [];
+    mode.paint(cue(0, 1000));
+    frames();
+    let last = 1000 + 16 * 12;
+    clock += 16 * 12;
+    words.forEach((w, j) => {
+      if (j === 0) return;
+      const t = (w.start + w.end) / 2 + 80;
+      clock += t - last;
+      last = t;
+      mode.paint(cue(0, t));
+      const scales = slotsOf(row()).map((s) => lensOf(s).s);
+      expect(scales.indexOf(Math.max(...scales)), `${w.text} at ${t}`).toBe(j);
+    });
+    // every word has its bloom copy inside its word box (in the slot), and it glows while sung
+    for (const w of wordsOf(row())) {
+      const glow = w.find("kw-glow")[0];
+      expect(glow).toBeDefined();
+      expect(glow?.getAnimations().length).toBe(1);
+    }
+    expect(row()?.classList.contains("has-fx")).toBe(true);
+    expect(row()?.classList.contains("kw-host")).toBe(true);
   });
 
-  it("finishes the lens easing in when paused just after a line shown at rest starts", () => {
-    const paused = lens();
-    paused.mode.paint(cue(0, 400, true, true));
-    paused.mode.paint(cue(0, 1100, false));
-    const playing = lens();
-    playing.mode.paint(cue(0, 400, true, true));
-    playing.mode.paint(cue(0, 1100, true));
-    const full = Math.max(...scales(paused.row()));
-    expect(full).toBeGreaterThan(1.2);
-    // during playback it is still easing in at that moment
-    expect(Math.max(...scales(playing.row()))).toBeLessThan(full - 0.05);
+  it("never swaps a text-shadow as the lens moves: one dark shadow per slot, the glow is the bloom's opacity", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 900, true, true));
+    frames();
+    const slots = slotsOf(row());
+    const before = slots.map((s) => s.style.writes.filter((w) => w.includes("shadow")).length);
+    for (const s of slots) expect(s.style.getPropertyValue("--ut-dark")).toMatch(/rgba\(0, 0, 0,/u);
+    for (const t of [1100, 1600, 2300, 2800, 3200, 3600]) {
+      clock += 400;
+      mode.paint(cue(0, t));
+      mode.retime(cue(0, t + 20));
+    }
+    frames();
+    slots.forEach((s, j) => expect(s.style.writes.filter((w) => w.includes("shadow")).length, `slot ${j}`).toBe(before[j]));
+    for (const w of wordsOf(row())) expect(w.style.writes.filter((x) => x.includes("shadow"))).toEqual([]);
+  });
+
+  it("styles the slots' plain text with the slot's shadow and transitions nothing", () => {
+    const css = lensCss.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).not.toMatch(/transition/u);
+    expect(/\.lens-slot \.kw-txt\s*\{([^}]*)\}/u.exec(css)?.[1]).toContain("var(--ut-dark)");
   });
 });
 
-// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the Height whatever
-// the Height, so at 95% and up it was drawn entirely below the screen and Lens showed one lone line.
-describe("Lens: the next line near the bottom of the stage", () => {
-  beforeEach(() => {
-    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) });
+let lensCss = "";
+beforeAll(async () => {
+  // Read from disk: vitest hands CSS imports (even ?raw) to its CSS pipeline, which yields "" in node. A
+  // non-literal specifier, because the strict type check runs without node's types.
+  const fsModule = "node:fs";
+  const fs = (await import(/* @vite-ignore */ fsModule)) as { readFileSync(path: URL, encoding: "utf8"): string };
+  lensCss = fs.readFileSync(new URL("../src/styles/lens.css", import.meta.url), "utf8");
+});
+
+describe("Lens on the motion engine: line changes", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it("glides the next line up into focus on a spring at the lead, while the old one fades out where it is", () => {
+    const { mode, row, rows, next } = lens();
+    mode.paint(cue(0, 3000));
+    frames();
+    const old = row();
+    const lead = LEADS[1] ?? 0;
+    clock += lead - 3000;
+    // the stage's line is still the old one: the lead is Lens's own
+    expect(mode.crossfades(cue(1, lead))).toBe(false);
+    expect(mode.paint(cue(0, lead))).toBe(false);
+    const fresh = row();
+    expect(fresh).not.toBe(old);
+    expect(fresh?.textContent).toContain("Count");
+    // on the document timeline, from now, sampled from the spring: it overshoots and settles
+    const glide = fresh?.getAnimations()[0];
+    expect(glide?.startTime).toBe(clock);
+    const ys = (glide?.keyframes ?? []).map((k) => translateY(String(k.transform)));
+    expect(ys.length).toBeGreaterThan(4);
+    expect(ys[0]).toBeGreaterThan(10);
+    expect(Math.min(...ys)).toBeLessThan(-0.5);
+    expect(ys[ys.length - 1]).toBe(0);
+    expect(Number(glide?.keyframes[0]?.opacity)).toBeCloseTo(0.6, 3);
+    // the old line: still, fading out where it is
+    expect(old?.classList.contains("lens-leaving")).toBe(true);
+    const fade = old?.getAnimations().find((a) => a.keyframes.some((k) => k.opacity === 0));
+    expect(fade?.duration).toBe(170);
+    for (const s of slotsOf(old)) expect(s.getAnimations()).toEqual([]);
+    // the line after rises in below
+    expect(next()?.textContent).toBe(LINES[2]?.text.trimEnd());
+    expect(next()?.getAnimations().some((a) => a.keyframes.some((k) => "transform" in k))).toBe(true);
+    // once the fade is over, the old line is gone
+    clock += 400;
+    mode.paint(cue(1, lead + 400));
+    expect(rows().includes(old as FakeElement)).toBe(false);
   });
-  afterEach(() => {
-    vi.unstubAllGlobals();
+
+  it("arrives waiting: the lens eases in from the line's first word", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 3000));
+    const lead = LEADS[1] ?? 0;
+    clock += lead - 3000;
+    mode.paint(cue(0, lead));
+    const first = LINES[1]?.words[0]?.start ?? 0;
+    const spread = (t: number): number => {
+      clock += 10;
+      mode.paint(cue(t < first ? 0 : 1, t));
+      const s = slotsOf(row()).map((x) => lensOf(x).s);
+      return Math.max(...s) - Math.min(...s);
+    };
+    expect(spread(lead + 50)).toBeLessThan(1e-3);
+    expect(spread(first - 1)).toBeLessThan(1e-3);
+    expect(spread(first + 600)).toBeGreaterThan(0.3);
   });
+
+  it("leaves a line for the break's dots, the next line small below; the dots are gone by E", () => {
+    const { mode, row, brk, next } = lens();
+    expect(BREAK).toBeDefined();
+    if (!BREAK) return;
+    mode.paint(cue(1, BREAK.start - 500));
+    const sung = row();
+    clock += 500;
+    mode.paint(cue(1, BREAK.start + 10));
+    expect(sung?.classList.contains("lens-leaving")).toBe(true);
+    const slot = brk();
+    const dots = slot?.find("ut-dot") ?? [];
+    expect(dots).toHaveLength(3);
+    expect(slot?.find("ut-dots")[0]?.getAnimations().length).toBeGreaterThan(0);
+    for (const d of dots) expect(d.getAnimations().length).toBeGreaterThan(0);
+    // the line the break leads into, small and dim below, where it already was
+    expect(next()?.textContent).toBe(LINES[BREAK.next]?.text.trimEnd());
+    // ...and at E it glides up into focus; the dots' slot is taken down
+    clock += BREAK.end - BREAK.start;
+    mode.paint(cue(BREAK.next, BREAK.end, true, true));
+    expect(brk()).toBeUndefined();
+    expect(row()?.textContent).toContain("Fold");
+    expect(row()?.getAnimations()[0]?.startTime).toBe(clock);
+  });
+
+  it("re-lights the line after a seek back past where its animations start", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(1, 6000));
+    frames();
+    const words = wordsOf(row());
+    expect(words[0]?.getAnimations().length).toBeGreaterThan(0);
+    const first = LINES[1]?.words[0]?.start ?? 0;
+    // back to before the first word, still on this line's lead: the line is put back where the song is
+    clock += 16;
+    mode.paint(cue(0, first - 100, true));
+    frames();
+    const a = slotsOf(row())[0]?.getAnimations()[0];
+    expect(a?.currentTime).toBeCloseTo(0, 6);
+    const s = slotsOf(row()).map((x) => lensOf(x).s);
+    expect(Math.max(...s) - Math.min(...s)).toBeLessThan(1e-3);
+  });
+
+  it("holds every animation at its song time while paused, and plays on from there", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 2000));
+    frames();
+    clock += 100;
+    mode.paint(cue(0, 2100, false));
+    const els = everything(row());
+    const all = els.flatMap((e) => e.getAnimations());
+    expect(all.length).toBeGreaterThan(20);
+    // the line's animations share its window, from its first word; a word's picture ("lanterns"), its
+    // route and its light have their own, from that word (a lantern dances on its word: routes.ts)
+    const origin = LINES[0]?.words[0]?.start ?? 0;
+    const pictured = LINES[0]?.words.find((w) => w.text.startsWith("lanterns"))?.start ?? NaN;
+    const ownWindow = (e: FakeElement): boolean => ["kw-route", "kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
+    for (const e of els) {
+      for (const a of e.getAnimations()) {
+        expect(a.paused).toBe(true);
+        expect(a.currentTime).toBeCloseTo(2100 - (ownWindow(e) ? pictured : origin), 6);
+      }
+    }
+    expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(true);
+    expect(els.some((e) => e.classList.contains("kw-route"))).toBe(true);
+    expect(els.some((e) => e.classList.contains("kw-aura"))).toBe(true);
+    clock += 5000;
+    mode.paint(cue(0, 2100, true));
+    for (const a of all) expect(a.paused).toBe(false);
+  });
+
+  it("commits what is on screen for the stage's still copy, and starts again on the next paint", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 2000));
+    frames();
+    const slot = slotsOf(row())[0];
+    const anim = slot?.getAnimations()[0];
+    mode.freeze();
+    expect(anim?.cancelled).toBe(true);
+    expect(anim?.commits).toBe(1);
+    clock += 16;
+    mode.paint(cue(0, 2016));
+    expect(slotsOf(row())[0]?.getAnimations()).toHaveLength(1);
+  });
+
+  it("fades a jump out and in (no glide), and draws a fresh build at once", () => {
+    const { mode, row, rows } = lens();
+    mode.paint(cue(0, 2000));
+    expect(row()?.getAnimations()).toEqual([]);
+    const old = row();
+    clock += 100;
+    mode.paint(cue(3, 17_000));
+    expect(old?.classList.contains("lens-leaving")).toBe(true);
+    const fadeIn = row()?.getAnimations()[0];
+    expect(fadeIn?.keyframes.map((k) => k.opacity)).toEqual([0, 1]);
+    expect(rows().length).toBe(2);
+  });
+
+  it("takes everything down on destroy", () => {
+    const { mode, host, row } = lens();
+    mode.paint(cue(0, 2000));
+    frames();
+    const anims = slotsOf(row()).flatMap((s) => s.getAnimations());
+    mode.destroy();
+    expect(host.children).toEqual([]);
+    for (const a of anims) expect(a.cancelled).toBe(true);
+  });
+});
+
+describe("Lens on the motion engine: reduced motion, lite, plain lyrics, the look", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it("has no lens under reduced motion: a per-word fade, and the stage crossfades lines and breaks", () => {
+    const { mode, row, brk } = lens(look({}, { motion: false }));
+    mode.paint(cue(0, 2400));
+    frames();
+    const slots = slotsOf(row());
+    for (const s of slots) expect(s.getAnimations()).toEqual([]);
+    const scales = slots.map((s) => lensOf(s).s);
+    expect(Math.max(...scales) - Math.min(...scales)).toBe(0);
+    expect(mode.crossfades(cue(1, 4200))).toBe(true);
+    // the karaoke fades each word in: no transforms on the word boxes
+    for (const w of wordsOf(row())) for (const a of w.getAnimations()) expect(a.keyframes.some((k) => "transform" in k)).toBe(false);
+    expect(wordsOf(row())[2]?.find("kw-win")[0]?.getAnimations()[0]?.keyframes.map((k) => k.opacity)).toEqual([0, 0, 1, 1]);
+    if (!BREAK) return;
+    // no lead without motion: the line changes with the stage's, and the break's dots cut in
+    mode.paint(cue(1, BREAK.start - 100));
+    expect(mode.cuts(cue(1, BREAK.start + 10))).toBe(true);
+    mode.freeze();
+    mode.paint(cue(1, BREAK.start + 10));
+    expect(brk()?.find("ut-dot")).toHaveLength(3);
+    expect(row()).toBeUndefined();
+  });
+
+  it("keeps the lens in the lite tier, with the lite karaoke", () => {
+    const { mode, row } = lens(look({}, { power: "lite" }));
+    mode.paint(cue(0, 2400));
+    frames();
+    const slots = slotsOf(row());
+    for (const s of slots) expect(s.getAnimations()).toHaveLength(1);
+    const scales = slots.map((s) => lensOf(s).s);
+    expect(Math.max(...scales) - Math.min(...scales)).toBeGreaterThan(0.3);
+    for (const w of wordsOf(row())) for (const a of w.getAnimations()) expect(a.keyframes.some((k) => "transform" in k)).toBe(false);
+  });
+
+  it("draws plain lyrics calm and at rest, without an overlay, and glides them calmly", () => {
+    const { mode, row } = lens(look({}, { unsynced: true }));
+    mode.paint(cue(0, 2400));
+    frames();
+    expect(row()?.find("kw-fx")).toEqual([]);
+    expect(row()?.classList.contains("has-fx")).toBe(false);
+    for (const s of slotsOf(row())) expect(s.getAnimations()).toEqual([]);
+    const lead = LEADS[1] ?? 0;
+    clock += 1000;
+    mode.paint(cue(0, lead));
+    const glide = row()?.getAnimations()[0];
+    // the calm spring: no overshoot
+    const ys = (glide?.keyframes ?? []).map((k) => translateY(String(k.transform)));
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(-1e-9);
+  });
+
+  it("sets the look's letter-spacing and case, and measures with them", () => {
+    const picked = { ...DEFAULT_PICK, style: "lens" as const, letterSpacing: 0.05, textCase: "upper" as const };
+    const l = resolveLook({ ...structuredClone(DEFAULT_SETTINGS) }, null, { width: 1280, height: 720, dpr: 1, motion: true, unsynced: false }, picked);
+    const { mode, host, row, next } = lens(l);
+    expect(host.children[0]?.style["letterSpacing"]).toBe("0.05em");
+    mode.paint(cue(0, 2000));
+    expect(row()?.find("kw-txt").map((t) => t.textContent)).toEqual(LINES[0]?.words.map((w) => w.text.trimEnd().toUpperCase()));
+    expect(next()?.textContent).toBe(LINES[1]?.text.trimEnd().toUpperCase());
+  });
+
+  it("measures again once the face has loaded, and redraws the focus line where the song is", async () => {
+    let loaded!: () => void;
+    const fonts = { check: vi.fn(() => false), load: vi.fn(() => new Promise<void>((resolve) => (loaded = resolve))) };
+    vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag), fonts });
+    const measure = vi.spyOn(LensMode.prototype as unknown as { measure: () => void }, "measure");
+    const { mode, row } = lens();
+    mode.paint(cue(0, 2000));
+    const before = row();
+    expect(measure).toHaveBeenCalledTimes(1);
+    loaded();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(measure).toHaveBeenCalledTimes(2);
+    expect(row()).not.toBe(before);
+    expect(row()?.textContent).toContain("Paper");
+  });
+
+  it("restyles colors in place, and re-plans the focus line for new motion", () => {
+    const { mode, host, row } = lens();
+    mode.paint(cue(0, 2000));
+    frames();
+    const anims = slotsOf(row()).flatMap((s) => s.getAnimations());
+    mode.restyle(look({ glow: 90 }));
+    const box = host.children[0];
+    expect(box?.style.getPropertyValue("--ut-bloom")).toContain("rgba");
+    for (const a of anims) expect(a.cancelled).toBe(false);
+    const livelier = withBloom({ ...look(), energy: 0.9 }, 0.6);
+    mode.restyle(livelier);
+    for (const a of anims) expect(a.cancelled).toBe(true);
+    expect(slotsOf(row())[0]?.getAnimations()).toHaveLength(1);
+  });
+});
+
+// Regression (lens-next-offscreen): the next line sat NEXT_DROP focus sizes below the focus line
+// wherever that was, so with the line low on screen (Height 95% and up, before contract v6) it was
+// drawn entirely below the screen and Lens showed one lone line. The line is always in the middle now,
+// where the next line fits on any display; a stage too short for both still moves the pair up.
+describe("Lens: the next line below the focus line", () => {
+  beforeEach(setup);
+  afterEach(teardown);
 
   const translateOf = (transform: unknown): [number, number] => {
     const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(String(transform ?? ""));
     return [Number(m?.[1]), Number(m?.[2])];
   };
 
-  const FRAMES: Partial<Frame>[] = [
-    { width: 1920, height: 1080 },
-    { width: 1280, height: 720 },
-  ];
+  /** Short for its Size: at 140 the pair moves up from the middle. */
+  const SHORT: Partial<Frame> = { width: 1280, height: 400, referenceHeight: 400 };
+  const FRAMES: Partial<Frame>[] = [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }, SHORT];
 
-  it("moves the focus line up just enough to keep its next line on screen, below the focus line", () => {
+  it("keeps the next line on screen, below the focus line", () => {
     for (const frame of FRAMES)
-      for (const yPos of [95, 100])
-        for (const size of [22, 58, 140]) {
-          const l = look({ size, yPos }, frame);
-          const host = new FakeElement("main");
-          const mode = new LensMode();
-          mode.build(host as unknown as HTMLElement, LINES, l);
-          mode.paint(cue(0, 2000, true));
-          const box = host.children[0];
-          const next = box?.children.find((c) => c.classList.contains("lens-next") && !c.classList.contains("lens-leaving"));
-          const row = box?.children.find((c) => c.classList.contains("lens-row") && !c.classList.contains("lens-leaving"));
-          const where = `${frame.width}x${frame.height} Height ${yPos} Size ${size}`;
-          expect(next?.textContent, where).toBe(LINES[1]?.text);
-          const top = translateOf(next?.style["transform"])[1];
-          const below = Number.parseFloat(String(next?.style["fontSize"]));
-          expect(top + below, where).toBeLessThanOrEqual(l.height);
-          // every focus word's box as drawn (scaled around its baseline, 0.8 em down in this DOM) ends above it
-          for (const span of row?.children ?? []) {
-            const transform = span.style.props.get("transform");
-            const y = translateOf(transform)[1];
-            const k = Number(/scale\(([\d.]+)\)/.exec(transform ?? "")?.[1]);
-            expect(y + 0.8 * l.size + 0.2 * l.size * k, where).toBeLessThanOrEqual(top);
-          }
+      for (const size of [22, 58, 140]) {
+        const l = look({ size }, frame);
+        const { mode, row, next } = lens(l);
+        mode.paint(cue(0, 2000, false));
+        const where = `${frame.width}x${frame.height} Size ${size}`;
+        expect(next()?.textContent, where).toBe(LINES[1]?.text);
+        const top = translateOf(next()?.style.getPropertyValue("transform"))[1];
+        const below = Number.parseFloat(next()?.style.getPropertyValue("font-size") ?? "");
+        expect(top + below, where).toBeLessThanOrEqual(l.height);
+        // every focus word's box as drawn (scaled around its baseline, 0.8 em down in this DOM) ends above it
+        for (const slot of slotsOf(row())) {
+          const { s } = lensOf(slot);
+          const y = translateOf(slot.getAnimations()[0]?.values()["transform"] ?? slot.style.getPropertyValue("transform"))[1];
+          expect(y + 0.8 * l.size + 0.2 * l.size * s, where).toBeLessThanOrEqual(top);
         }
+        mode.destroy();
+      }
   });
 
-  it("leaves the Height alone where the next line fits, and on the last line", () => {
-    for (const yPos of [0, 46, 85]) {
-      const l = look({ yPos });
-      expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(l.y);
-    }
-    const bottom = look({ yPos: 100 });
-    expect(focusCenter(bottom, bottom.size, null)).toBe(bottom.y);
-    expect(focusCenter(bottom, bottom.size, nextSize(600, bottom.size, bottom))).toBeLessThan(bottom.y);
+  it("centers the focus line where the next line fits, and on the last line", () => {
+    for (const frame of FRAMES.slice(0, 2))
+      for (const size of [22, 58, 140]) {
+        const l = look({ size }, frame);
+        expect(l.y).toBe(l.height / 2);
+        expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(l.y);
+      }
+    const short = look({ size: 140 }, SHORT);
+    expect(focusCenter(short, short.size, null)).toBe(short.y);
+    expect(focusCenter(short, short.size, nextSize(600, short.size, short))).toBeLessThan(short.y);
   });
 
-  it("never lifts the focus line past resolveLook's top margin on a stage too small for both lines", () => {
-    const l = look({ yPos: 100, size: 140 }, { width: 400, height: 120, referenceHeight: 120 });
+  it("never lifts the focus line closer than 0.75 font sizes to the top, even on a stage too small for both lines", () => {
+    const l = look({ size: 140 }, { width: 400, height: 120, referenceHeight: 120 });
     expect(focusCenter(l, l.size, nextSize(600, l.size, l))).toBe(Math.min(l.size * 0.75, l.height / 2));
-    // the settings preview has the room
-    const preview = look({ yPos: 100, size: 140 }, { width: 340, height: 191, referenceHeight: 680 });
-    const y = focusCenter(preview, preview.size, nextSize(600, preview.size, preview));
-    expect(y).toBeLessThan(preview.y);
-    expect(y).toBeGreaterThan(preview.size * 0.75);
+    const short = look({ size: 140 }, SHORT);
+    expect(focusCenter(short, short.size, nextSize(600, short.size, short))).toBeGreaterThan(short.size * 0.75);
+  });
+});
+
+describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it("Poster turns and places every slot from its block, planned as one track per word on song time", () => {
+    const { mode, row } = lens(look(), LINES, POSTER_LAYOUT);
+    mode.paint(cue(1, 4600));
+    frames();
+    const slots = slotsOf(row());
+    expect(slots.length).toBeGreaterThan(1);
+    for (const slot of slots) {
+      expect(String(slot.style.getPropertyValue("transform"))).toMatch(/^translate\(-?[\d.]+px, -?[\d.]+px\) rotate\(-?[\d.]+deg\) scale\([\d.]+\)$/u);
+      const [track] = slot.getAnimations();
+      expect(track?.keyframes.every((f) => /rotate\(/u.test(String(f.transform)))).toBe(true);
+    }
+    // a block of rows: not every word on one baseline
+    const ys = new Set(slots.map((s) => /translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(s.style.getPropertyValue("transform")))?.[1]));
+    expect(ys.size).toBeGreaterThan(1);
+  });
+
+  it("Spotlight slides the line so the sung word is large in the middle", () => {
+    const { mode, row } = lens(look(), LINES, SPOTLIGHT_LAYOUT);
+    mode.paint(cue(1, 4600));
+    frames();
+    const slots = slotsOf(row());
+    expect(slots.length).toBeGreaterThan(1);
+    for (const slot of slots) expect(slot.getAnimations().length).toBe(1);
+    expect(String(slots[0]?.style.getPropertyValue("transform"))).toMatch(/^translate\(/u);
+  });
+
+  it("Poster sends a word's picture over its block, not onto the row above its word", () => {
+    // "lanterns" opens the block's second row ("Paper / lanterns over / the river")
+    const routeY = (layout: SlotLayout): number => {
+      const { mode, row } = lens(look(), LINES, layout);
+      mode.paint(cue(0, 2000));
+      frames();
+      const route = everything(row()).find((e) => e.classList.contains("kw-route"));
+      const first = route?.getAnimations()[0]?.keyframes[0];
+      return Number(/translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(first?.transform))?.[1]);
+    };
+    const over = routeY(POSTER_LAYOUT);
+    expect(Number.isFinite(over)).toBe(true);
+    expect(over).toBeLessThan(routeY({ ...POSTER_LAYOUT, blocks: false }));
+  });
+
+  it("Spotlight draws a word's picture as big as its word is once the light is on it", () => {
+    const l = look();
+    const { mode, row } = lens(l, LINES, SPOTLIGHT_LAYOUT);
+    mode.paint(cue(0, 2000));
+    frames();
+    const pic = everything(row()).find((e) => e.classList.contains("kw-pic"));
+    expect(Number.parseFloat(String(pic?.style.width))).toBeGreaterThan(1.5 * PICTURE_EM * l.size);
   });
 });
