@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished,
 import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from "../contract/contract";
 import type { ArgsOf, Bridge, Command, Event, Events, ResultOf, Unlisten } from "../src/bridge/types";
 import { parseLrc, type Line } from "../src/core/lrc";
-import { PaletteCache } from "../src/core/palette";
+import { accentFor, PaletteCache } from "../src/core/palette";
 import { OverlayController } from "../src/overlay/controller";
 import { fontFor } from "../src/overlay/fonts";
 import { DEFAULT_PICK, resolveLook, textShadow, type Frame, type Look, type PickedLook } from "../src/overlay/look";
@@ -1506,6 +1506,8 @@ describe("Stack and Drift on the motion engine", () => {
     expect(box?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, look.size));
     expect(box?.style.getPropertyValue("--ut-bloom")).toBe(bloomShadow(look.colors.highlight, look.bloom));
     expect(box?.style.getPropertyValue("--ut-hl")).toBe(look.colors.highlight);
+    // the color the sung words blend into: the cover's second one, or the highlight's neighbor
+    expect(box?.style.getPropertyValue("--ut-hl2")).toBe(look.colors.accent ?? accentFor(look.colors.highlight));
     const size = Number.parseFloat(String(rows[0]?.style["fontSize"]));
     expect(size).toBeLessThan(look.size);
     expect(rows[0]?.style.getPropertyValue("--ut-dark")).toBe(textShadow(look, size));

@@ -198,6 +198,16 @@
   color: var(--ut-hl);
 }
 
+/* The lit letters: the highlight blending into the cover's second color (--ut-hl2), top to bottom,
+   clipped to the glyphs. Every letter is filled alike, so a line reads as one gradient wherever its
+   letters move. */
+.kw-win .kw-in .kl {
+  background-image: linear-gradient(180deg, var(--ut-hl) 28%, var(--ut-hl2, var(--ut-hl)) 72%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 /* ---------- Effects mode's extras (overlay/motion/decor.ts, routes.ts) ----------
    Each rests invisible: its animation (transform and opacity, on the compositor) shows it. A splash is
    inside its word's overlay; a picture travels the line, in the line's own layers. */

@@ -3,6 +3,7 @@ import { DEFAULT_SETTINGS } from "../contract/contract";
 import {
   PaletteCache,
   SAMPLE_SIZE,
+  accentFor,
   coverStats,
   hexToHsl,
   hslToHex,
@@ -44,6 +45,11 @@ function expectLegible(p: Palette): void {
   const white = hiL >= 0.94 && hiS <= 0.15 && lyricL <= 0.8;
   expect(vivid || white).toBe(true);
   expect(Math.abs(hiL - lyricL) >= 0.1 || Math.abs(hiS - lyricS) >= 0.4).toBe(true);
+  // the color the sung words blend into reads as well: mid-light and with a hue, or a light gray
+  if (p.accent !== undefined) {
+    const [, acS, acL] = hexToHsl(p.accent);
+    expect((acL >= 0.6 && acL <= 0.83 && acS >= 0.33) || (acL >= 0.94 && acS <= 0.15)).toBe(true);
+  }
 }
 
 /** Near-gray: a color with no hue to speak of. */
@@ -140,6 +146,31 @@ describe("paletteFromPixels", () => {
     expect(paletteFromPixels([])).toEqual(DEFAULT_SETTINGS.colors);
   });
 
+  it("blends the highlight into the cover's second color, a muted one counting by how much of the cover it takes", () => {
+    // like a cover of a brown wooden door in dark green ivy: the ivy is muted, but a lot of the cover
+    const p = paletteFromPixels(cover([[[120, 80, 45], 0.25], [[38, 50, 28], 0.45], [[30, 30, 30], 0.3]]));
+    expect(hueGap(hue(p.highlight), rgbToHsl(120, 80, 45)[0])).toBeLessThan(0.03);
+    expect(hueGap(hue(p.accent ?? "#000000"), rgbToHsl(38, 50, 28)[0])).toBeLessThan(0.04);
+    // light enough to read, but still as muted as the cover has it: an olive, not a lime
+    expect(hexToHsl(p.accent ?? "#000000")[1]).toBeLessThan(0.5);
+    expectLegible(p);
+  });
+
+  it("takes a true second color over the fringe of the main one", () => {
+    // a blue sky with a violet edge and a small orange horizon: orange, however much violet there is
+    const p = paletteFromPixels(cover([[[20, 40, 120], 0.65], [[70, 40, 150], 0.1], [[230, 110, 50], 0.1], [[10, 10, 10], 0.15]]));
+    expect(hueGap(hue(p.highlight), rgbToHsl(20, 40, 120)[0])).toBeLessThan(0.04);
+    expect(hueGap(hue(p.accent ?? "#000000"), rgbToHsl(230, 110, 50)[0])).toBeLessThan(0.04);
+    expectLegible(p);
+  });
+
+  it("blends a one-color cover's highlight into its neighbor on the color wheel", () => {
+    const p = paletteFromPixels(cover([[[40, 90, 220], 0.6], [[8, 8, 10], 0.4]]));
+    expect(p.accent).toBe(accentFor(p.highlight));
+    // a second color too small to count changes nothing
+    expect(paletteFromPixels(cover([[[40, 90, 220], 0.6], [[8, 8, 10], 0.39], [[230, 110, 50], 0.01]])).accent).toBe(p.accent);
+  });
+
   it("stays legible on any cover", () => {
     let seed = 7;
     const rand = (): number => (seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648) / 2_147_483_648;
@@ -152,6 +183,24 @@ describe("paletteFromPixels", () => {
       const total = parts.reduce((sum, [, share]) => sum + share, 0);
       expectLegible(paletteFromPixels(cover(parts.map(([rgb, share]) => [rgb, share / total]))));
     }
+  });
+});
+
+describe("accentFor", () => {
+  it("is the highlight's neighbor on the color wheel, a touch lighter", () => {
+    const [h, s, l] = hexToHsl("#4a88e8");
+    const [ah, as, al] = hexToHsl(accentFor("#4a88e8"));
+    expect(hueGap(ah, (h + 0.055) % 1)).toBeLessThan(0.01);
+    expect(Math.abs(as - s)).toBeLessThan(0.03);
+    expect(al).toBeCloseTo(l + 0.08, 1);
+    // never past 0.82, however light the highlight
+    expect(hexToHsl(accentFor("#f5c8a0"))[2]).toBeLessThanOrEqual(0.825);
+  });
+
+  it("keeps a gray highlight gray, a little lighter", () => {
+    const [, s, l] = hexToHsl(accentFor("#f5f5f5"));
+    expect(s).toBeLessThan(0.05);
+    expect(l).toBeGreaterThan(hexToHsl("#f5f5f5")[2]);
   });
 });
 

@@ -140,12 +140,14 @@ Each line uses three colors:
 | Color | Used for |
 |---|---|
 | **Lyric** | Words on the current line that haven't been sung yet |
-| **Highlight** | Words already sung, and the word being sung right now (which also glows, see [Glow](#glow)) |
+| **Highlight** | Words already sung, and the word being sung right now (which also glows, see [Glow](#glow)). They're filled with a gradient, from the highlight at the top into a second color at the bottom |
 | **Other lines** | The lines before and after the current one |
 
 ### Match album colors
 
 On by default. Undertone looks at the album cover once per song and takes all three colors from it: the highlight is the cover's most vivid color, and the lyric color and the other lines are tinted with the cover's overall color, as strongly as the cover is colorful. A deep blue cover gives pale blue lyrics with a blue highlight; a cover whose colors clash tints them only lightly.
+
+The sung words blend from the highlight into the cover's other main color: a gold door in green ivy gives gold into green, a blue sea under an orange sunset blue into orange. A muted color counts by how much of the cover it takes, so a big dark olive area still reads as green. A cover with one main color blends into the color next to it on the color wheel.
 
 The colors stay readable on any wallpaper: the lyric color stays light and the highlight a mid-tone, with a dark shadow behind both. When the highlight has the lyrics' own hue, it's kept a step darker, so the words being sung still stand out. Black-and-white and gray covers get grays: white for the words being sung, light gray for the rest, or the cover's most colorful spot as the highlight.
 
@@ -157,7 +159,7 @@ Turning **Match album colors** on doesn't change your own colors: turn it off ag
 
 Click a swatch to pick a color. Changing any color turns **Match album colors** off and saves all three colors as your own, starting from the colors on screen. So if album colors are showing and you only change the highlight, the lyric and other-lines colors become the album's, replacing the ones you had saved.
 
-The defaults are a warm white lyric (`#F1ECE3`), an amber highlight (`#F2A65A`) and a cool gray for other lines (`#8D93A0`).
+The defaults are a warm white lyric (`#F1ECE3`), an amber highlight (`#F2A65A`) and a cool gray for other lines (`#8D93A0`). With your own colors, the sung words blend from your highlight into the color next to it on the color wheel.
 
 ## Behavior
 

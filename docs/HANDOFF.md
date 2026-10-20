@@ -543,3 +543,14 @@ Tests: 1239 vitest in 36 files (new: `sync.test.ts`; the clock's phase window; S
 Not verified: on a real Mac or PC, which the timing needs: compare the highlight with a song whose lyrics time every word, before and after.
 Needs from Codex: nothing.
 Contract: v7 (adds `Settings.nudgedTracks`; `set_track_offset` takes `ms: null`).
+
+
+## 2026-10-20 · Claude Code · Sung words in a gradient of the cover's colors
+Done: Maxwell: "I want the lyrics to be more of a gradient because right now its one color and that one color DOES NOT match the album cover" (a cover of a wooden door in dark green ivy, gold lettering; the highlight was a tan from the door).
+- **A second color** (`core/palette.ts`): `Palette.accent`, the cover's other main color: its pixels binned by hue (24 bins), each weighted by its share of the cover and, below 0.12 chroma, by how colorful it is, so a big muted area (dark olive ivy at 0.05) still counts; the heaviest bins at least 40° from the highlight's hue, more distant ones counting more (a sky's violet edge doesn't beat its orange horizon), averaged with their neighbors; at least 12% of the main color's weight, three bins (45°) at a time. From the pixels, not the 16-level buckets: averaging a bucket turns dark olive gray. It is lightened to 0.62–0.74 and kept as muted as the cover has it (saturation from 0.36), so an olive stays an olive. A one-color cover, a gray one and the user's own colors blend into the highlight's neighbor on the color wheel (`accentFor`).
+- **The gradient** (`styles/stage.css`, `overlay/motion/bloom.ts`): the lit letters (`.kw-win .kw-in .kl`) are filled top to bottom from `--ut-hl` into `--ut-hl2` with `background-clip: text`. Every letter is filled alike, so a line reads as one gradient in every style, Arc's letters on their curve included. The bloom stays in the highlight.
+- **Checked** in Chromium with the mock bridge and a 48×48 sample of the cover from the report (not committed): tan into sage green (`#d29760` → `#9ec17b`); a sunset sea goes blue into coral; every style shows it.
+Tests: new palette cases (the muted second color, a main color's fringe, a one-color cover, `accentFor`, the accent's legibility on 300 random covers) and `--ut-hl2` on the rows.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v7).

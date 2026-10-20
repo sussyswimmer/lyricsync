@@ -1,7 +1,11 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 
-/** Lyric, highlight and dim colors as #rrggbb. */
-export type Palette = Settings["colors"];
+/**
+ * Lyric, highlight and dim colors as #rrggbb, and, from a cover, the `accent` the highlight blends
+ * into: the sung words are filled with a gradient from one to the other (stage.css, `accentFor`
+ * when there is none).
+ */
+export type Palette = Settings["colors"] & { accent?: string };
 
 /**
  * What a cover looks like, for the look picker (core/songlook.ts). Read from the palette's own 48×48
@@ -42,6 +46,19 @@ const COLOR_FULL = 0.3;
 const WARM_HUE = 40 / 360;
 /** A cover with at least this share of gray pixels has no hue. */
 const GRAY_COVER = 0.92;
+/**
+ * The second color. One this muted still counts: the dark olive of ivy, a dusty rose. Its share of the
+ * cover counts in full from FAMILY_FULL_CHROMA up and less below, so a big muted area can outweigh a
+ * small vivid one, as it does to the eye.
+ */
+const FAMILY_CHROMA = 0.035;
+const FAMILY_FULL_CHROMA = 0.12;
+/** The second color is looked for among this many hue bins (15° each)... */
+const HUE_BINS = 24;
+/** ...at least this far from the highlight's hue (turns, 40°)... */
+const ACCENT_HUE_GAP = 0.11;
+/** ...weighing at least this share of the cover's main color (both three bins wide). */
+const ACCENT_MASS = 0.12;
 
 /** Average color of one 4-bit-per-channel bucket. h, s, l and chroma c are 0..1. */
 interface Bucket {
@@ -193,9 +210,92 @@ class CoverSums {
  * Highlight from a bucket's color, kept as colorful as the cover has it (at least 0.56, so 0.55 once
  * rounded to hex) and mid-light so it reads on any wallpaper; no lighter than `most`.
  */
-const highlightFrom = (b: Bucket, most = 0.74): string => hslToHex(b.h, clamp(b.s, 0.56, 0.95), clamp(b.l, 0.6, most));
+const highlightFrom = (b: Pick<Bucket, "h" | "s" | "l">, most = 0.74): string => hslToHex(b.h, clamp(b.s, 0.56, 0.95), clamp(b.l, 0.6, most));
 /** Hues this close (in turns) read as one color: the highlight then keeps darker than the lyrics. */
 const SAME_HUE = 0.08;
+/**
+ * The gradient's second color from the cover's: as light as the highlight band, but allowed to stay as
+ * muted as the cover has it (from 0.36), so an olive stays an olive rather than turning lime.
+ */
+const accentFrom = (f: Pick<Bucket, "h" | "s" | "l">): string => hslToHex(f.h, clamp(f.s * 1.2, 0.36, 0.9), clamp(f.l, 0.62, 0.74));
+
+/**
+ * The color a highlight blends into when its cover gives no second one (one-color covers, the user's
+ * own colors): its neighbor on the color wheel, a touch lighter, so the sung words still shade.
+ */
+export function accentFor(highlight: string): string {
+  const [h, s, l] = hexToHsl(highlight);
+  if (s < 0.08) return hslToHex(0, 0, clamp(l + 0.08, 0, 0.98));
+  return hslToHex((h + 0.055) % 1, clamp(s, 0, 1), clamp(l + 0.08, 0.6, 0.82));
+}
+
+/**
+ * The cover's colors by hue, for its second color (`second`): every pixel at least FAMILY_CHROMA
+ * colorful, in HUE_BINS bins, each weighted by its share of the cover, a muted one less (pixels, not
+ * the palette's buckets: averaging a 16-level bucket turns dark olive gray).
+ */
+class HueSums {
+  private readonly bins = Array.from({ length: HUE_BINS }, () => ({ w: 0, x: 0, y: 0, s: 0, l: 0 }));
+  private n = 0;
+
+  add(r: number, g: number, b: number): void {
+    this.n++;
+    const c = (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+    if (c < FAMILY_CHROMA) return;
+    const [h, s, l] = rgbToHsl(r, g, b);
+    const w = Math.min(1, c / FAMILY_FULL_CHROMA);
+    const bin = this.bins[Math.floor(h * HUE_BINS) % HUE_BINS] as HueBin;
+    bin.w += w;
+    bin.x += w * Math.cos(h * 2 * Math.PI);
+    bin.y += w * Math.sin(h * 2 * Math.PI);
+    bin.s += w * s;
+    bin.l += w * l;
+  }
+
+  /**
+   * The color the highlight blends into: the heaviest bin at least ACCENT_HUE_GAP from the highlight's
+   * hue `from` (more distant hues counting more), with its neighbors that are as far, averaged; none
+   * when they weigh less than ACCENT_MASS of the cover's main color, both three bins wide. A cover
+   * that shades from one color into the next (a brown door into green ivy) has no second peak, so
+   * this looks for weight, not peaks.
+   */
+  second(from: number): { h: number; s: number; l: number } | undefined {
+    if (this.n === 0) return undefined;
+    const bin = (i: number): HueBin => this.bins[(i + HUE_BINS) % HUE_BINS] as HueBin;
+    const distance = (i: number): number => {
+      const gap = Math.abs((i + 0.5) / HUE_BINS - from);
+      return Math.min(gap, 1 - gap);
+    };
+    const away = (i: number): boolean => distance(i) >= ACCENT_HUE_GAP;
+    // a bin counts more the further its hue is from the highlight's: the fringe of a big color next to
+    // it (a sky's violet edge) must not outweigh a true second color (its orange horizon)
+    const score = (i: number): number => bin(i).w * smoothstep(distance(i), ACCENT_HUE_GAP * 0.75, 0.25);
+    let best = -1;
+    for (let i = 0; i < HUE_BINS; i++) if (away(i) && (best < 0 || score(i) > score(best))) best = i;
+    if (best < 0 || bin(best).w <= 0) return undefined;
+    const sum = { w: 0, x: 0, y: 0, s: 0, l: 0 };
+    for (const i of [best - 1, best, best + 1]) {
+      if (!away(i)) continue;
+      const b = bin(i);
+      sum.w += b.w;
+      sum.x += b.x;
+      sum.y += b.y;
+      sum.s += b.s;
+      sum.l += b.l;
+    }
+    // weighed as colors are seen, three bins (45°) at a time: one spread over a few bins is still one color
+    const heaviest = Math.max(...this.bins.map((_, i) => bin(i - 1).w + bin(i).w + bin(i + 1).w));
+    if (sum.w < ACCENT_MASS * heaviest) return undefined;
+    return { h: (((Math.atan2(sum.y, sum.x) / (2 * Math.PI)) % 1) + 1) % 1, s: sum.s / sum.w, l: sum.l / sum.w };
+  }
+}
+interface HueBin {
+  w: number;
+  x: number;
+  y: number;
+  s: number;
+  l: number;
+}
 
 /**
  * Picks overlay colors from RGBA pixels (a 48×48 sample of the cover), so the lyrics look like the
@@ -207,8 +307,12 @@ const SAME_HUE = 0.08;
  */
 export function paletteFromPixels(rgba: ArrayLike<number>): Palette {
   const sums = new BucketSums();
-  eachOpaque(rgba, (r, g, b) => sums.add(r, g, b));
-  return paletteOf(sums.buckets());
+  const hues = new HueSums();
+  eachOpaque(rgba, (r, g, b) => {
+    sums.add(r, g, b);
+    hues.add(r, g, b);
+  });
+  return paletteOf(sums.buckets(), hues);
 }
 
 /**
@@ -225,15 +329,17 @@ export function coverStats(rgba: ArrayLike<number>): CoverStats | null {
 /** The palette and the cover's statistics, in one pass over the sample. */
 function readSample(rgba: ArrayLike<number>): { palette: Palette; cover: CoverStats | null } {
   const buckets = new BucketSums();
+  const hues = new HueSums();
   const stats = new CoverSums();
   eachOpaque(rgba, (r, g, b) => {
     buckets.add(r, g, b);
+    hues.add(r, g, b);
     stats.add(r, g, b);
   });
-  return { palette: paletteOf(buckets.buckets()), cover: stats.stats() };
+  return { palette: paletteOf(buckets.buckets(), hues), cover: stats.stats() };
 }
 
-function paletteOf(all: readonly Bucket[]): Palette {
+function paletteOf(all: readonly Bucket[], hues: HueSums): Palette {
   const total = all.reduce((sum, b) => sum + b.n, 0);
   const dominant = all.reduce<Bucket | undefined>((a, b) => (a && a.n >= b.n ? a : b), undefined);
   if (!dominant) return { ...DEFAULT_SETTINGS.colors };
@@ -245,10 +351,12 @@ function paletteOf(all: readonly Bucket[]): Palette {
     // Grays: a near-white highlight over light gray lyrics, or the cover's colorful accent, however
     // small. Its pixels are all but gray, so nothing tints them.
     const accent = all.reduce((a, b) => (b.c > a.c ? b : a), dominant);
+    const highlight = accent.c >= ACCENT_CHROMA ? highlightFrom(accent) : hslToHex(0, 0, 0.96);
     return {
       lyric: hslToHex(0, 0, 0.74),
-      highlight: accent.c >= ACCENT_CHROMA ? highlightFrom(accent) : hslToHex(0, 0, 0.96),
+      highlight,
       dim: hslToHex(0, 0, 0.56),
+      accent: accentFor(highlight),
     };
   }
 
@@ -277,10 +385,15 @@ function paletteOf(all: readonly Bucket[]): Palette {
   // darker than them, so the words being sung still stand out from the ones to come.
   const gap = Math.abs(vivid.h - tone);
   const sameHue = Math.min(gap, 1 - gap) < SAME_HUE && strength > 0.3;
+  const highlight = highlightFrom(vivid, sameHue ? 0.66 : 0.74);
+  // The sung words blend from the highlight into the cover's other main color, or, on a cover of one
+  // color, the highlight's neighbor on the color wheel.
+  const other = hues.second(vivid.h);
   return {
     lyric: hslToHex(tone, 0.12 + 0.6 * strength, 0.87 - 0.03 * strength),
-    highlight: highlightFrom(vivid, sameHue ? 0.66 : 0.74),
+    highlight,
     dim: hslToHex(tone, 0.08 + 0.4 * strength, 0.66),
+    accent: other ? accentFrom(other) : accentFor(highlight),
   };
 }
 

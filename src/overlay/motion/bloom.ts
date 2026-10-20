@@ -6,6 +6,7 @@
  * Its strength b (params.ts bloomOf: the song's glow times the Glow setting's gain) runs 0..1.3 and
  * never switches it off: at Glow 0 it is a faint core and a faint halo.
  */
+import { accentFor } from "../../core/palette";
 import { put } from "../dom";
 import { DEFAULT_PICK, rgba, textShadow, type Look } from "../look";
 import { num } from "./keyframes";
@@ -48,7 +49,8 @@ export function dotBloom(highlight: string, b: number, dotPx: number): string {
 
 /**
  * The karaoke's CSS variables on a row or box (stage.css reads them): the lyric, highlight and dim
- * colors, the dark legibility shadow for text `sizePx` tall (`--ut-dark`, drawn by the unclipped
+ * colors, the color the sung words blend into (`--ut-hl2`: the cover's second color, or one next to
+ * the highlight), the dark legibility shadow for text `sizePx` tall (`--ut-dark`, drawn by the unclipped
  * dark copy), the word bloom, a held letter's stronger bloom, and the dots' halo.
  */
 export function paintVars(el: HTMLElement, look: Look, sizePx: number): void {
@@ -57,6 +59,7 @@ export function paintVars(el: HTMLElement, look: Look, sizePx: number): void {
   const b = Number.isFinite(look.bloom) ? look.bloom : bloomOf(DEFAULT_PICK.glow, look.glow * 100);
   put(el, "--ut-lyric", lyric);
   put(el, "--ut-hl", highlight);
+  put(el, "--ut-hl2", look.colors.accent ?? accentFor(highlight));
   put(el, "--ut-dim", dim);
   put(el, "--ut-dark", textShadow(look, sizePx));
   put(el, "--ut-bloom", bloomShadow(highlight, b));
