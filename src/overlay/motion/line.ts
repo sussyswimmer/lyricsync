@@ -41,6 +41,10 @@
  * (its own life) and any copies, and `.kw-pics.is-under` holds its light (`.kw-aura`, with
  * `.kw-aura-glow` and a flame's `.kw-ember`s) on the same route, under the words. They rest
  * invisible; a line leaving focus once sung stops them where they are, to fade out with it.
+ *
+ * Karaoke mode adds a dot (`.kw-ball`) to the same layer over the words: it lands on each word as it
+ * starts and hops to the next (routes.ts planBall), on the extras' windows, so it stops and fades
+ * with the pictures.
  */
 import type { WordDecor } from "../../core/flair";
 import type { Word } from "../../core/lrc";
@@ -70,7 +74,7 @@ import {
 import { compositorSteps } from "./keyframes";
 import { canvasInk, canvasMeasure, isRtl, measureLetters, roughMeasure, type InkMeasure, type Measure } from "./letters";
 import { LEAD_MS, LEAVE_MS, SETTLE_IN_MS, type MotionParams } from "./params";
-import { planPictureRoute, type Spot, type Stop } from "./routes";
+import { BALL_EM, planBall, planPictureRoute, type Spot, type Stop } from "./routes";
 import { commit, type SongTimeline } from "./timeline";
 
 export { LEAVE_MS, SETTLE_IN_MS };
@@ -103,6 +107,10 @@ export interface KaraokeLook {
   spot?: (word: number, t: number) => Spot | null;
   /** how many times `size` word `word` is drawn while it is sung (Lens's slots swell it): its picture matches. 1 by default */
   scaleOf?: (word: number) => number;
+  /** Karaoke mode: a dot lands on each word as it's sung */
+  ball?: boolean;
+  /** where the dot lands on word `word` at song time `t`, when that isn't `spot` (Poster sets pictures over its block's top row) */
+  ballSpot?: (word: number, t: number) => Spot | null;
 }
 
 /**
@@ -260,6 +268,8 @@ export class KaraokeLine {
   private fades: { el: HTMLElement; anim: Animation }[] = [];
   /** the line's picture layers in its host, made with its first picture */
   private layers: { over: HTMLElement; under: HTMLElement } | null = null;
+  /** Karaoke mode's dot, in the layer over the words */
+  private ball: HTMLElement | null = null;
 
   /** `els[i]` is the `.kw` box of `words[i]`. Nothing is built or measured until prepare or mount asks. */
   constructor(words: readonly Word[], els: readonly HTMLElement[], look: KaraokeLook, timeline: SongTimeline, group: string) {
@@ -376,6 +386,7 @@ export class KaraokeLine {
     const rest = this.views.filter((v) => !v.mounted);
     for (const v of rest) this.hold(v);
     if (rest.length > 0) this.scheduleSlice();
+    this.playBall();
   }
 
   /**
@@ -451,6 +462,7 @@ export class KaraokeLine {
     this.layers?.over.remove();
     this.layers?.under.remove();
     this.layers = null;
+    this.ball = null;
   }
 
   // ---------- slices ----------
@@ -575,6 +587,37 @@ export class KaraokeLine {
       const p = x.particles[i];
       if (p) start(el, p.track);
     });
+  }
+
+  /**
+   * Karaoke mode's dot (KaraokeLook.ball), started from where the words are on the extras' window, from a
+   * clean inline style like the pictures. Without motion it moves from word to word without arcing.
+   */
+  private playBall(): void {
+    if (!this.look.ball) return;
+    const words: Stop[] = [];
+    for (const v of this.views) {
+      const spot = this.look.ballSpot ? this.look.ballSpot(v.index, v.word.start) : this.spotOf(v.index, v.word.start);
+      if (spot) words.push({ ...spot, t: v.word.start });
+    }
+    const track = planBall({ words, until: this.sungBy, size: this.look.size, bounce: this.look.params.karaoke === "full" });
+    if (!track || track.t0 + track.duration <= this.mountedAt) return;
+    const layers = this.layersOf();
+    if (!layers) return;
+    if (!this.ball) {
+      const ball = h("span", "kw-ball");
+      ball.setAttribute("aria-hidden", "true");
+      const d = BALL_EM * this.look.size;
+      ball.style.width = px(d);
+      ball.style.height = px(d);
+      ball.style.marginLeft = px(-d / 2);
+      ball.style.marginTop = px(-d);
+      layers.over.append(ball);
+      this.ball = ball;
+    }
+    put(this.ball, "opacity", "");
+    put(this.ball, "transform", "");
+    this.timeline.play(this.ball, track.frames, track.t0, track.duration, this.extrasGroup);
   }
 
   /** A word waiting for its slice: at rest, nothing lit; still at full size if its line settles in. */

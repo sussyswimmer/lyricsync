@@ -41,7 +41,7 @@
   <tr>
     <td width="50%" valign="top">
       <b>🎤 Word by word, at the song's pace</b><br>
-      Words fill with color syllable by syllable as they're sung, and a held note keeps its word lit. Off by a beat? Nudge one song or all of them.
+      Words fill with color syllable by syllable as they're sung, and a held note keeps its word lit. Turn on <b>Karaoke mode</b> for a dot that bounces onto each word as you should sing it.
     </td>
     <td width="50%" valign="top">
       <b>🎨 A look for every song</b><br>
@@ -51,7 +51,7 @@
   <tr>
     <td width="50%" valign="top">
       <b>🐦 Words you can picture</b><br>
-      140 pictures join the song as their words are sung: birds fly, cars drive along the words, rain falls, fireworks burst.
+      With <b>Effects mode</b> on, 140 pictures join the song as their words are sung: birds fly, cars drive along the words, rain falls, fireworks burst.
     </td>
     <td width="50%" valign="top">
       <b>🖱️ Under your windows, out of your way</b><br>
@@ -92,6 +92,8 @@ Undertone picks the style, font and motion from the song itself (how fast and de
 <p align="center">
   <img src="docs/media/living-pictures.webp" alt="A rocket lifts off, dice roll away, a glass of wine hops from word to word and leaves fall across the line, each as its word is sung" width="100%">
 </p>
+
+The pictures, each song's own motion and its splashes come with **Effects mode**, which starts off: turn it on in **Settings › Look** or from the menu.
 
 <details>
 <summary>All 140 pictures</summary>
@@ -172,7 +174,7 @@ On macOS 14 or later, the Spotify app and the Music app (Apple Music), but not p
 <details>
 <summary><b>Can I pick the style myself?</b></summary>
 
-Not in this version. Undertone picks the style and font for each song from how it's sung, and the same song always gets the same look. You can still set the size, how much the lyrics move and glow, and the colors, and turn off each song's extra effects (its own motion, splashes and pictures) with **Effects mode**. See [Look](docs/USER_GUIDE.md#look) in the user guide.
+Not in this version. Undertone picks the style and font for each song from how it's sung, and the same song always gets the same look. You can still set the size, how much the lyrics move and glow, and the colors, turn each song's extra effects (its own motion, splashes and pictures) on with **Effects mode**, and add a dot that bounces from word to word with **Karaoke mode**. Both start off. See [Look](docs/USER_GUIDE.md#look) in the user guide.
 
 </details>
 

@@ -9,6 +9,7 @@ import {
   dropShadow,
   effectsModeOf,
   effectsOf,
+  karaokeModeOf,
   mergeOverrides,
   overrideFromSettings,
   parseLookOverride,
@@ -322,14 +323,25 @@ describe("the picked look", () => {
     expect(look({ effects: 20 } as Partial<Settings>).effects).toBe(20);
   });
 
-  it("reads Effects mode from a store that has it, and on from one older than contract v5", () => {
-    expect(effectsModeOf(settings())).toBe(true);
-    expect(effectsModeOf(settings({ effectsMode: false }))).toBe(false);
+  it("reads Effects mode from a store that has it (off by default since contract v8), and on from one older than contract v5", () => {
+    expect(effectsModeOf(settings())).toBe(false);
+    expect(effectsModeOf(settings({ effectsMode: true }))).toBe(true);
     const v4: Record<string, unknown> = { ...settings() };
     delete v4["effectsMode"];
     expect(effectsModeOf(v4 as unknown as Settings)).toBe(true);
-    expect(look({ effectsMode: false }).effectsMode).toBe(false);
-    expect(look().effectsMode).toBe(true);
+    expect(look({ effectsMode: true }).effectsMode).toBe(true);
+    expect(look().effectsMode).toBe(false);
+  });
+
+  it("reads Karaoke mode from a store that has it, and off from one older than contract v8", () => {
+    expect(karaokeModeOf(settings())).toBe(false);
+    expect(karaokeModeOf(settings({ karaokeMode: true }))).toBe(true);
+    const v7: Record<string, unknown> = { ...settings(), karaokeMode: "yes" };
+    expect(karaokeModeOf(v7 as unknown as Settings)).toBe(false);
+    delete v7["karaokeMode"];
+    expect(karaokeModeOf(v7 as unknown as Settings)).toBe(false);
+    expect(look({ karaokeMode: true }).karaokeMode).toBe(true);
+    expect(look().karaokeMode).toBe(false);
   });
 
   it("carries the song's flair to the stage, and makes any flair safe to draw", () => {

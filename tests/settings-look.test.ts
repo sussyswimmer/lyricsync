@@ -5,7 +5,7 @@ import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
-import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
+import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, KARAOKE_MODE_OFF, KARAOKE_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
 import { resetDom, stubDom, type FakeElement } from "./fake-dom";
 
@@ -473,32 +473,53 @@ describe("the settings panel since contract v4", () => {
     expect(none.root.all("hint").some((h) => h.textContent === "How much words rise, swell and ripple as they're sung.")).toBe(true);
   });
 
-  it("Effects mode: a switch at the top of Look, on by default, saved as `effectsMode`, saying what it does", () => {
+  it("Effects mode: a switch at the top of Look, off by default, saved as `effectsMode`, saying what it does", () => {
     const p = mountPanel();
     const look = p.group("Look");
     const row = look.all("toggle")[0] as FakeElement;
     expect(row.one("row-label").textContent).toBe("Effects mode");
     const input = row.one("switch");
     expect(input.getAttribute("role")).toBe("switch");
-    expect(input.checked).toBe(true);
-    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
-    expect(caption?.textContent).toBe(EFFECTS_MODE_ON);
-    input.checked = false;
-    input.dispatch("change");
-    expect(p.edits).toEqual([{ effectsMode: false }]);
     expect(input.checked).toBe(false);
+    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
     expect(caption?.textContent).toBe(EFFECTS_MODE_OFF);
-    // the sliders come after it, in the same order as before
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Size", "Effects", "Glow", "Opacity"]);
+    input.checked = true;
+    input.dispatch("change");
+    expect(p.edits).toEqual([{ effectsMode: true }]);
+    expect(input.checked).toBe(true);
+    expect(caption?.textContent).toBe(EFFECTS_MODE_ON);
+    // Karaoke mode under it, then the sliders, in the same order as before
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Karaoke mode", "Size", "Effects", "Glow", "Opacity"]);
   });
 
-  it("Effects mode: shows the saved state, and an older core's settings as on", () => {
-    const off = mountPanel({ effectsMode: false });
-    expect((off.group("Look").all("switch")[0] as FakeElement).checked).toBe(false);
+  it("Effects mode: shows the saved state, and an older core's settings with the default", () => {
+    const on = mountPanel({ effectsMode: true });
+    expect((on.group("Look").all("switch")[0] as FakeElement).checked).toBe(true);
     const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
     delete old.effectsMode;
     const p = mountPanel(old);
-    expect((p.group("Look").all("switch")[0] as FakeElement).checked).toBe(true);
+    expect((p.group("Look").all("switch")[0] as FakeElement).checked).toBe(DEFAULT_SETTINGS.effectsMode);
+  });
+
+  it("Karaoke mode: a switch under Effects mode, off by default, saved as `karaokeMode`, saying what it does", () => {
+    const p = mountPanel();
+    const row = p.group("Look").all("toggle")[1] as FakeElement;
+    expect(row.one("row-label").textContent).toBe("Karaoke mode");
+    const input = row.one("switch");
+    expect(input.getAttribute("role")).toBe("switch");
+    expect(input.checked).toBe(false);
+    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
+    expect(caption?.textContent).toBe(KARAOKE_MODE_OFF);
+    input.checked = true;
+    input.dispatch("change");
+    expect(p.edits).toEqual([{ karaokeMode: true }]);
+    expect(input.checked).toBe(true);
+    expect(caption?.textContent).toBe(KARAOKE_MODE_ON);
+    // saved on, and from a core older than contract v8 (none saved: off)
+    expect((mountPanel({ karaokeMode: true }).group("Look").all("switch")[1] as FakeElement).checked).toBe(true);
+    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+    delete old.karaokeMode;
+    expect((mountPanel(old).group("Look").all("switch")[1] as FakeElement).checked).toBe(false);
   });
 
   it("Glow says what it does now: the sung word's glow, never quite off", () => {

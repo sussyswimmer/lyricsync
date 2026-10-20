@@ -14,6 +14,7 @@ import { compositorSteps, HOLD, holds, keyframesAt, num } from "../motion/keyfra
 import { casedLines } from "../motion/letters";
 import { KaraokeLine, SLICE_MS } from "../motion/line";
 import { CALM_SCROLL_SPRING, DOTS, LEAD_MS, LineMoves, LITE_SCROLL_MS, motionParams, paramsKey, SCROLL_SPRING, type MotionParams } from "../motion/params";
+import type { Spot } from "../motion/routes";
 import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
@@ -989,6 +990,19 @@ export class LensMode implements ModeRenderer {
     });
   }
 
+  /**
+   * Where word `j` of `row` is at song time `t`: the middle of its top and its width, where the lens
+   * draws it. `overBlock` (Poster's pictures) puts it over the block's top row, so a word's picture
+   * doesn't sit on the row above its word.
+   */
+  private spotAt(row: Row, look: Look, j: number, t: number, overBlock: boolean): Spot {
+    const pose = row.plan ? row.plan.at(t) : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0);
+    const top = (k: number): number => row.slotY + (pose.y[k] ?? 0) + this.baseline * (1 - (pose.scale[k] ?? 1));
+    const w = (row.shape.widths[j] ?? 0) * (pose.scale[j] ?? 1);
+    const y = overBlock ? Math.min(...row.shape.widths.map((_, k) => top(k))) : top(j);
+    return { x: (pose.x[j] ?? 0) + w / 2, y, w };
+  }
+
   private karaokeFor(row: Row, look: Look): KaraokeLine {
     const decor = this.decor[row.index];
     return new KaraokeLine(
@@ -1006,14 +1020,10 @@ export class LensMode implements ModeRenderer {
         ...(decor ? { decor: decor.words } : {}),
         // a word's top middle where the lens draws it at that moment (its slot: transform-origin 0 baseline)
         host: row.el,
-        spot: (j, t) => {
-          const pose = row.plan ? row.plan.at(t) : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0);
-          const top = (k: number): number => row.slotY + (pose.y[k] ?? 0) + this.baseline * (1 - (pose.scale[k] ?? 1));
-          const w = (row.shape.widths[j] ?? 0) * (pose.scale[j] ?? 1);
-          // Poster: over the block's top row, so a word's picture doesn't sit on the row above its word
-          const y = this.layout.blocks ? Math.min(...row.shape.widths.map((_, k) => top(k))) : top(j);
-          return { x: (pose.x[j] ?? 0) + w / 2, y, w };
-        },
+        spot: (j, t) => this.spotAt(row, look, j, t, this.layout.blocks),
+        // Karaoke mode's dot lands on the word's own row, Poster's too
+        ball: look.karaokeMode && !look.unsynced,
+        ballSpot: (j, t) => this.spotAt(row, look, j, t, false),
         // as big as the word is drawn once the lens (or the spotlight, or its poster row) has it
         scaleOf: (j) => {
           const word = this.lines[row.index]?.words[j];

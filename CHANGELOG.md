@@ -8,14 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.1.1] - 2026-10-20
 
-The same app as 0.1.0, with the repository's license and documentation. Only the version number changed in the app itself.
+Karaoke mode, Effects mode off until you turn it on, and the repository's license and documentation.
 
 ### Added
+
+- **Karaoke mode.** A dot in the highlight color bounces along the line, landing on each word right as it's sung, in every style. Turn it on in **Settings › Look**; it's off by default. Under reduced motion it moves from word to word without bouncing.
 
 - **The MIT license.** ([#3](https://github.com/sussyswimmer/lyricsync/pull/3))
 - **A README laid out like a product page:** download buttons, features, the six styles, the settings window, install, how it works, privacy, an FAQ and a roadmap. ([#3](https://github.com/sussyswimmer/lyricsync/pull/3))
 - **For contributors:** a contributing guide, a security policy, a code of conduct, issue forms (bug report, feature request, private contact) and a pull request template. ([#3](https://github.com/sussyswimmer/lyricsync/pull/3))
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) links its bug-report steps to the bug report form.
+
+### Changed
+
+- **Effects mode is off by default.** Each song's own motion, its splashes and the word pictures wait until you turn Effects mode on. Settings from 0.1.0, when it was on by default, start with it off once; turn it back on and it stays on.
 
 ## [0.1.0] - 2026-10-20
 

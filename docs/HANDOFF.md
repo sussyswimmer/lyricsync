@@ -573,3 +573,14 @@ Done: Maxwell published v0.1.0 from `claude/friendly-mayer-shv80u` while `main` 
 - `CONTRIBUTING.md` points to `docs/DEVELOPMENT.md` instead of repeating it. The released `docs/TROUBLESHOOTING.md` won the add/add conflict, with a link to the bug report form. `CHANGELOG.md` describes 0.1.0 as it shipped and adds 0.1.1.
 Needs from Codex: nothing. Whoever merges `claude/friendly-mayer-shv80u` next: expect conflicts in the README, CHANGELOG and the version lines; keep the 0.2.0 version and content, and the README's layout and links.
 Contract: unchanged (v7).
+
+## 2026-10-20 · Claude Code · Karaoke mode, and Effects mode off by default (contract v8)
+Done: Maxwell asked for "a karaoke mode where a little dot will bounce for the word that you need to sing", switchable, with it and Effects mode both off to start.
+- **Contract v8:** `Settings.karaokeMode` (default `false`; TS, Rust, the mock), and `effectsMode` now defaults to `false`. Settings saved before v8 (no `karaokeMode`) have `effectsMode` turned off once as they load (`settings::migrate`, the mock's `migrateSettings`), since a stored `true` from 0.1.0 was only the old default; the file is rewritten with `karaokeMode`, so a later choice sticks.
+- **The dot:** `routes.ts` `planBall` plans it on the song's clock, and `KaraokeLine` (`motion/line.ts`) plays it as `.kw-ball` in the line's picture layer, on the extras' window, so it stops and fades with the pictures. It drops onto the first word 350 ms before it, lands on each word exactly as it starts and sits there for at least a fifth of the gap, hops in an arc (at most 520 ms), and fades out 450 ms after the last word. Under reduced motion and the lite tier it steps without arcing. Arc, Drift and Stack land it from their word positions; Lens, Poster and Spotlight from `spotAt`, which for the dot is always the word's own row (pictures in Poster still go over the block). No dot for plain lyrics.
+- **Settings:** a Karaoke mode switch under Effects mode in Look, with a caption. Not in the tray menu.
+- **Docs:** SPEC (Contract v8, Karaoke mode), USER_GUIDE (Effects mode off by default; a Karaoke mode section), README, CHANGELOG (0.1.1).
+Tests: 1259 vitest (planBall: landings, rest, arc, reduced motion, in and out, merged landings; the dot in Lens, Poster and Spotlight lines; merge and migration in the mock; look; the panel's two switches), 284 Rust (v8 defaults, the one-time Effects mode migration). Checked in Chromium on the mock bridge in all six styles: the dot sits on the lit word as it's sung.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v8 (adds `Settings.karaokeMode`; `effectsMode` defaults to `false`).

@@ -95,6 +95,6 @@ src-tauri/             Rust core: media, lyrics, settings, tray, desktop layer
 prototype/             undertone.html, the reference prototype
 ```
 
-[SPEC.md](../SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v7. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](../CLAUDE.md) and [AGENTS.md](../AGENTS.md) are the original work orders for the frontend and the Rust core.
+[SPEC.md](../SPEC.md) holds the architecture and the contract between the TypeScript and Rust halves; the contract is v8. To change the contract, edit `contract.ts` and `contract.rs` in the same commit, bump `CONTRACT_VERSION`, and log it in `docs/HANDOFF.md`; add fields rather than renaming or removing them. [CLAUDE.md](../CLAUDE.md) and [AGENTS.md](../AGENTS.md) are the original work orders for the frontend and the Rust core.
 
 **Never commit real song lyrics.** Fixtures and demo tracks use original placeholder text written for this repo. Real lyrics are only fetched at runtime and cached on the user's machine.

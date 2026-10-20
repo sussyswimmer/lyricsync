@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Effects mode, Size, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song; Effects mode, Karaoke mode, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -49,7 +49,7 @@ Undertone picks how each song looks: its style (one of the six below) and its fo
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
-The settings in the window's **Look** group, below, turn each song's extra effects on or off ([Effects mode](#effects-mode)) and change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
+The settings in the window's **Look** group, below, turn each song's extra effects on or off ([Effects mode](#effects-mode)), add a dot that bounces from word to word ([Karaoke mode](#karaoke-mode)), and change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
 
 ### Picked for this song
 
@@ -91,15 +91,21 @@ Each font comes in one weight. Characters a font doesn't have, such as Chinese, 
 
 ### Effects mode
 
-On by default. It gives each song effects of its own on top of its look:
+Off by default: turn it on in Settings or with **Effects ▸ Effects mode** in the menu. It gives each song effects of its own on top of its look:
 
 - **Its own motion.** Not every song's words float up. Depending on how the song is sung, its words **rise** and settle, **bounce** off the line, **sway** side to side, send a **wave** through their letters, **pulse** on the beat, or **drop** into place from just above. The lines a song repeats, such as its chorus, move a second way, so the chorus stands apart from the verses. Fast, punchy songs bounce and pulse; slow, intimate ones sway; songs with long held notes wave.
 - **Splashes.** At a song's big moments (a long held note, the end of a chorus line, a shouted line) a small burst comes off the word: **droplets** that leap and fall, **sparks**, **confetti** in the song's colors, **ripples** spreading under the word, or twinkling **glints**. Which one depends on what the song is about: rain and tears splash droplets, fire and lightning throw sparks, a party throws confetti, stars and dreams glint. There's never more than one burst per line, and they're at least 5 seconds apart.
 - **Pictures that join in.** When a word names something you can picture, a realistic picture of it joins the line as the word is sung, and moves with the song until the line is over. Most hop from word to word as each one is sung, like a bouncing ball, and jump off the end; birds, wings and planes fly across; cars, a train, a boat, a horse and big cats travel along the tops of the words, bumping on every word; a rocket lifts off; hearts, balloons and clouds float up, pulsing on every word; rain, snow, leaves and money fall across the line; stars, fireworks and diamonds burst into little copies of themselves; the sun and the moon circle above their word; dice and a disco ball roll off the end; a flame, a lamp, a guitar or a house dances where it is. Sing about *iced tea*, *rain*, *roses*, *the moon*, a *car*, *whiskey*, a *guitar*, a *wolf*, the *city* or a *broken heart*, and you'll see it. There are 140 pictures of the things songs mention most, built into Undertone, so they work offline. Some come alive while they show: a flame flickers in its own warm glow and a campfire throws a few embers; a lamp, a lantern, the sun and the moon glow; a star, a sparkler, fireworks and a diamond twinkle; a heart beats; a butterfly beats its wings. A picture shows at most once per line, at least 4 seconds after the last one, and the same picture again only after 20 seconds, so lyrics never fill up with them. Only English words call them for now.
 
-Switch it off for the calm, even look: every song's words rise the same way, with no splashes or pictures. **Effects ▸ Effects mode** in the menu does the same.
+Off, you get the calm, even look: every song's words rise the same way, with no splashes or pictures. If you used Undertone 0.1.0, when Effects mode was on by default, it starts off once after the update; switch it back on and it stays on.
 
 The same song always gets the same effects. With [Effects](#effects) at 0, the words don't move and nothing splashes, but pictures still fade in and out. If you've asked your system to reduce motion, the pictures fade in and out on their word and there are no splashes (see [Reduced motion](#reduced-motion)). On computers without graphics acceleration, where Undertone draws everything lighter, Effects mode adds nothing.
+
+### Karaoke mode
+
+Off by default. Turn it on and a small dot in the highlight color bounces along the line, karaoke style: it drops onto the first word just before it's sung, lands on each word right as you should sing it, waits there while the word lasts, and hops to the next one. After the line's last word it fades out, and the next line's dot drops in. It works in every style and with Effects mode on or off. The dot is on the song's timing like the words, so a [sync nudge](#this-song) moves it too.
+
+If you've asked your system to reduce motion, the dot moves from word to word without bouncing. Plain lyrics without timing (see [Loading, missing and unsynced lyrics](#loading-missing-and-unsynced-lyrics)) get no dot.
 
 ### Size
 
