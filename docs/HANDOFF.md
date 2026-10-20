@@ -554,3 +554,17 @@ Tests: new palette cases (the muted second color, a main color's fringe, a one-c
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v7).
+
+
+## 2026-10-20 · Claude Code · Nine styles, fifteen faces, words that answer their pictures, Graphics apart (contract v8)
+Done: Maxwell: "add some more styles … for different types of songs", "the graphics are still too basic they are just graphics floating around I want it to be more incorporated in the lyrics", "I want the text effects to be its own switch … the graphics and the text effects should be different", "add more font options make sure they match the vibe of the song", and "make the curve … not be so strong".
+- **Graphics apart from Text effects** (contract v8): `Settings.graphics` (default true) turns the pictures and the splashes on and off; `effectsMode` is now Text effects, the song's own moves, alone. Two switches in Settings › Look and two items in the tray's **Effects ▸**. `planDecor` takes `DecorParts`. Settings saved before v8 take `graphics` from `effectsMode` (`settings.rs` `migrate`, the mock's `migrateSettings`, `withDefaults`).
+- **Three more styles** on Lens's engine (`slot-layouts.ts`): **Wave** (the crest follows the voice, words tilt along its slopes), **Reveal** (words wait as ghosts and come up as they're sung) and **Collage** (cut-out words, each its own size and tilt, in rows). Scored for dance and electronic songs, rap and story songs with word timing, and shouted rock songs; glyphs on the Settings card.
+- **Seven more faces** (OFL, `@fontsource`): Anton, Playfair Display, Space Grotesk, Righteous, Pacifico, Rubik, Pirata One, each with its vibe in `fontScore`, vetoes (scripts and blackletter not for fast or long lines), metrics and style harmony. Their notices are in `THIRD_PARTY_NOTICES.txt`.
+- **A gentler Arc**: the picked curve is 8 to 32, the house look's 22 (was 12 to 60, and 38).
+- **Words answer their pictures** (`routes.ts` `reactions`, played by `KaraokeLine` in its own group): a hop squashes each word it lands on, a bird ducks them, a car dips them, a rocket shakes and kicks its word, a balloon or a heart lifts it, rain hits the words, a burst pops its word and shoves its neighbors, the moon tilts its word, a ball knocks the words, a flame's word sways and shimmers. On the word box's `translate`, `rotate` and `scale`, composing with its pop; at rest at both ends; cancelled, not frozen, as a sung line leaves focus.
+- **Checked** in Chromium with the mock bridge (`?power=full`: headless Chromium is the lite tier, which draws no pictures): every new style on three demo songs, the heart lifting "HEARTS", gold shoving "slow" aside.
+Tests: 1260 vitest in 36 files (new: Wave, Reveal and Collage layouts; every layout's pose finite; reactions for every picture, at rest at both ends, bounded; Graphics apart from Text effects in `planDecor`, the mock, `withDefaults` and the panel) and the Rust tests (v8 default, `migrate` carrying Effects mode into Graphics, the tray's Graphics item).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v8 (adds `Settings.graphics`).

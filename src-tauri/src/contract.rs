@@ -568,7 +568,11 @@ mod tests {
     fn settings_saved_before_contract_v8_read_as_graphics_on() {
         let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
         saved["graphics"] = json!(false);
-        assert!(!serde_json::from_value::<Settings>(saved.clone()).unwrap().graphics);
+        assert!(
+            !serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .graphics
+        );
         saved.as_object_mut().unwrap().remove("graphics");
         let v7: Settings = serde_json::from_value(saved).unwrap();
         assert_eq!(v7, *DEFAULT_SETTINGS);

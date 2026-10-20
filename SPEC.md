@@ -7,10 +7,10 @@ Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex rea
 A desktop app for **macOS and Windows** that shows the synced lyrics of whatever is playing on the **desktop layer**. That layer is above the wallpaper and below desktop icons and every window. The user can still drag folders and windows over it, and clicks pass straight through.
 
 - Highlights word by word as the song plays, and the words move as they're sung. Lyrics timed by line only (no word tags) are swept word by word at the pace the song is sung around each line (`core/timing.ts` singingPace, paceWords), so a pause after a line doesn't slow the sweep.
-- A look picked for each song: the style (Arc / Lens / Drift / Stack / Poster / Spotlight), the font and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
+- A look picked for each song: the style (Arc / Lens / Drift / Stack / Poster / Spotlight / Wave / Reveal / Collage), the font (one of fifteen bundled faces, each scored by the kind of song it suits), Arc's gentle curve and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
 - Default colors come from the album cover: its most vivid color highlights, its overall tone tints the lyrics and the other lines, and gray covers get grays (`core/palette.ts`). The sung letters are filled with a gradient from the highlight into the cover's other main color (`Palette.accent`: the heaviest hue at least 40° away, a muted one counting by its area; `--ut-hl2`, `background-clip: text` in `stage.css`), or into the highlight's neighbor on the color wheel (`accentFor`). The user can override every color.
 - Always in the middle of the screen, clear of the menu bar, Dock and taskbar. Customizable: size, effects (how much the words move), glow, opacity and colors.
-- Effects mode (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop), its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable bring a bundled picture into the line that moves with the song: it hops word to word, flies or drives across, floats, falls, bursts, orbits, rolls or dances (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`, `src/overlay/motion/routes.ts`).
+- Text effects (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop). Graphics (on by default, a switch of its own since contract v8): its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable bring a bundled picture into the line that moves with the song: it hops word to word, flies or drives across, floats, falls, bursts, orbits, rolls or dances, and the words it touches answer it (they squash, duck, dip, lift, sway or are shoved aside) (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`, `src/overlay/motion/routes.ts`).
 - Lives in the menu bar (Mac) or system tray (Windows). It has no Dock icon, and no taskbar button except the Settings window's on Windows while it's open.
 
 **Not in v1:** lock screen, Linux, mobile, playback controls, bundled lyrics.
@@ -263,6 +263,24 @@ nudgedTracks: string[];  // default []
 ```
 
 **Learned sync.** A song you nudge keeps its own offset; any other song starts from what the songs you nudged last have in common (`src/core/sync.ts` `learnedOffsetMs`, `settings.rs` `learned_offset_ms`, the same rule): the middle of their own offsets, from two songs on, and with an even number the middle value nearer 0. So a correction you would make for every song (headphones that play late, say) is made once or twice, and one song with badly timed lyrics doesn't pull the others. A song's sync is `globalOffsetMs` plus its own offset or, without one, the learned one. "Reset this song" (`ms: null`) drops its own offset and its place among the nudged songs; Reset to defaults with "Also clear sync" empties both.
+
+**Contract v8 (additive, 2026-10-20).** `CONTRACT_VERSION = 8`. `Settings.version` stays 1. No event or command changed.
+
+```ts
+// Settings gains:
+/** Graphics: the word pictures and the splashes. */
+graphics: boolean;       // default true; stored settings without it take their effectsMode
+// and effectsMode is now Text effects alone: each song's own moves
+```
+
+Effects mode turned a song's moves, its splashes and its pictures on and off together; they are two switches now, in Settings › Look (**Text effects**, **Graphics**) and in the tray (**Effects ▸ Text effects**, **Effects ▸ Graphics**). `core/flair.ts` `planDecor` takes them as `DecorParts`: with Text effects off every line rises, with Graphics off nothing splashes or shows a picture. Settings saved before v8 without `graphics` take it from their `effectsMode` (`settings.rs` `migrate`, the mock's `migrateSettings`, the window's `withDefaults`), so turning Effects mode off before keeps the pictures off.
+
+Alongside v8, without a contract change (Settings never names a style or a face):
+
+- **Three more styles**, one-line styles on Lens's engine (`overlay/modes/slot-layouts.ts`): **Wave** (the line rides a wave whose crest follows the voice; dance, electronic, upbeat songs), **Reveal** (the line appears as it's sung, words not reached yet waiting as faint ghosts; rap, spoken and story songs with word timing and lines that fit one row) and **Collage** (cut-out words, each its own size and tilt, in one to three rows; rock, punk, shouted songs under gritty covers). They join the one-line styles songs alike are spread across (`ONE_LINE_STYLES`).
+- **Seven more faces**, each scored by the vibe it suits (`songlook.ts` fontScore, with vetoes where it can't set a song): Anton (anthems, shouted hooks), Playfair Display (soul and R&B under rich, dark covers), Space Grotesk (electronic, cool covers), Righteous (disco and funk, warm saturated covers), Pacifico (summer and feel-good songs at an easy pace; never for fast or long lines), Rubik (bubbly pop, bright light covers) and Pirata One (dark, heavy, shouted songs with short lines only).
+- **A gentler Arc.** The picked curve is 8 to 32 (`CURVE_MIN`, `CURVE_MAX`) plus a ±2 wobble, about half as deep as before; the house look's is 22.
+- **Words answer their pictures.** Every route also plans `reactions` (`overlay/motion/routes.ts`): a track per word it touches, on the word box's `translate`, `rotate` and `scale`, which compose with the word's pop on `transform`. Each starts and ends at rest; they run in their own group (`KaraokeLine` `reactGroup`), cancelled rather than frozen when a sung line leaves focus, so Stack and Drift's past lines stay straight.
 
 **Changing the contract:** whoever needs the change edits `contract.ts` and `contract.rs` in the same commit, bumps `CONTRACT_VERSION`, and logs it in `docs/HANDOFF.md`. Add fields; don't rename or remove them.
 

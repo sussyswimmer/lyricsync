@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Effects mode, Size, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song; Text effects, Graphics, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -45,61 +45,77 @@ Undertone adds itself to the apps your system starts at login. If the system ref
 
 ## Look
 
-Undertone picks how each song looks: its style (one of the six below) and its font. There's nothing to choose. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a slow song with long held notes bends along a curve in a serif, short shouted hooks are set as a poster in loud capitals, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster and Spotlight), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
+Undertone picks how each song looks: its style (one of the nine below) and its font (one of fifteen). There's nothing to choose. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a quick, wordy rap appears word by word as it's said, a slow song with long held notes bends along a curve in a serif, a dance track rides a wave, short shouted hooks are set as a poster in loud capitals, a shouted rock song is cut out like a collage, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster, Spotlight, Wave, Reveal and Collage), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
-The settings in the window's **Look** group, below, turn each song's extra effects on or off ([Effects mode](#effects-mode)) and change how big the lyrics are, where they sit and how much they move and glow, whatever the look.
+The settings in the window's **Look** group, below, turn each song's own motion and its graphics on or off ([Text effects](#text-effects) and [Graphics](#graphics)) and change how big the lyrics are and how much they move and glow, whatever the look.
 
 ### Picked for this song
 
 Under the preview, a card names the look of the song in the preview, such as **Lens · Syne** (the font's name in that font), and says in a few words why, for example "Big repeating hooks, bright warm cover." With nothing playing, it shows the demo song's look. It says **Finding lyrics…** while Undertone looks the song up, and **No lyrics for this song**, **Couldn't load lyrics** or **Instrumental** when there's nothing to pick a look by. Screen readers read the card out when the song changes.
 
-### The six styles
+### The nine styles
 
 In every style the words of the current line change color as they're sung (see [Color](#color)).
 
-- **Arc.** The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. Undertone picks the bend for each song: deeper for slow songs with held notes, flatter for long lines, arching for anthems and bright covers, dipping gently for intimate songs.
+- **Arc.** The current line runs along a gentle curve across the screen in large type. The previous line sits above it and the next line below, about half the size, following the same curve. A neighbor longer than the current line moves a little further out when it's on the outside of the curve (above an arch, below a sag), so its ends don't crowd the current line. When a line ends, it shrinks up into the previous line's place while the next line grows into the middle. Undertone picks the bend for each song, always gentle: a little deeper for slow songs with held notes, flatter for long lines, arching for anthems and bright covers, dipping for intimate songs.
 - **Lens.** One line at a time, straight across. The word being sung is magnified, and words further from it get smaller and fainter, as if a magnifying glass were sliding along the line with the voice. The next line waits underneath in small type.
 - **Drift.** The song as a list that scrolls up one line at a time. The current line is full size in the middle; up to three lines above and below are smaller, fainter and tilted back in 3D, like the face of a turning drum. A jump of more than three lines, such as a seek, crossfades instead of scrolling.
 - **Stack.** The same scrolling list as Drift, but flat, like a lyrics sheet. Neighboring lines are a little smaller and fainter, with no tilt. Long jumps crossfade, as in Drift. Plain lyrics without timing are always shown this way.
 - **Poster.** One line at a time, set like a gig poster: broken into two to five rows, each short row set larger until it's as wide as the widest, so the short words get big. Every line is composed its own way: centered, pushed left or right, some tilted a few degrees. Words not sung yet wait dim and a little small, and punch up to full as the voice reaches them. The next line waits underneath in small type.
 - **Spotlight.** One line at a time, sliding through the middle of the screen with the voice: the word being sung is large in the middle, and the words before and after it fall away smaller and fainter to either side. The next line waits underneath in small type.
+- **Wave.** One line at a time, riding a wave whose crest follows the voice: the word being sung rides up on the crest, a little larger, and the words beside it tilt along the slopes. Picked for dance, electronic and upbeat songs. The next line waits underneath in small type.
+- **Reveal.** One line at a time, appearing as it's sung: the words not reached yet wait as faint ghosts, a little low, and each comes up into its place as the voice reaches it. Picked for rap, spoken and story songs, fast and wordy, timed word by word. The next line waits underneath in small type.
+- **Collage.** One line at a time, as words cut out of different magazines: each word its own size and tilt, a little off its row, in one to three rows. Words not sung yet wait dim, and pop as they're sung. Picked for rock, punk and shouted songs. The next line waits underneath in small type.
 
 The current line comes alive as it's sung: each word fills with the highlight color behind a soft edge, syllable by syllable, and rises and swells a little; its letters hop as the color reaches them, and the word glows (see [Glow](#glow)). Most songs' lyrics are timed by line, not by word: then Undertone works out when each word is sung, at the pace the song is being sung (see [Lyrics timed by line only](#loading-missing-and-unsynced-lyrics)). A word held for a second or more lights letter by letter, each letter rising and glowing until the note ends. How much all this moves depends on the song (a fast song moves more and settles quickly, a ballad floats) and on [Effects](#effects). Lines further from the current one are fainter and softer.
 
-Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens shrinks a long line until it fits the width of the screen, Poster until its block fits, and Spotlight until its largest word does. Arc shrinks a line until it fits its curve, so the whole line stays on screen at any [Size](#size). Undertone doesn't pick Arc, Lens or Poster for a song with very long lines.
+Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens, Wave and Reveal shrink a long line until it fits the width of the screen, Poster and Collage until their block fits, and Spotlight until its largest word does. Arc shrinks a line until it fits its curve, so the whole line stays on screen at any [Size](#size). Undertone doesn't pick Arc, Lens, Poster, Wave or Collage for a song with very long lines.
 
 ### Fonts
 
-Undertone picks one of eight fonts built into it, so they work offline:
+Undertone picks one of fifteen fonts built into it, so they work offline. Each suits a kind of song, and Undertone reaches for it where the song has that vibe:
 
-| Font | Look |
-|---|---|
-| **Fraunces** | A soft, bold serif |
-| **Instrument Serif** | A slim, condensed serif |
-| **Syne** | A wide, heavy sans |
-| **Unbounded** | A wide, rounded sans |
-| **Bricolage** | Bricolage Grotesque, a compact grotesque sans |
-| **Caveat** | Handwriting |
-| **JetBrains Mono** | Monospace |
-| **System** | Your computer's own interface font |
+| Font | Look | Picked for |
+|---|---|---|
+| **Fraunces** | A soft, bold serif | Unhurried songs about people; the house font |
+| **Instrument Serif** | A slim, condensed serif | Intimate, sparse songs and held notes |
+| **Playfair** | Playfair Display, a high-contrast display serif | Soul, R&B and torch songs under rich, dark covers |
+| **Syne** | A wide, heavy sans | Bright, quirky pop with hooks |
+| **Unbounded** | A wide, rounded sans | Chants, shouted short lines, club mixes |
+| **Anton** | Tall, condensed capitals | Anthems, rap hooks and shouted songs |
+| **Bricolage** | Bricolage Grotesque, a compact grotesque sans | Fast, dense verses |
+| **Space Grotesk** | A clean, techy grotesque | Synth-pop, house and electronic songs, cool covers |
+| **Righteous** | A retro, rounded display font | Disco and funk, warm, saturated covers |
+| **Rubik** | A friendly, rounded sans | Bubbly pop under bright, light covers |
+| **Pacifico** | A brush script | Summer, reggae and feel-good songs at an easy pace |
+| **Caveat** | Handwriting | Diary songs and acoustic takes |
+| **Pirata One** | Blackletter | Dark, heavy, shouted songs with short lines |
+| **JetBrains Mono** | Monospace | Cold neon covers, a steady electronic pulse |
+| **System** | Your computer's own interface font | Scripts the others don't have |
 
-It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts aren't picked for long lines. In Syne or Unbounded, shouted lyrics may be set in capitals.
+It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts aren't picked for long lines, and the scripts (Pacifico, Caveat) and blackletter aren't picked for fast or long ones. In Syne, Unbounded or Anton, shouted lyrics may be set in capitals.
 
 Each font comes in one weight. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match the font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
 
-### Effects mode
+### Text effects
 
-On by default. It gives each song effects of its own on top of its look:
+On by default. Each song's words move their own way. Not every song's words float up: depending on how the song is sung, its words **rise** and settle, **bounce** off the line, **sway** side to side, send a **wave** through their letters, **pulse** on the beat, or **drop** into place from just above. The lines a song repeats, such as its chorus, move a second way, so the chorus stands apart from the verses. Fast, punchy songs bounce and pulse; slow, intimate ones sway; songs with long held notes wave.
 
-- **Its own motion.** Not every song's words float up. Depending on how the song is sung, its words **rise** and settle, **bounce** off the line, **sway** side to side, send a **wave** through their letters, **pulse** on the beat, or **drop** into place from just above. The lines a song repeats, such as its chorus, move a second way, so the chorus stands apart from the verses. Fast, punchy songs bounce and pulse; slow, intimate ones sway; songs with long held notes wave.
+Switch it off for the calm, even look: every song's words rise the same way. It doesn't change [Graphics](#graphics). **Effects ▸ Text effects** in the menu does the same.
+
+### Graphics
+
+On by default. Pictures and splashes join the lyrics:
+
+- **Pictures that join in.** When a word names something you can picture, a realistic picture of it joins the line as the word is sung, and moves with the song until the line is over. Most hop from word to word as each one is sung, like a bouncing ball, and jump off the end; birds, wings and planes fly across; cars, a train, a boat, a horse and big cats travel along the tops of the words; a rocket lifts off; hearts, balloons and clouds float up; rain, snow, leaves and money fall across the line; stars, fireworks and diamonds burst into little copies of themselves; the sun and the moon circle above their word; dice and a disco ball roll off the end; a flame, a lamp, a guitar or a house dances where it is. Sing about *iced tea*, *rain*, *roses*, *the moon*, a *car*, *whiskey*, a *guitar*, a *wolf*, the *city* or a *broken heart*, and you'll see it. There are 140 pictures of the things songs mention most, built into Undertone, so they work offline. Some come alive while they show: a flame flickers in its own warm glow and a campfire throws a few embers; a lamp, a lantern, the sun and the moon glow; a star, a sparkler, fireworks and a diamond twinkle; a heart beats; a butterfly beats its wings. A picture shows at most once per line, at least 4 seconds after the last one, and the same picture again only after 20 seconds, so lyrics never fill up with them. Only English words call them for now.
+- **Words that answer them.** A picture isn't stuck on top of the words: the words it touches move with it. A word squashes as a hopping picture lands on it, ducks as a bird flies over, dips under a car's wheels; a rocket shakes its word and kicks it up as it lifts off; a balloon or a heart lifts its word and sways it (a heart's word beats with it); rain hits the words it falls on; a burst pops its word and shoves the words either side apart, and lightning shakes it; the moon tilts its word toward it; a rolling ball knocks each word as it passes; a flame, a lamp or a guitar sways its word along with it, and a flame's word shimmers in its heat.
 - **Splashes.** At a song's big moments (a long held note, the end of a chorus line, a shouted line) a small burst comes off the word: **droplets** that leap and fall, **sparks**, **confetti** in the song's colors, **ripples** spreading under the word, or twinkling **glints**. Which one depends on what the song is about: rain and tears splash droplets, fire and lightning throw sparks, a party throws confetti, stars and dreams glint. There's never more than one burst per line, and they're at least 5 seconds apart.
-- **Pictures that join in.** When a word names something you can picture, a realistic picture of it joins the line as the word is sung, and moves with the song until the line is over. Most hop from word to word as each one is sung, like a bouncing ball, and jump off the end; birds, wings and planes fly across; cars, a train, a boat, a horse and big cats travel along the tops of the words, bumping on every word; a rocket lifts off; hearts, balloons and clouds float up, pulsing on every word; rain, snow, leaves and money fall across the line; stars, fireworks and diamonds burst into little copies of themselves; the sun and the moon circle above their word; dice and a disco ball roll off the end; a flame, a lamp, a guitar or a house dances where it is. Sing about *iced tea*, *rain*, *roses*, *the moon*, a *car*, *whiskey*, a *guitar*, a *wolf*, the *city* or a *broken heart*, and you'll see it. There are 140 pictures of the things songs mention most, built into Undertone, so they work offline. Some come alive while they show: a flame flickers in its own warm glow and a campfire throws a few embers; a lamp, a lantern, the sun and the moon glow; a star, a sparkler, fireworks and a diamond twinkle; a heart beats; a butterfly beats its wings. A picture shows at most once per line, at least 4 seconds after the last one, and the same picture again only after 20 seconds, so lyrics never fill up with them. Only English words call them for now.
 
-Switch it off for the calm, even look: every song's words rise the same way, with no splashes or pictures. **Effects ▸ Effects mode** in the menu does the same.
+Switch it off for just the words, with no pictures or splashes. It doesn't change [Text effects](#text-effects). **Effects ▸ Graphics** in the menu does the same. If you had Effects mode off in an earlier version of Undertone, Graphics starts off too.
 
-The same song always gets the same effects. With [Effects](#effects) at 0, the words don't move and nothing splashes, but pictures still fade in and out. If you've asked your system to reduce motion, the pictures fade in and out on their word and there are no splashes (see [Reduced motion](#reduced-motion)). On computers without graphics acceleration, where Undertone draws everything lighter, Effects mode adds nothing.
+The same song always gets the same effects and graphics. With [Effects](#effects) at 0, the words don't move and nothing splashes, but pictures still fade in and out. If you've asked your system to reduce motion, the pictures fade in and out on their word, the words don't answer them, and there are no splashes (see [Reduced motion](#reduced-motion)). On computers without graphics acceleration, where Undertone draws everything lighter, neither switch adds anything.
 
 ### Size
 
@@ -258,7 +274,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts Effects mode, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges, and what Undertone learned from them, are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts Text effects, Graphics, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges, and what Undertone learned from them, are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 
@@ -272,12 +288,13 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 |---|---|
 | **Hide lyrics** / **Show lyrics** | Hides the lyrics or brings them back, the same as [Lyrics on the desktop](#lyrics-on-the-desktop) in Settings |
 | **Effects ▸** Calm / Balanced / Lively | How much the words move: 20, 50 or 85, the same as [Effects](#effects) in Settings |
-| **Effects ▸** Effects mode | Turns each song's own motion, splashes and pictures on or off, the same as [Effects mode](#effects-mode) in Settings |
+| **Effects ▸** Text effects | Turns each song's own motion on or off, the same as [Text effects](#text-effects) in Settings |
+| **Effects ▸** Graphics | Turns the pictures and splashes on or off, the same as [Graphics](#graphics) in Settings |
 | **Sync ▸** Earlier 100 ms / Later 100 ms / Reset for this song | Nudges this song's sync (see [This song](#this-song)) |
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
 | **Launch at login** | Starts Undertone when you log in, the same as [Launch at login](#launch-at-login) in Settings |
-| **Undertone 0.1.0 (build …)** | Grayed out: which build is running. Settings shows the same at the bottom |
+| **Undertone 0.2.0 (build …)** | Grayed out: which build is running. Settings shows the same at the bottom |
 | **Quit Undertone** | Quits Undertone |
 
 Shortcuts that work from any app, by default (change or turn them off in [Settings › Shortcuts](#shortcuts)):
@@ -310,9 +327,10 @@ Shortcuts that work from any app, by default (change or turn them off in [Settin
 If you've asked your system to reduce motion (macOS: System Settings → Accessibility → Display → **Reduce motion**; Windows: Settings → Accessibility → Visual effects → **Animation effects** off), Undertone keeps the lyrics still and changes lines with a short crossfade instead:
 
 - Words fade quickly to the highlight color as they're sung, instead of filling behind a moving edge, and nothing rises, swells or hops; the glow stays steady. [Effects](#effects) doesn't change this, and Settings says so under its slider.
-- With [Effects mode](#effects-mode) on, words still get their tiny pictures, but each one only fades in and out where it stands, and nothing splashes.
+- With [Graphics](#graphics) on, words still get their pictures, but each one only fades in and out where it stands, the words don't move with it, and nothing splashes.
 - **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
-- **Lens** doesn't magnify. The line stays flat, and words still light up as they're sung.
+- **Lens** doesn't magnify, **Wave** doesn't ripple, and **Reveal** shows the whole line from the start. The line stays flat, and words still light up as they're sung.
+- **Collage** sets the line as one level row.
 - **Arc** lines don't glide between their places; they crossfade.
 - The break dots don't move; they brighten one after another.
 - The loading dots fade in once and then stay still instead of pulsing.

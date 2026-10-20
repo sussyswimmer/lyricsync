@@ -40,9 +40,14 @@
     <td width="33%" align="center"><img src="docs/media/style-poster.webp" alt="Poster: bold capitals set as a tilted block over a rainy city"><br><sub><b>Poster</b></sub></td>
     <td width="33%" align="center"><img src="docs/media/style-spotlight.webp" alt="Spotlight: one huge word at a time over a desert night"><br><sub><b>Spotlight</b></sub></td>
   </tr>
+  <tr>
+    <td width="33%" align="center"><img src="docs/media/style-wave.webp" alt="Wave: the line rides a wave over white dunes at sunrise, the sung word on its crest"><br><sub><b>Wave</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-reveal.webp" alt="Reveal: half a line sung and lit, the rest waiting as faint ghosts over a black-and-white street"><br><sub><b>Reveal</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-collage.webp" alt="Collage: tilted cut-out capitals over a rainy city at night"><br><sub><b>Collage</b></sub></td>
+  </tr>
 </table>
 
-Undertone picks the layout, font and motion from the song, and the colors from its cover.
+Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Words you can picture come to life in the line, and the words around them move with them.
 
 ## Words you can picture
 

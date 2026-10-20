@@ -99,7 +99,7 @@ Install the new version over the old one. Your settings, sync nudges and cached 
 
 - **macOS:** quit Undertone from its menu bar icon, drag the new version into Applications and choose **Replace**. Then do the first-open steps again. If the old one was still running, opening the new one restarts Undertone into it.
 
-To check which build is running, look at the last line of the menu bar or tray menu, **Undertone 0.1.0 (build …)**, or the bottom of Settings. The build is the commit it was made from, the same short code as on the download's GitHub page.
+To check which build is running, look at the last line of the menu bar or tray menu, **Undertone 0.2.0 (build …)**, or the bottom of Settings. The build is the commit it was made from, the same short code as on the download's GitHub page.
 - **Windows:** quit Undertone from its tray icon, then run the new `-setup.exe`. SmartScreen may warn you again.
 
 ## Uninstalling
