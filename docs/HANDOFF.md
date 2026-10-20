@@ -568,3 +568,14 @@ Tests: 1260 vitest in 36 files (new: Wave, Reveal and Collage layouts; every lay
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: v8 (adds `Settings.graphics`).
+
+
+## 2026-10-20 · Claude Code · Words that become what they say
+Done: Maxwell: "instead of there just being an emoji that pops up how about the words like fire … actually catches on fire so for moonlight or sun there is a half cut sun behind it like a horizon … same with a snowflake".
+- **Word scenes** (Graphics): `core/wordscenes.ts` lists the words of ten scenes (fire, sun, moon, snow, rain, electric, love, gold, water, stars) and plans one a line, 2.5 s apart, the same one 9 s apart. `planDecor` gives a line's scene word `WordDecor.scene`; a line with a scene shows no picture.
+- **Drawn in the word** (`overlay/motion/scenes.ts`, `KaraokeLine.sceneOf`, `stage.css` `.kw-scene` and `.sc-*`): pieces in two layers of the word's own overlay, behind its letters (under the dark legibility copy) and in front, so the scene moves with the word in every style; clipping windows for a horizon and a pool. Fire catches left to right with flame tongues behind the letters and embers; the sun and the moon rise as half discs out of a horizon at the word's baseline (`baselineOf`, from the measured ascent and descent) and set as the line ends; snow falls and drifts; rain streaks and drips; bolts flash; hearts rise as the word beats; sparkles wink; water rises with bubbles; stars twinkle. The word's lit letters and bloom take the scene's colors (`--ut-hl`, `--ut-hl2`, `--ut-bloom`). Some scenes move the word itself (shiver, heartbeat, jolt, bob) on its box's translate, rotate and scale, in the reactions' group. Every piece fades out with its scene; without motion a scene only fades in and out.
+- **Checked** in Chromium with the mock bridge (`?power=full`) on the demo songs and a scene test song of placeholder lines, in Lens, Arc, Stack, Drift and Poster: the sun and the moon read as half discs on a horizon behind the word, fire licks up behind the letters, snow drifts at the word's feet; the sun's and the moon's letters were made lighter for contrast over their discs.
+Tests: `scenes.test.ts` (the vocabulary, matching, the plan's spacing, every scene's tracks unseen at both ends and seeded, fire catching left to right, the sun rising out of the horizon and setting, the drift, the word's own motion, no motion); a Lens test for the river's water drawn in its word instead of the lantern; picture tests moved to words without a scene.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v8).

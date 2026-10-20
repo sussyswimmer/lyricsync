@@ -47,7 +47,7 @@
   </tr>
 </table>
 
-Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Words you can picture come to life in the line, and the words around them move with them.
+Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
 
 ## Words you can picture
 

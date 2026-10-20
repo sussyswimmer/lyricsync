@@ -480,3 +480,150 @@
     opacity: 0.6;
   }
 }
+
+/* ---------- word scenes (overlay/motion/scenes.ts) ----------
+   A word of fire, sun, snow and the like becomes its scene, drawn in its own overlay: the back layer
+   (first, under every copy of the text, the dark legibility shadow included) and the front one (last,
+   over the letters). Each piece rests invisible and is placed at its anchor (inline left, top, size
+   and transform-origin); its track (transform and opacity, on the compositor) shows it. A clipping
+   window (a horizon, a pool) holds the pieces that rise out of it. */
+.kw-scene {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.sc-clip {
+  position: absolute;
+  overflow: hidden;
+}
+
+.sc {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* the word's glow in the scene's color, behind it */
+.sc-glow {
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--sc-glow, transparent) 0%, transparent 100%);
+}
+
+/* fire: a flame tongue, hot white at its root, licking up from behind the letters */
+.sc-flame {
+  border-radius: 50% 50% 50% 50% / 86% 86% 14% 14%;
+  background:
+    radial-gradient(ellipse 34% 30% at 50% 84%, #fffbe6 0%, rgba(255, 245, 200, 0) 100%),
+    radial-gradient(ellipse 50% 62% at 50% 78%, #ffd347 0%, #ff9a24 45%, rgba(255, 90, 20, 0.85) 75%, rgba(255, 50, 0, 0) 100%);
+  filter: blur(0.02em);
+}
+
+.sc-ember {
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3c4 0 30%, #ffa23a 55%, rgba(255, 120, 30, 0) 72%);
+}
+
+/* sun: a warm disc and its slowly turning rays, rising out of the horizon at the word's baseline */
+.sc-sun {
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 62%, #ffd98a 0 16%, #ffab4f 42%, #ff7a32 76%, #ef5228 100%);
+  box-shadow: 0 0 0.5em rgba(255, 140, 60, 0.55);
+}
+
+.sc-rays {
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 214, 140, 0.42) 0deg 5deg, rgba(255, 214, 140, 0) 5deg 15deg);
+  -webkit-mask-image: radial-gradient(closest-side, #000 30%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 30%, transparent 100%);
+}
+
+/* the horizon: a line of light along the baseline, fading out to both ends */
+.sc-line {
+  background: linear-gradient(90deg, rgba(255, 220, 170, 0), rgba(255, 236, 200, 0.85) 50%, rgba(255, 220, 170, 0));
+  border-radius: 999px;
+}
+
+/* moon: a pale disc with soft gray seas, in its halo */
+.sc-moon {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 40%, rgba(150, 156, 175, 0.35) 0 12%, transparent 13%),
+    radial-gradient(circle at 62% 30%, rgba(150, 156, 175, 0.28) 0 8%, transparent 9%),
+    radial-gradient(circle at 58% 62%, rgba(150, 156, 175, 0.3) 0 15%, transparent 16%),
+    radial-gradient(circle at 45% 45%, #eceef4 0 40%, #cfd4e2 75%, #aeb5c9 100%);
+  box-shadow: 0 0 0.4em rgba(200, 215, 255, 0.5);
+}
+
+.sc-halo {
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(190, 205, 255, 0.45) 0%, rgba(190, 205, 255, 0.12) 55%, transparent 100%);
+}
+
+/* a four-point star that twinkles (moon, stars) */
+.sc-twinkle,
+.sc-sparkle {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 0 C11 7 13 9 20 10 C13 11 11 13 10 20 C9 13 7 11 0 10 C7 9 9 7 10 0Z' fill='%23fffbe8'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 0 0.06em rgba(255, 255, 255, 0.9));
+}
+
+/* gold: the sparkles are warm */
+.sc-sparkle {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 0 C11 7 13 9 20 10 C13 11 11 13 10 20 C9 13 7 11 0 10 C7 9 9 7 10 0Z' fill='%23fff6cf'/%3E%3C/svg%3E");
+  filter: drop-shadow(0 0 0.08em rgba(255, 205, 90, 0.95));
+}
+
+/* snow: a six-armed flake, and the drift piling up at the word's feet */
+.sc-flake {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-10 -10 20 20'%3E%3Cg stroke='%23ffffff' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M0-9V9M-7.8-4.5 7.8 4.5M-7.8 4.5 7.8-4.5'/%3E%3Cpath d='M-2.5-6.5 0-4 2.5-6.5M-2.5 6.5 0 4 2.5 6.5' fill='none'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 0 0.04em rgba(180, 225, 255, 0.9));
+}
+
+.sc-drift {
+  background:
+    radial-gradient(ellipse 30% 70% at 20% 100%, #fff 0 60%, rgba(255, 255, 255, 0) 72%),
+    radial-gradient(ellipse 34% 85% at 52% 100%, #fff 0 60%, rgba(255, 255, 255, 0) 72%),
+    radial-gradient(ellipse 28% 65% at 82% 100%, #fff 0 60%, rgba(255, 255, 255, 0) 72%);
+  filter: drop-shadow(0 -0.02em 0.06em rgba(170, 215, 255, 0.6));
+}
+
+/* rain: streaks behind the word, and drops gathering under its letters */
+.sc-streak {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(210, 235, 255, 0), rgba(210, 235, 255, 0.85));
+}
+
+.sc-drip {
+  border-radius: 50% 50% 50% 50% / 38% 38% 62% 62%;
+  background: radial-gradient(circle at 38% 62%, #ffffff 0 14%, #bfe6ff 32%, #5aaeff 80%);
+  box-shadow: 0 0 0.05em rgba(90, 170, 255, 0.6);
+}
+
+/* electric: a bolt, white hot in a blue glow */
+.sc-bolt {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 24'%3E%3Cpath d='M7 0 1 13h5l-2 11 7-15H6l3-9z' fill='%23f4fcff'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 0 0.05em #ffffff) drop-shadow(0 0 0.14em rgba(90, 200, 255, 0.95));
+}
+
+/* love: a little heart */
+.sc-heart {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 18'%3E%3Cpath d='M10 18 1.6 9.6A5 5 0 0 1 10 3a5 5 0 0 1 8.4 6.6Z' fill='%23ff4d7d'/%3E%3C/svg%3E") center / contain no-repeat;
+  filter: drop-shadow(0 0 0.06em rgba(255, 120, 160, 0.9));
+}
+
+/* water: a pool with a wavy surface, standing up to the middle of the letters, and its bubbles */
+.sc-water {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8' preserveAspectRatio='none'%3E%3Cpath d='M0 4 Q10 0 20 4 T40 4V8H0Z' fill='%2378c8ff' fill-opacity='0.55'/%3E%3C/svg%3E") 0 0 / 0.9em 0.18em repeat-x,
+    linear-gradient(180deg, transparent 0.17em, rgba(120, 200, 255, 0.55) 0.17em, rgba(30, 120, 200, 0.4) 100%);
+}
+
+.sc-bubble {
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.9) 0 18%, rgba(190, 235, 255, 0.15) 45%, rgba(190, 235, 255, 0.7) 70%, rgba(190, 235, 255, 0) 74%);
+}

@@ -1,7 +1,8 @@
 /**
  * Each song's own flair on top of its look. Text effects (Settings.effectsMode): how its words move as
  * they're sung (they don't all float up). Graphics (Settings.graphics): the splash that bursts from its
- * big moments, and the pictures that take part in the line where a word names something (wordpics.ts).
+ * big moments, the scene a word of fire, sun, snow or the like becomes (wordscenes.ts), and the
+ * pictures that take part in the line where a word names something (wordpics.ts).
  * The two are switched on and off apart. The picker (songlook.ts) chooses a
  * song's flair from how it is sung, what its words are about and its cover; this module holds the
  * vocabulary and plans, line by line, which words get what. Everything is pure and deterministic: a
@@ -10,6 +11,7 @@
 import type { Line } from "./lrc";
 import type { EmphasisRule } from "./songlook";
 import { normalizeToken, planPictures, tokensOf, type PictureId } from "./wordpics";
+import { planScenes, type SceneId } from "./wordscenes";
 
 /**
  * How a word moves as it's sung. rise: swells and floats up, then settles (the house motion). bounce:
@@ -138,6 +140,8 @@ export function hookLines(lines: readonly Line[]): Set<number> {
 /** What one word gets on top of its line's move. */
 export interface WordDecor {
   picture?: PictureId;
+  /** the word becomes this scene (on fire, a sun rising behind it...): a line with one shows no picture */
+  scene?: SceneId;
   splash?: SplashKind;
 }
 
@@ -202,13 +206,17 @@ export function planDecor(lines: readonly Line[], flair: Flair | null, emphasis:
   }
   const moveOf = (hook: boolean): Move => (!parts.text ? "rise" : hook ? flair.accent : flair.move);
   const hooks = hookLines(lines);
+  const scenes = planScenes(lines);
   const pictures = planPictures(lines);
   let lastSplash = Number.NEGATIVE_INFINITY;
   return lines.map((line, index) => {
     const hook = hooks.has(index);
     const words = new Map<number, WordDecor>();
     if (line.words.length === 0) return { move: moveOf(false), hook, words };
-    const picture = pictures.get(index);
+    // one of them a line: a word that becomes its scene outdoes one that calls a picture
+    const scene = scenes.get(index);
+    const picture = scene ? undefined : pictures.get(index);
+    if (scene) words.set(scene.word, { scene: scene.id });
     if (picture) words.set(picture.word, { picture: picture.id });
     for (const i of splashCandidates(line, hook, emphasis)) {
       const at = line.words[i]?.start ?? line.start;
