@@ -67,10 +67,11 @@ const KEY = "artist|song|album|200000";
 const TRACK = { key: KEY, title: "Placeholder Song", artist: "Nobody" };
 
 /** A panel wired the way main.ts wires it: every action re-renders synchronously. */
-function mountPanel(offsetMs = 0, track: PanelState["track"] = TRACK) {
-  let settings: Settings = applyWrite(structuredClone(DEFAULT_SETTINGS), { kind: "track", trackKey: KEY, ms: offsetMs });
-  const writes: { key: string; ms: number }[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false };
+function mountPanel(offsetMs: number | null = null, track: PanelState["track"] = TRACK, start: Settings = DEFAULT_SETTINGS) {
+  const fresh = structuredClone(start);
+  let settings: Settings = offsetMs === null ? fresh : applyWrite(fresh, { kind: "track", trackKey: KEY, ms: offsetMs });
+  const writes: { key: string; ms: number | null }[] = [];
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } };
   const edit = (patch: Partial<Settings>): void => {
     settings = { ...settings, ...patch };
     panel.render((state = { ...state, settings }));
@@ -150,7 +151,7 @@ describe("settings-nudge-focus: the sync buttons keep focus and never act backwa
     (document.activeElement as unknown as FakeElement).click();
     (document.activeElement as unknown as FakeElement).click();
     expect(p.offset()).toBe(0);
-    expect(p.writes).toEqual([{ key: KEY, ms: 0 }]);
+    expect(p.writes).toEqual([{ key: KEY, ms: null }]);
     expect(document.activeElement).toBe(p.resetSong);
     expect(inert(p.resetSong)).toBe(true);
     expect(p.resetSong.disabled).toBe(false);
@@ -168,7 +169,7 @@ describe("settings-nudge-focus: the sync buttons keep focus and never act backwa
   });
 
   it("with nothing playing every sync button is inert but stays focusable, and comes back with a song", () => {
-    const p = mountPanel(0);
+    const p = mountPanel();
     p.plus50.focus();
     p.setTrack(null);
     expect(p.steps.every(inert)).toBe(true);
@@ -205,13 +206,14 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
       media: null,
       shortcuts: null,
       loginError: false,
+      look: { kind: "finding", key: null, demo: false },
     });
     expect(p.value.textWrites).toBe(before);
     expect(p.value.textContent).toBe("+50 ms");
   });
 
   it("each nudge says the new value with context; a reset says it once", () => {
-    const p = mountPanel(0);
+    const p = mountPanel();
     p.plus50.click();
     expect(spoken(p.root)).toBe("This song: +50 ms, lyrics earlier");
     p.minus100.click();
@@ -227,6 +229,27 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
     const p = mountPanel(-1980);
     p.minus100.click();
     expect(spoken(p.root)).toBe("This song: minus 2000 ms, lyrics later");
+  });
+
+  it("a song without its own offset shows the learned one, nudges from it and has nothing to reset", () => {
+    // two other songs nudged to +100 and +150: the learned offset is +100 (of two, the one nearer 0)
+    const learned = [["x|1", 100], ["y|2", 150]].reduce(
+      (s, [trackKey, ms]) => applyWrite(s, { kind: "track", trackKey: trackKey as string, ms: ms as number }),
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const p = mountPanel(null, TRACK, learned);
+    expect(p.value.textContent).toBe("+100 ms · learned");
+    expect(inert(p.resetSong)).toBe(true);
+    expect(p.root.all("hint").some((el) => el.textContent.startsWith("Learned from the songs you nudged last."))).toBe(true);
+    p.plus50.click();
+    expect(p.writes).toEqual([{ key: KEY, ms: 150 }]);
+    expect(p.value.textContent).toBe("+150 ms");
+    expect(inert(p.resetSong)).toBe(false);
+    // the reset takes this song out of the nudged ones: back to the other two, +100
+    p.resetSong.click();
+    expect(p.writes[p.writes.length - 1]).toEqual({ key: KEY, ms: null });
+    expect(spoken(p.root)).toBe("This song follows your recent nudges again: +100 ms, lyrics earlier");
+    expect(p.value.textContent).toBe("+100 ms · learned");
   });
 
   it("a track change announces nothing", () => {
@@ -286,27 +309,9 @@ describe("TrackHold: the panel's song rides out a brief gap between songs", () =
   });
 });
 
-describe("font-vietnamese: the font picker says which faces draw Vietnamese accents in another font", () => {
-  const note = (p: ReturnType<typeof mountPanel>): FakeElement => p.root.one("font-note");
-  const pick = (p: ReturnType<typeof mountPanel>, family: string): void => {
-    const input = p.root.one("fonts").all("opt").find((o) => o.dataset["family"] === family)?.children[0];
-    if (!input) throw new Error(`no ${family} tile`);
-    input.checked = true;
-    input.dispatch("change");
-  };
-
-  it("says nothing for the default face, and names a face without the subset once it is picked", () => {
-    const p = mountPanel();
-    expect(note(p).textContent).toBe("");
-    expect(p.root.one("fonts").getAttribute("aria-describedby")).toBe(note(p).id);
-    pick(p, "Caveat");
-    expect(note(p).textContent).toBe("Caveat has no Vietnamese accented letters, so those come from a system font.");
-    pick(p, "Instrument Serif");
-    expect(note(p).textContent).toBe("Instrument Serif has no Vietnamese accented letters, so those come from a system font.");
-    pick(p, "Bricolage Grotesque");
-    expect(note(p).textContent).toBe("");
-  });
-
+// The font picker and its note are gone (contract v4: Undertone picks the face), but the look picker
+// vetoes a face without the song's letters by these same flags (src/core/songlook.ts).
+describe("font-vietnamese: the faces' Vietnamese flags, which the look picker vetoes by", () => {
   it("flags exactly the bundled faces whose Fontsource package has no Vietnamese subset", async () => {
     const fsModule = "node:fs";
     const fs = (await import(/* @vite-ignore */ fsModule)) as { readdirSync(path: URL): string[] };
@@ -328,7 +333,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   const NO_PLAYER: MediaStatus = { source: null, problem: "no-player" };
 
   it("keeps an empty status region at the top of the panel while nothing is wrong", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const notice = p.root.one("notice");
     expect(p.root.children[0]).toBe(notice);
     expect(notice.getAttribute("role")).toBe("status");
@@ -340,7 +345,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("names the denied player and the Automation switch to turn on", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const card = p.root.one("notice-card");
     p.setMedia(DENIED_SPOTIFY);
     expect(card.hidden).toBe(false);
@@ -358,7 +363,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("hides once the player is readable again, and says nothing new on a repeat", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const card = p.root.one("notice-card");
     const title = card.one("notice-title");
     p.setMedia(DENIED_SPOTIFY);
@@ -374,7 +379,7 @@ describe("media-status: Settings says why it can't see the song", () => {
   });
 
   it("with no music app open, the song row says so instead of Nothing playing", () => {
-    const p = mountPanel(0, null);
+    const p = mountPanel(null, null);
     const title = p.root.one("song-title");
     expect(title.textContent).toBe("Nothing playing");
     p.setMedia(NO_PLAYER);
@@ -392,7 +397,7 @@ describe("media-status: Settings says why it can't see the song", () => {
 
   it("rides out a brief gap between songs as main.ts wires it: no flash of No music app open", () => {
     vi.useFakeTimers();
-    const p = mountPanel(0);
+    const p = mountPanel();
     const title = p.root.one("song-title");
     const held = new TrackHold<PanelState["track"]>(TRACK, (song) => p.setTrack(song));
     // The player went away for a moment: nothing playing, no player, then the next song.
@@ -438,7 +443,8 @@ describe("media-status-preview: with nothing reported, the mock's preview plays 
   it("starts on the demo under ?media=, and moves to the player once it is seen", async () => {
     const { bridge, preview, title, badge } = await mountPreview("?track=1&media=no-player");
     expect(preview.current.demo).toBe(true);
-    expect(title.textContent).toBe("Neon Monsoon");
+    // the demo starts with Glass Harbor (track 6), whose intro dots and held words show the motion best
+    expect(title.textContent).toBe("Glass Harbor");
     expect(badge.textContent).toBe("Demo");
 
     bridge.setMedia(null);
@@ -455,7 +461,7 @@ describe("media-status-preview: with nothing reported, the mock's preview plays 
     expect(preview.current.demo).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
     await vi.waitFor(() => expect(preview.current.demo).toBe(true));
-    expect(title.textContent).toBe("Neon Monsoon");
+    expect(title.textContent).toBe("Glass Harbor");
   });
 
   it("plain ?mock never shows the demo, through a track change", async () => {
@@ -514,7 +520,7 @@ describe("settings-button-cascade: button classes win over the page's button res
     const light = settingsCss.slice(settingsCss.indexOf(":root"), settingsCss.indexOf("@media (prefers-color-scheme: dark)"));
     const token = (name: string): string => light.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? "";
     const [accent, card, bg] = [token("--accent"), token("--card"), token("--bg")];
-    // the tile ring, the on switch and the slider fill, on the card and the window
+    // the on switch, the slider fill and the picked style's glyph, on the card and the window
     expect(contrast(accent, card)).toBeGreaterThanOrEqual(3);
     expect(contrast(accent, bg)).toBeGreaterThanOrEqual(3);
     // the on switch's white knob on the accent
@@ -526,7 +532,7 @@ describe("settings-button-cascade: button classes win over the page's button res
     const over = [r, g, b].map((c) => Math.round((c ?? 0) * (a ?? 0) + 255 * (1 - (a ?? 0))));
     expect(contrast(`#${over.map((c) => c.toString(16).padStart(2, "0")).join("")}`, card)).toBeGreaterThanOrEqual(3);
     expect(rules(settingsCss).find(([sel]) => sel === ".switch:not(:checked)")?.[1]).toMatch(/inset 0 0 0 1px var\(--switch-ring\)/);
-    // the chosen segment has an accent edge, as the tiles have their ring
+    // the chosen segment has an accent edge
     expect(rules(settingsCss).find(([sel]) => sel === ".seg input:checked + .opt-face")?.[1]).toMatch(/inset 0 0 0 1px var\(--accent\)/);
   });
 
@@ -536,8 +542,9 @@ describe("settings-button-cascade: button classes win over the page's button res
     const forced = rules(settingsCss.slice(at));
     const body = (selector: string): string => forced.find(([sel]) => sel.split(",").map((s) => s.trim()).includes(selector))?.[1] ?? "";
     // a border, not the dropped box-shadow, and not an outline, which the focus ring needs
-    expect(body(".tiles input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
     expect(body(".seg input:checked + .opt-face")).toMatch(/border:\s*2px solid Highlight/);
+    // the picked-look card keeps its edge without its shadow
+    expect(body(".picked-card")).toMatch(/border:\s*1px solid CanvasText/);
     // drawn with gradients and shadows: they keep their own drawing, in system colors
     expect(body(".switch")).toMatch(/forced-color-adjust:\s*none/);
     expect(body(".switch")).toMatch(/ButtonText/);
@@ -605,14 +612,14 @@ describe("settings-preview-bar: the preview's lyric stage starts below its menu 
     expect(resolve(bar().get("height"))).toBe("22px");
   });
 
-  it("the stage fills the wallpaper from the bar's bottom edge down, so its Height clamp counts the bar as off-stage", () => {
+  it("the stage fills the wallpaper from the bar's bottom edge down, so the lyrics center in the space under the bar", () => {
     expect(stage().get("position")).toBe("absolute");
     const [top, right, bottom, left] = edges(stage());
     expect(top).toBe(resolve(bar().get("height")));
     expect([right, bottom, left]).toEqual(["0", "0", "0"]);
   });
 
-  it("no mask fades the top of the stage, where Height 0 puts the focus line", () => {
+  it("no mask fades the top of the stage: the lines above the focus line slide out under the bar unfaded", () => {
     for (const prop of stage().keys()) expect(prop).not.toMatch(/mask/);
     const masked = rules(settingsCss).filter(([sel, body]) => /\.pv-stage/.test(sel) && /mask/.test(body));
     expect(masked).toEqual([]);

@@ -21,30 +21,353 @@
   inset: 0;
 }
 
-/* ---------- drift / stack ---------- */
+/* ---------- drift / stack ----------
+   Each row is projected through the box's perspective on its own (flat, not preserve-3d): rows never
+   overlap, so they need no depth sorting, and a shared 3D context made the compositor's every frame
+   about a third dearer with the karaoke layers inside it. Rows within reach get `will-change` inline
+   (modes/drift.ts), so only those are layers. */
 .drift {
   position: absolute;
   inset: 0;
-  transform-style: preserve-3d;
   transition: opacity 0.4s ease;
 }
 
-.drift-row {
+.drift-row,
+.drift-break {
   position: absolute;
-  left: 50%;
+  left: 6%;
   width: 88%;
+  backface-visibility: hidden;
+}
+
+.drift-row {
   text-align: center;
   line-height: 1.12;
   overflow-wrap: break-word;
   /* No lone last word: same number of rows (so the same height DriftMode measures), evened out. */
   text-wrap: balance;
-  will-change: transform, opacity;
-  backface-visibility: hidden;
 }
 
-.drift-row span {
-  /* Color only: a text-shadow transition re-lays out the word on every frame it runs. */
-  transition: color 0.12s linear;
+/* ---------- karaoke words (overlay/motion/line.ts) ----------
+   For every style: any row container carrying `kw-host` gets these, and toggles `has-fx` while its
+   overlays show. Every motion below runs as a Web Animation on transform or opacity, so the
+   compositor draws it: nothing here is re-laid out or repainted while a word is sung. */
+.kw {
+  display: inline-block;
+  position: relative;
+  transform-origin: 50% 62%;
+}
+
+/* The plain text: what rests on screen, and the layout the overlay is drawn over. Hidden where an
+   overlay takes over (a word whose overlay isn't built yet keeps showing it), back as its line
+   leaves focus. */
+.kw-host.has-fx .kw-on > .kw-txt {
+  opacity: 0;
+}
+
+/* While its word has an overlay, the plain text takes the word's bleed too (see `.kl` below), pulled
+   back so the line lays out exactly as before: as a line hands back to it, the word box is still a
+   layer of its own, and WebKit would cut the text's overhangs at its edges. */
+.kw-txt {
+  padding: var(--kb-y, 0px) var(--kb-x, 0px);
+  margin: 0 calc(-1 * var(--kb-x, 0px));
+}
+
+/* With letters placed (Arc): the word's own run keeps the box its size, unseen; the letters draw it. */
+.kw-hold {
+  visibility: hidden;
+}
+
+/* The overlay takes over at once as its line comes in (it may have been built ahead, hidden). As the
+   line leaves, it fades out over its plain text (KaraokeLine.fadeOut, from DriftMode's hand-back): an
+   animation, not a transition, so that it starts at a frame of DriftMode's choosing, never on the
+   costliest frames of a line change. */
+.kw-fx {
+  position: absolute;
+  inset: 0;
+  /* always its own stacking context, so showing or hiding it never asks for a layout */
+  isolation: isolate;
+}
+
+.kw-host:not(.has-fx) .kw-fx {
+  opacity: 0;
+}
+
+/* Fading out, an overlay leaves the legibility shadow to the plain text beneath: one shadow, not two
+   crossing, and nothing blurred for the fade's layer to raster. */
+.kw-host:not(.has-fx) .kw-fx .kw-dark {
+  visibility: hidden;
+}
+
+/* No copy inside the overlay carries a shadow of its own: windows clip and mask their contents, and
+   a clipped shadow is a hard-edged box. The dark legibility shadow is drawn once, by the dark copy
+   under everything, outside every window; the blooms are drawn by their own copies. */
+.kw-fx,
+.kw-fx * {
+  text-shadow: none;
+}
+
+.kw-track,
+.kw-in {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.kl,
+.kw-run,
+.kw-glow,
+.kw-dark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: pre;
+  transform-origin: 50% 64%;
+}
+
+/* Every run of text (a letter, or a whole word in the dark and bloom copies) is padded out by its
+   word's bleed (motion/line.ts: --kb-x, --kb-y) and pulled back by as much, so its text stays put and
+   its box takes in what its glyphs draw past it: WebKit sizes a moving letter's layer by its box, not
+   its ink, and cut a script face's crossbar or a tone mark beside its circumflex off with a hard
+   edge. The origin is the same point of the glyph as 50% 64% of the unpadded box. */
+.kl,
+.kw-run {
+  padding: var(--kb-y, 0px) var(--kb-x, 0px);
+  margin: calc(-1 * var(--kb-y, 0px)) calc(-1 * var(--kb-x, 0px));
+  transform-origin: 50% calc(64% - 0.28 * var(--kb-y, 0px));
+}
+
+/* The dark copy: transparent text whose text-shadow is the row's legibility shadow (--ut-dark). Its
+   letters move with their lit twins wherever letters move. */
+.kw-fx .kw-dark,
+.kw-fx .kw-dark .kl,
+.kw-fx .kw-dark .kw-run {
+  color: transparent;
+  text-shadow: var(--ut-dark);
+}
+
+/* Bloom: a copy with no fill of its own whose text-shadow glows in the highlight color. Its opacity
+   is animated; the shadow itself is drawn once. */
+.kw-glow,
+.kl-glow {
+  color: transparent;
+  opacity: 0;
+}
+
+.kw-fx .kw-glow,
+.kw-fx .kw-glow .kl,
+.kw-fx .kw-glow .kw-run {
+  color: transparent;
+  text-shadow: var(--ut-bloom);
+}
+
+.kw-fx .kl-glow {
+  text-shadow: var(--ut-bloom-strong);
+}
+
+/* The wipe: a track slides across the word carrying two windows that meet at its feathered edge,
+   the unlit letters in one (clipped) and the lit ones in the other (masked, fading out over the
+   first); the windows' contents slide back the other way, so the letters stay where the word is. */
+.kw-win,
+.kw-bwin {
+  position: absolute;
+  top: -0.5em;
+  height: calc(100% + 1em);
+}
+
+.kw-win {
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
+
+.kw-bwin {
+  overflow: hidden;
+}
+
+.kw-in {
+  top: 0.5em;
+}
+
+.kw-bwin .kw-in {
+  color: var(--ut-lyric);
+}
+
+.kw-win .kw-in {
+  color: var(--ut-hl);
+}
+
+/* The lit letters: the highlight blending into the cover's second color (--ut-hl2), top to bottom,
+   clipped to the glyphs. Every letter is filled alike, so a line reads as one gradient wherever its
+   letters move. */
+.kw-win .kw-in .kl {
+  background-image: linear-gradient(180deg, var(--ut-hl) 28%, var(--ut-hl2, var(--ut-hl)) 72%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------- Effects mode's extras (overlay/motion/decor.ts, routes.ts) ----------
+   Each rests invisible: its animation (transform and opacity, on the compositor) shows it. A splash is
+   inside its word's overlay; a picture travels the line, in the line's own layers. */
+
+/* A line's picture layers (motion/line.ts): a point at the top left of the line's box that takes no
+   room. The one over the words holds the pictures, the one under them (first in the box) their light. */
+.kw-pics {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.kw-host:not(.has-fx) > .kw-pics {
+  opacity: 0;
+}
+
+/* A picture's route: a point, the picture's bottom middle, moved by its track (routes.ts). */
+.kw-route {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+/* A picture: standing on its route's point (its size and centering margin are inline); its own life
+   (flicker, beat, wings) on its `scale`. A soft shadow keeps it apart from a busy or light wallpaper. */
+.kw-pic {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: 50% 70%;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4)) saturate(1.12);
+}
+
+/* A living picture's light (motion/decor.ts planPictureLife): on its picture's route, but under the
+   words, so it never covers the text. A soft glow in the picture's own color (--aura, inline),
+   flickering or breathing, and a big flame's embers rising through it. */
+.kw-aura {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  pointer-events: none;
+  transform-origin: 50% 85%;
+}
+
+.kw-aura-glow {
+  position: absolute;
+  inset: -30%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--aura) 0%, transparent 100%);
+  opacity: 0;
+}
+
+/* an ember: a hot white core in an orange glow, starting from near the top of the flame */
+.kw-ember {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3c4 0 30%, #ffa23a 55%, transparent 72%);
+  opacity: 0;
+}
+
+/* A splash: every piece starts from the middle of the word box, under every copy of the text. */
+.kw-splash {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  width: 0;
+  height: 0;
+}
+
+.kw-sp {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+}
+
+/* a droplet, its narrow end toward its tail */
+.sp-drop {
+  border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+  background: radial-gradient(circle at 38% 68%, rgba(255, 255, 255, 0.7) 0 16%, transparent 30%), var(--ut-hl);
+  box-shadow: 0 0 0.12em var(--ut-hl);
+}
+
+.sp-ring {
+  border-radius: 50%;
+  border: max(1.5px, 0.05em) solid var(--ut-hl);
+  box-sizing: border-box;
+}
+
+/* a streak, bright at its head (the end it travels toward) */
+.sp-spark {
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--ut-hl) 55%, #fff);
+}
+
+.sp-confetti {
+  border-radius: 1px;
+}
+
+.sp-c0 {
+  background: var(--ut-hl);
+}
+
+.sp-c1 {
+  background: var(--ut-lyric);
+}
+
+.sp-c2 {
+  background: color-mix(in srgb, var(--ut-hl) 50%, #fff);
+}
+
+/* a four-point star */
+.sp-glint {
+  background: radial-gradient(circle, #fff 0 22%, var(--ut-hl) 48%, transparent 72%);
+  clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+}
+
+/* ---------- instrumental breaks (overlay/motion/dots.ts) ---------- */
+.drift-break {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ut-dots {
+  display: flex;
+  align-items: center;
+  transform: scale(0);
+  opacity: 0;
+}
+
+/* A dot in the lyric color, brightening as it fills, with the lyrics' dark shadow... */
+.ut-dot {
+  position: relative;
+  display: block;
+  border-radius: 50%;
+  background: var(--ut-lyric);
+  opacity: 0.35;
+  transform-origin: 50% 50%;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
+}
+
+/* ...and its halo in the highlight color, fading in as it fills. */
+.ut-dot > b {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: var(--ut-dot-bloom);
+  opacity: 0;
 }
 
 /* ---------- states ---------- */
@@ -144,8 +467,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ut-stage,
-  .drift,
-  .drift-row span {
+  .drift {
     transition: none;
   }
   /* Still nothing for the first 600 ms (states.ts sets the delay), then one gentle fade to a steady

@@ -15,7 +15,8 @@ export interface Commands {
   suspend_shortcuts: { args: { suspended: boolean }; result: void };
   get_lyrics: { args: { trackKey: string }; result: Lyrics };
   refetch_lyrics: { args: { trackKey: string }; result: void };
-  set_track_offset: { args: { trackKey: string; ms: number }; result: Settings };
+  /** `ms` null drops the song's own offset: it follows the learned one again (contract v7) */
+  set_track_offset: { args: { trackKey: string; ms: number | null }; result: Settings };
   open_settings: { args: NoArgs; result: void };
   quit: { args: NoArgs; result: void };
 }

@@ -385,7 +385,7 @@ mod tests {
             &lib[start..start + lib[start..].find("\n}\n").unwrap()]
         };
         assert!(!body("fn start_log()").contains("started"));
-        assert!(body("fn log_started()").contains("\"Undertone {} started ("));
+        assert!(body("fn log_started()").contains("\"Undertone {} ({BUILD}) started ("));
         let run = body("pub fn run()");
         let order = [
             "start_log();",

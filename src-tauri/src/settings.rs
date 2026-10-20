@@ -6,8 +6,9 @@
 //! ranges, and a value of the wrong type or outside an enum keeps the current one. The mock bridge
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
-//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts` without a new settings version:
-//! a stored file without them loads with their defaults and is rewritten once with them (`load`).
+//! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects`, contract
+//! v5 `effectsMode` and contract v7 `nudgedTracks`, without a new settings version: a stored file
+//! without them loads with their defaults and is rewritten once with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -25,6 +26,8 @@ pub const SIZE: RangeInclusive<f64> = 22.0..=140.0;
 pub const CURVE: RangeInclusive<f64> = -100.0..=100.0;
 pub const Y_POS: RangeInclusive<f64> = 0.0..=100.0;
 pub const GLOW: RangeInclusive<f64> = 0.0..=100.0;
+/// How much lyrics move as they're sung (contract v4); 50 is the look as picked.
+pub const EFFECTS: RangeInclusive<f64> = 0.0..=100.0;
 pub const OPACITY: RangeInclusive<f64> = 20.0..=100.0;
 pub const FONT_WEIGHT: RangeInclusive<f64> = 100.0..=900.0;
 /// Both the global offset and every per-song offset.
@@ -54,16 +57,88 @@ pub fn font_family(value: &Value) -> Option<String> {
         .then(|| text.to_owned())
 }
 
-/// Per-song offsets: each entry clamped to ±2000 ms; zero, non-numeric and non-finite ones dropped.
+/// Per-song offsets: each entry clamped to ±2000 ms; non-numeric and non-finite ones dropped. Since
+/// contract v7 a 0 is a song's own offset and is kept (-0 reads as 0).
 pub fn track_offsets(value: &Value) -> Option<BTreeMap<String, f64>> {
     let entries = value.as_object()?;
     Some(
         entries
             .iter()
-            .filter_map(|(key, ms)| Some((key.clone(), clamp_number(ms, &OFFSET_MS)?)))
-            .filter(|(_, ms)| *ms != 0.0)
+            .filter_map(|(key, ms)| Some((key.clone(), clamp_number(ms, &OFFSET_MS)? + 0.0)))
             .collect(),
     )
+}
+
+/// How many of the most recently nudged songs the learned offset looks at.
+pub const NUDGED_TRACKS_MAX: usize = 9;
+
+/// `nudgedTracks`: strings only, each once (at its last place), the newest `NUDGED_TRACKS_MAX`.
+pub fn nudged_tracks(value: &Value) -> Option<Vec<String>> {
+    Some(
+        value
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .fold(Vec::new(), |list, key| nudged_after(&list, key)),
+    )
+}
+
+/// The recently nudged songs once `track_key` is nudged: it moves to the end, the oldest past the
+/// limit drop off.
+pub fn nudged_after(nudged: &[String], track_key: &str) -> Vec<String> {
+    let mut next: Vec<String> = nudged
+        .iter()
+        .filter(|key| *key != track_key)
+        .cloned()
+        .collect();
+    next.push(track_key.to_owned());
+    let excess = next.len().saturating_sub(NUDGED_TRACKS_MAX);
+    next.split_off(excess)
+}
+
+/// The offset a song without its own starts from: the middle of the recently nudged songs' own
+/// offsets, from two songs on. With an even number, the middle value nearer 0 (0 when the two are
+/// equally near). The same rule as `src/core/sync.ts` `learnedOffsetMs`: keep the two in step.
+pub fn learned_offset_ms(settings: &Settings) -> f64 {
+    let mut values: Vec<f64> = settings
+        .nudged_tracks
+        .iter()
+        .filter_map(|key| settings.track_offsets_ms.get(key).copied())
+        .filter(|ms| ms.is_finite())
+        .collect();
+    values.sort_by(f64::total_cmp);
+    let n = values.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let hi = values[n / 2];
+    if n % 2 == 1 {
+        return hi;
+    }
+    let lo = values[n / 2 - 1];
+    if lo.abs() < hi.abs() {
+        lo
+    } else if hi.abs() < lo.abs() {
+        hi
+    } else if lo == hi {
+        lo
+    } else {
+        0.0
+    }
+}
+
+/// The song's own offset, if it has one (0 included).
+pub fn own_offset_ms(settings: &Settings, track_key: &str) -> Option<f64> {
+    settings
+        .track_offsets_ms
+        .get(track_key)
+        .copied()
+        .filter(|ms| ms.is_finite())
+}
+
+/// The song's sync on top of All songs: its own offset, or the learned one.
+pub fn song_offset_ms(settings: &Settings, track_key: &str) -> f64 {
+    own_offset_ms(settings, track_key).unwrap_or_else(|| learned_offset_ms(settings))
 }
 
 /// One of a contract enum's wire values (`mode`, `showWhen`, `displays`). Strings only: serde
@@ -156,8 +231,9 @@ pub fn merge_shortcuts(current: &Shortcuts, patch: &Value) -> Shortcuts {
 }
 
 /// `update_settings`: a shallow top-level merge, validated field by field. Anything that isn't an
-/// object changes nothing. `trackOffsetsMs` replaces the whole map (the settings window sends it
-/// only as `{}`, to clear every song on Reset; per-song changes go through `with_track_offset`).
+/// object changes nothing. `trackOffsetsMs` and `nudgedTracks` replace the whole map and list (the
+/// settings window sends them only as `{}` and `[]`, to clear every song on Reset; per-song changes
+/// go through `with_track_offset`).
 pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
     let mut next = current.clone();
     next.version = SETTINGS_VERSION;
@@ -181,9 +257,12 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
                 keep_or_set(&mut next.global_offset_ms, clamp_number(value, &OFFSET_MS))
             }
             "trackOffsetsMs" => keep_or_set(&mut next.track_offsets_ms, track_offsets(value)),
+            "nudgedTracks" => keep_or_set(&mut next.nudged_tracks, nudged_tracks(value)),
             "enabled" => keep_or_set(&mut next.enabled, value.as_bool()),
             "launchAtLogin" => keep_or_set(&mut next.launch_at_login, value.as_bool()),
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
+            "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
+            "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -249,18 +328,26 @@ pub fn affects_layer(before: &Settings, after: &Settings) -> bool {
         || before.enabled != after.enabled
 }
 
-/// Sets one song's sync offset, clamped to ±2000 ms. Zero removes the song from the map.
-pub fn with_track_offset(current: &Settings, track_key: &str, ms: f64) -> Result<Settings, String> {
+/// Sets one song's own sync offset, clamped to ±2000 ms (0 included), and makes it the most
+/// recently nudged song. `None` drops its own offset and its place among them: it follows the
+/// learned offset again.
+pub fn with_track_offset(
+    current: &Settings,
+    track_key: &str,
+    ms: Option<f64>,
+) -> Result<Settings, String> {
+    let mut next = current.clone();
+    let Some(ms) = ms else {
+        next.track_offsets_ms.remove(track_key);
+        next.nudged_tracks.retain(|key| key != track_key);
+        return Ok(next);
+    };
     if !ms.is_finite() {
         return Err("offset must be finite".into());
     }
-    let mut next = current.clone();
-    let ms = ms.clamp(*OFFSET_MS.start(), *OFFSET_MS.end());
-    if ms == 0.0 {
-        next.track_offsets_ms.remove(track_key);
-    } else {
-        next.track_offsets_ms.insert(track_key.to_owned(), ms);
-    }
+    let ms = ms.clamp(*OFFSET_MS.start(), *OFFSET_MS.end()) + 0.0;
+    next.track_offsets_ms.insert(track_key.to_owned(), ms);
+    next.nudged_tracks = nudged_after(&next.nudged_tracks, track_key);
     Ok(next)
 }
 
@@ -773,26 +860,31 @@ pub mod runtime {
         }
     }
 
-    pub fn set_track_offset(app: &AppHandle, track_key: &str, ms: f64) -> Result<Settings, String> {
+    pub fn set_track_offset(
+        app: &AppHandle,
+        track_key: &str,
+        ms: Option<f64>,
+    ) -> Result<Settings, String> {
         modify(app, |current| {
             super::with_track_offset(current, track_key, ms)
         })
         .map(|(settings, _)| settings)
     }
 
-    /// Moves one song's offset by `delta_ms`, kept within ±2000 ms. The offset is read inside the
-    /// change, so a nudge from the settings window at the same moment can't be lost.
+    /// Moves one song's offset by `delta_ms` from where it is (its own, or the learned one), kept
+    /// within ±2000 ms. The offset is read inside the change, so a nudge from the settings window
+    /// at the same moment can't be lost.
     pub fn nudge_track_offset(
         app: &AppHandle,
         track_key: &str,
         delta_ms: f64,
     ) -> Result<Settings, String> {
         modify(app, |current| {
-            let current_ms = crate::tray::track_offset(current, track_key);
+            let current_ms = super::song_offset_ms(current, track_key);
             super::with_track_offset(
                 current,
                 track_key,
-                crate::tray::nudged(current_ms, delta_ms),
+                Some(crate::tray::nudged(current_ms, delta_ms)),
             )
         })
         .map(|(settings, _)| settings)
@@ -825,7 +917,9 @@ mod tests {
             "shortcuts": {
                 "enabled": false, "toggleLyrics": "Alt+F1", "nudgeEarlier": "",
                 "nudgeLater": "Control+Shift+K"
-            }
+            },
+            "effects": 80,
+            "effectsMode": false
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -876,6 +970,8 @@ mod tests {
                 ..shortcuts("Alt+F1", "", "Control+Shift+K")
             }
         );
+        assert_eq!(s.effects, 80.0);
+        assert!(!s.effects_mode);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -909,28 +1005,36 @@ mod tests {
     fn clamps_every_number_to_the_spec_range() {
         let high = patched(json!({
             "size": 500, "curve": 300, "yPos": 150, "glow": 101, "opacity": 120,
-            "globalOffsetMs": 9999, "font": { "weight": 1000 }
+            "globalOffsetMs": 9999, "font": { "weight": 1000 }, "effects": 150
         }));
         assert_eq!(
             (high.size, high.curve, high.y_pos, high.glow, high.opacity),
             (140.0, 100.0, 100.0, 100.0, 100.0)
         );
-        assert_eq!((high.global_offset_ms, high.font.weight), (2000.0, 900.0));
+        assert_eq!(
+            (high.global_offset_ms, high.font.weight, high.effects),
+            (2000.0, 900.0, 100.0)
+        );
         let low = patched(json!({
             "size": 10, "curve": -300, "yPos": -1, "glow": -5, "opacity": 5,
-            "globalOffsetMs": -9999, "font": { "weight": 50 }
+            "globalOffsetMs": -9999, "font": { "weight": 50 }, "effects": -0.5
         }));
         assert_eq!(
             (low.size, low.curve, low.y_pos, low.glow, low.opacity),
             (22.0, -100.0, 0.0, 0.0, 20.0)
         );
-        assert_eq!((low.global_offset_ms, low.font.weight), (-2000.0, 100.0));
-        // The ends themselves are valid.
-        let edges = patched(json!({ "size": 22, "opacity": 100, "curve": -100 }));
         assert_eq!(
-            (edges.size, edges.opacity, edges.curve),
-            (22.0, 100.0, -100.0)
+            (low.global_offset_ms, low.font.weight, low.effects),
+            (-2000.0, 100.0, 0.0)
         );
+        // The ends themselves are valid, and so is a fraction.
+        let edges = patched(json!({ "size": 22, "opacity": 100, "curve": -100, "effects": 0 }));
+        assert_eq!(
+            (edges.size, edges.opacity, edges.curve, edges.effects),
+            (22.0, 100.0, -100.0, 0.0)
+        );
+        assert_eq!(patched(json!({ "effects": 100 })).effects, 100.0);
+        assert_eq!(patched(json!({ "effects": 62.5 })).effects, 62.5);
     }
 
     #[test]
@@ -941,7 +1045,8 @@ mod tests {
                 "mode": junk, "autoColor": junk, "colors": junk, "font": junk, "size": junk,
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
-                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk
+                "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk,
+                "effectsMode": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -962,7 +1067,7 @@ mod tests {
         // Numbers where a boolean or a string belongs, booleans where a number or a string does.
         let next = merge_patch(
             &current,
-            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" } }),
+            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0 }),
         );
         assert_eq!(next, current);
         let next = merge_patch(
@@ -970,6 +1075,18 @@ mod tests {
             &json!({ "size": true, "glow": false, "displays": true, "colors": { "dim": true } }),
         );
         assert_eq!(next, current);
+        // Effects is a number: a string, a boolean or a level's name keeps the current value.
+        for junk in [
+            json!("50"),
+            json!(true),
+            json!("lively"),
+            json!({ "level": 50 }),
+        ] {
+            assert_eq!(
+                merge_patch(&current, &json!({ "effects": junk })).effects,
+                80.0
+            );
+        }
         let next = merge_patch(
             &current,
             &json!({
@@ -994,6 +1111,10 @@ mod tests {
                     &json!({ "size": n, "trackOffsetsMs": { "x": n } })
                 )
                 .size,
+                80.0
+            );
+            assert_eq!(
+                merge_patch(&custom(), &json!({ "effects": n })).effects,
                 80.0
             );
             assert_eq!(
@@ -1117,7 +1238,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 17);
+        assert_eq!(keys.len(), 20);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1153,15 +1274,40 @@ mod tests {
             &json!({ "mode": "drift", "trackOffsetsMs": { "b": 50, "c": 0, "d": 5000, "e": "x", "f": -0.0 } }),
         );
         assert_eq!(next.mode, Mode::Drift);
+        // Since contract v7 a 0 (or -0) is a song's own offset and stays.
         assert_eq!(
             next.track_offsets_ms,
-            BTreeMap::from([("b".to_owned(), 50.0), ("d".to_owned(), 2000.0)])
+            BTreeMap::from([
+                ("b".to_owned(), 50.0),
+                ("c".to_owned(), 0.0),
+                ("d".to_owned(), 2000.0),
+                ("f".to_owned(), 0.0)
+            ])
         );
+        assert!(next.track_offsets_ms["f"].is_sign_positive());
         assert_eq!(next.colors, current.colors);
         assert_eq!(
             merge_patch(&current, &json!({ "trackOffsetsMs": {} })).track_offsets_ms,
             BTreeMap::new()
         );
+        // nudgedTracks: strings only, each once at its last place, the newest nine.
+        let keys: Vec<String> = (0..12).map(|i| format!("k{i}")).collect();
+        let mut sent = json!(keys);
+        sent.as_array_mut()
+            .unwrap()
+            .extend([json!(5), json!("k10"), json!(null)]);
+        let next = merge_patch(&current, &json!({ "nudgedTracks": sent }));
+        assert_eq!(
+            next.nudged_tracks,
+            ["k3", "k4", "k5", "k6", "k7", "k8", "k9", "k11", "k10"]
+        );
+        assert_eq!(
+            merge_patch(&next, &json!({ "nudgedTracks": "k1" })).nudged_tracks,
+            next.nudged_tracks
+        );
+        assert!(merge_patch(&next, &json!({ "nudgedTracks": [] }))
+            .nudged_tracks
+            .is_empty());
     }
 
     #[test]
@@ -1170,7 +1316,13 @@ mod tests {
         // whether the lyrics are on and Undertone launches at login. Shortcuts are reset too.
         let mut reset = serde_json::to_value(defaults()).unwrap();
         let reset_fields = reset.as_object_mut().unwrap();
-        for kept in ["version", "trackOffsetsMs", "enabled", "launchAtLogin"] {
+        for kept in [
+            "version",
+            "trackOffsetsMs",
+            "nudgedTracks",
+            "enabled",
+            "launchAtLogin",
+        ] {
             reset_fields.remove(kept);
         }
         assert_eq!(
@@ -1188,24 +1340,80 @@ mod tests {
     }
 
     #[test]
-    fn track_offset_is_clamped_and_zero_removes_it() {
+    fn track_offset_is_clamped_kept_at_zero_and_none_removes_it() {
         let current = custom();
-        let next = with_track_offset(&current, "k", 50.0).unwrap();
+        let next = with_track_offset(&current, "k", Some(50.0)).unwrap();
         assert_eq!(next.track_offsets_ms.get("k"), Some(&50.0));
         assert_eq!(next.track_offsets_ms.get("a|b|c|1"), Some(&-150.0));
-        let next = with_track_offset(&next, "k", 5000.0).unwrap();
+        assert_eq!(next.nudged_tracks, ["k"]);
+        let next = with_track_offset(&next, "k", Some(5000.0)).unwrap();
         assert_eq!(next.track_offsets_ms.get("k"), Some(&2000.0));
-        let next = with_track_offset(&next, "k", -9000.0).unwrap();
+        let next = with_track_offset(&next, "k", Some(-9000.0)).unwrap();
         assert_eq!(next.track_offsets_ms.get("k"), Some(&-2000.0));
-        let next = with_track_offset(&next, "k", 0.0).unwrap();
+        // 0 is an offset of its own (the learned one may not be 0)
+        let next = with_track_offset(&next, "k", Some(-0.0)).unwrap();
+        assert_eq!(next.track_offsets_ms.get("k"), Some(&0.0));
+        assert!(next.track_offsets_ms["k"].is_sign_positive());
+        let next = with_track_offset(&next, "a|b|c|1", Some(10.0)).unwrap();
+        assert_eq!(next.nudged_tracks, ["k", "a|b|c|1"]);
+        // None: back to the learned offset, and out of the songs it is learned from
+        let next = with_track_offset(&next, "k", None).unwrap();
         assert_eq!(next.track_offsets_ms.get("k"), None);
-        let next = with_track_offset(&next, "a|b|c|1", -0.0).unwrap();
-        assert!(next.track_offsets_ms.is_empty());
-        // Zero for a song without an offset is no change at all.
-        assert_eq!(with_track_offset(&next, "new", 0.0).unwrap(), next);
+        assert_eq!(next.nudged_tracks, ["a|b|c|1"]);
+        assert_eq!(with_track_offset(&next, "new", None).unwrap(), next);
         for ms in [f64::NAN, f64::INFINITY] {
-            assert!(with_track_offset(&current, "k", ms).is_err());
+            assert!(with_track_offset(&current, "k", Some(ms)).is_err());
         }
+    }
+
+    fn nudged(offsets: &[(&str, f64)]) -> Settings {
+        let mut settings = defaults();
+        for (key, ms) in offsets {
+            settings = with_track_offset(&settings, key, Some(*ms)).unwrap();
+        }
+        settings
+    }
+
+    #[test]
+    fn songs_without_their_own_offset_learn_it_from_the_last_nudged() {
+        // One song is not enough: its lyrics may just be timed badly.
+        assert_eq!(learned_offset_ms(&nudged(&[("a", 300.0)])), 0.0);
+        // The middle of three; of two, the one nearer 0, or 0 when they are equally near.
+        assert_eq!(
+            learned_offset_ms(&nudged(&[("a", 100.0), ("b", 400.0), ("c", 150.0)])),
+            150.0
+        );
+        assert_eq!(
+            learned_offset_ms(&nudged(&[("a", 100.0), ("b", 400.0)])),
+            100.0
+        );
+        assert_eq!(
+            learned_offset_ms(&nudged(&[("a", -250.0), ("b", -100.0)])),
+            -100.0
+        );
+        assert_eq!(
+            learned_offset_ms(&nudged(&[("a", -100.0), ("b", 100.0)])),
+            0.0
+        );
+        assert_eq!(
+            learned_offset_ms(&nudged(&[("a", 50.0), ("b", 50.0)])),
+            50.0
+        );
+        // Only the newest nine count, each once.
+        let mut many: Vec<(String, f64)> = (0..9).map(|i| (format!("old{i}"), -500.0)).collect();
+        many.extend((0..9).map(|i| (format!("new{i}"), 100.0)));
+        let many: Vec<(&str, f64)> = many.iter().map(|(k, ms)| (k.as_str(), *ms)).collect();
+        assert_eq!(learned_offset_ms(&nudged(&many)), 100.0);
+        // A song with its own offset keeps it; the others start from the learned one.
+        let settings = nudged(&[("a", 100.0), ("b", 200.0), ("c", 150.0)]);
+        assert_eq!(song_offset_ms(&settings, "b"), 200.0);
+        assert_eq!(song_offset_ms(&settings, "fresh"), 150.0);
+        assert_eq!(own_offset_ms(&settings, "fresh"), None);
+        // A song dropped from the nudged list (an offset set by a whole-map patch) still keeps its own.
+        let mut patched = settings.clone();
+        patched.nudged_tracks.clear();
+        assert_eq!(song_offset_ms(&patched, "b"), 200.0);
+        assert_eq!(song_offset_ms(&patched, "fresh"), 0.0);
     }
 
     #[test]
@@ -1225,7 +1433,7 @@ mod tests {
         ));
         assert!(!affects_layer(
             &current,
-            &with_track_offset(&current, "k", 50.0).unwrap()
+            &with_track_offset(&current, "k", Some(50.0)).unwrap()
         ));
         assert!(affects_layer(
             &current,
@@ -1239,8 +1447,7 @@ mod tests {
 
     /// One song's offset plus one, as a tray nudge and a settings-window nudge both compute it.
     fn bump(current: &Settings) -> Result<Settings, String> {
-        let ms = current.track_offsets_ms.get("k").copied().unwrap_or(0.0);
-        with_track_offset(current, "k", ms + 1.0)
+        with_track_offset(current, "k", Some(song_offset_ms(current, "k") + 1.0))
     }
 
     #[test]
@@ -1316,7 +1523,7 @@ mod tests {
             commit(
                 &writer,
                 &settings,
-                |s| with_track_offset(s, "k", f64::NAN),
+                |s| with_track_offset(s, "k", Some(f64::NAN)),
                 unsaved
             ),
             Err("offset must be finite".into())
@@ -1359,9 +1566,11 @@ mod tests {
             opacity: 55.0,
             displays: Displays::All,
             global_offset_ms: 120.5,
+            // A 0 is a song's own offset since contract v7.
             track_offsets_ms: BTreeMap::from([
                 ("far".to_owned(), -2000.0),
                 ("x|y|z|200".to_owned(), 90.0),
+                ("zero".to_owned(), 0.0),
             ]),
             ..defaults()
         };
@@ -1587,6 +1796,47 @@ mod tests {
         assert!(rewrite);
         let rewritten = serde_json::to_value(&settings).unwrap();
         assert_eq!(load(Some(&rewritten)), (settings, false));
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v4_get_effects_50_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("effects");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                effects: 50.0,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["effects"], json!(50.0));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // And Effects alone, from nothing: the default.
+        assert_eq!(migrate(&json!({ "version": 1 })).effects, 50.0);
+        assert_eq!(migrate(&json!({ "effects": 20 })).effects, 20.0);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v5_get_effects_mode_on_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("effectsMode");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                effects_mode: true,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["effectsMode"], json!(true));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        assert!(migrate(&json!({ "version": 1 })).effects_mode);
+        assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
     }
 
     #[test]

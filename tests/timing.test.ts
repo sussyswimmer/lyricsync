@@ -1,13 +1,26 @@
 import { describe, expect, it } from "vitest";
+import type { Line } from "../src/core/lrc";
+import { parseLrc } from "../src/core/lrc";
 import {
   LAST_WORD_HOLD_MS,
   LINE_GAP_MS,
   MAX_WORD_MS,
+  PACE_QUANTILE,
+  PACE_WINDOW,
+  PLAIN_INTRO,
   PLAIN_LINE_MS,
+  PLAIN_MIN_LINE_MS,
+  PLAIN_OUTRO,
+  beatsOf,
   isKnownDuration,
   lineAt,
+  paceWords,
+  holdBudget,
+  holdWeight,
+  HELD_WORD_MS,
   pacePlain,
   progress,
+  singingPace,
   splitWords,
   spreadWords,
   syllables,
@@ -125,15 +138,37 @@ describe("spreadWords (known bounds)", () => {
 });
 
 describe("pacePlain", () => {
-  it("paces non-empty lines evenly across the duration and flags them unsynced", () => {
+  it("paces non-empty lines after an intro and before an outro, and flags them unsynced", () => {
     const { lines, unsynced } = pacePlain("One\n\nTwo two\r\n  Three  \n", 9000);
     expect(unsynced).toBe(true);
-    expect(lines.map((l) => [l.text, l.start, l.end])).toEqual([
-      ["One", 0, 3000 - LINE_GAP_MS],
-      ["Two two", 3000, 6000 - LINE_GAP_MS],
-      ["Three", 6000, 9000],
-    ]);
+    expect(lines.map((l) => l.text)).toEqual(["One", "Two two", "Three"]);
+    expect(lines[0]?.start).toBe(PLAIN_INTRO.minMs);
+    expect(lines[2]?.end).toBe(9000 - PLAIN_OUTRO.minMs);
+    lines.slice(0, -1).forEach((l, i) => expect(l.end).toBeCloseTo((lines[i + 1]?.start ?? 0) - LINE_GAP_MS, 9));
     expect(lines[1]?.words.map((w) => w.text)).toEqual(["Two ", "two"]);
+  });
+
+  it("gives a line time for its syllables, and a stanza break a pause", () => {
+    const span = (l: { start: number } | undefined, next: { start: number } | undefined): number => (next?.start ?? 0) - (l?.start ?? 0);
+    // a long line takes longer than a short one
+    const { lines } = pacePlain("hi\nevery syllable in this longer line\nhi\nhi", 120_000);
+    expect(span(lines[1], lines[2])).toBeGreaterThan(2 * span(lines[0], lines[1]));
+    // a blank row between stanzas leaves a gap as long as an average line
+    const flat = pacePlain("one two\nthree four\nfive six", 120_000).lines;
+    const stanzas = pacePlain("one two\n\nthree four\nfive six", 120_000).lines;
+    expect(span(stanzas[0], stanzas[1])).toBeCloseTo(2 * span(stanzas[1], stanzas[2]), 6);
+    expect(span(flat[0], flat[1])).toBeCloseTo(span(flat[1], flat[2]), 6);
+  });
+
+  it("bounds the intro and the outro, and gives them up when the lines need the room", () => {
+    const long = pacePlain("a\nb", 600_000).lines;
+    expect(long[0]?.start).toBe(PLAIN_INTRO.maxMs);
+    expect(long[1]?.end).toBe(600_000 - PLAIN_OUTRO.maxMs);
+    const song = pacePlain("a\nb", 200_000).lines;
+    expect(song[0]?.start).toBeCloseTo(200_000 * PLAIN_INTRO.share, 6);
+    const crowded = pacePlain(Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n"), 10 * PLAIN_MIN_LINE_MS + 2000).lines;
+    expect(crowded[0]?.start).toBe(0);
+    expect(crowded[9]?.end).toBe(10 * PLAIN_MIN_LINE_MS + 2000);
   });
 
   it("uses a fixed pace when the duration is unknown", () => {
@@ -146,6 +181,134 @@ describe("pacePlain", () => {
 
   it("handles empty lyrics", () => {
     expect(pacePlain(" \n\n", 1000)).toEqual({ lines: [], unsynced: true });
+  });
+});
+
+describe("song-paced words (lines timed by line only)", () => {
+  it("counts a line's beats as its words' weights: syllables plus half a beat a word", () => {
+    expect(beatsOf(splitWords("the morning light"))).toBe(1 + 2 + 1 + 3 * 0.5);
+    expect(beatsOf([])).toBe(0);
+  });
+
+  /** `n` lines of 5.5 beats from `from`, one every `every` ms. */
+  const steady = (n: number, from: number, every: number): { start: number; next: number; beats: number }[] =>
+    Array.from({ length: n }, (_, i) => ({ start: from + i * every, next: from + (i + 1) * every, beats: 5.5 }));
+
+  it("reads the pace from the lines around each one, so a pause after a line doesn't slow it down", () => {
+    // a line every 1.1 s (5 beats a second), and one with a 6 s pause after it
+    const lines = [...steady(4, 0, 1100), { start: 4400, next: 11_500, beats: 5.5 }, ...steady(5, 11_500, 1100)];
+    const pace = singingPace(lines);
+    for (const p of pace) expect(p).toBeCloseTo(5, 6);
+  });
+
+  it("follows the song as it speeds up and slows down from one part to the next", () => {
+    // ten lines at 5 beats a second, then ten at 10, then ten at 5 again
+    const lines = [...steady(10, 0, 1100), ...steady(10, 11_000, 550), ...steady(10, 16_500, 1100)];
+    const pace = singingPace(lines);
+    expect(pace[2]).toBeCloseTo(5, 6);
+    expect(pace[15]).toBeCloseTo(10, 6);
+    expect(pace[27]).toBeCloseTo(5, 6);
+    // between parts it is somewhere in between, and only the lines PACE_WINDOW away count
+    expect(pace[9]).toBeGreaterThan(5);
+    expect(pace[9 - PACE_WINDOW]).toBeCloseTo(5, 6);
+  });
+
+  it("takes the PACE_QUANTILE of the rates near a line, leaving out gaps, and has none with too little to go by", () => {
+    const rates = [2, 3, 4, 5, 6];
+    const lines = rates.map((r, i) => ({ start: i * 1000, next: (i + 1) * 1000, beats: r }));
+    expect(singingPace(lines)[2]).toBeCloseTo(2 + 4 * PACE_QUANTILE, 6);
+    const gaps = [{ start: 0, next: 1000, beats: 5 }, { start: 1000, next: 5000, beats: 0 }, { start: 5000, next: 6000, beats: 5 }];
+    expect(singingPace(gaps).every(Number.isNaN)).toBe(true);
+    expect(singingPace([])).toEqual([]);
+  });
+
+  it("sings a line with room to spare at the pace, spends the likely held time on its words, and leaves the rest as a pause", () => {
+    const units = splitWords("one two three four");
+    // 4 + 4 * 0.5 = 6 beats at 5 a second: 1.2 s sung, 4.8 s to spare
+    const words = paceWords(units, 10_000, 16_000, 5);
+    const base = 1200;
+    const budget = holdBudget(base, 6000 - base);
+    expect(budget).toBeCloseTo(0.75 * base + 600 + 0.15 * (4800 - (0.75 * base + 600)), 6);
+    // back to back from the line's start, sung for the paced length plus the held time
+    expect(words[0]?.start).toBe(10_000);
+    words.slice(1).forEach((w, i) => expect(w.start).toBe(words[i]?.end));
+    expect(last(words)?.end).toBeCloseTo(10_000 + base + budget, 6);
+    // the last word holds longest, every word is slower than the bare pace, and the rest is a pause
+    const d = durations(words);
+    expect(Math.max(...d)).toBe(d[3]);
+    expect(d[3]).toBeGreaterThan(1000);
+    const bare = durations(timeWords(units, 10_000, 10_000 + base));
+    expect(d[0]).toBeGreaterThan(bare[0] ?? 0);
+    expect(last(words)?.end).toBeLessThan(16_000 - 2500);
+    // never past the line's end
+    expect(last(paceWords(units, 10_000, 11_300, 5))?.end).toBe(11_300);
+  });
+
+  it("holds a word for HELD_WORD_MS at most", () => {
+    const held = paceWords(["Ohhh"], 0, 60_000, 1.2);
+    expect(last(held)?.end).toBe(HELD_WORD_MS);
+    // a short line ahead of a long break still holds its end a while, then rests
+    const end = last(paceWords(splitWords("into the night"), 0, 20_000, 4))?.end ?? 0;
+    expect(end).toBeGreaterThan(2000);
+    expect(end).toBeLessThan(6000);
+  });
+
+  it("gives the spare time to the words a singer drags out: a phrase's end, a long spelling, a vocable", () => {
+    const share = (text: string): number[] => {
+      const units = splitWords(text);
+      const words = paceWords(units, 0, 6000, 4);
+      const bare = durations(timeWords(units, 0, (beatsOf(units) * 1000) / 4));
+      return durations(words).map((d, i) => d - (bare[i] ?? 0));
+    };
+    // "you," ends a phrase mid-line: it holds longer than "and"
+    const comma = share("I wait for you, and you know it");
+    expect(comma[3]).toBeGreaterThan((comma[4] ?? 0) + 200);
+    // "loooove" is spelled out long
+    const long = share("all my loooove for you");
+    expect(long[2]).toBeGreaterThan((long[1] ?? 0) + 200);
+    // the vocable holds; so does the last word, most of all
+    const oh = share("oh my darling");
+    expect(oh[0]).toBeGreaterThan((oh[1] ?? 0) + 150);
+    expect(oh[2]).toBeGreaterThan(oh[0] ?? 0);
+  });
+
+  it("weighs the signs of a held word", () => {
+    expect(holdWeight("time ", false)).toBe(0);
+    expect(holdWeight("time", true)).toBe(3);
+    expect(holdWeight("you, ", false)).toBeCloseTo(1.9, 6);
+    expect(holdWeight("away... ", false)).toBeCloseTo(1.9, 6);
+    expect(holdWeight("loooove ", false)).toBeCloseTo(2.5, 6);
+    expect(holdWeight("love~ ", false)).toBeCloseTo(2.5, 6);
+    expect(holdWeight("Whoa ", false)).toBeCloseTo(1.6, 6);
+    expect(holdWeight("feeling ", false)).toBeCloseTo(0.4, 6);
+    expect(holdWeight("me ", false)).toBeCloseTo(0.4, 6);
+    expect(holdWeight("free ", false)).toBeCloseTo(0.4, 6);
+    expect(holdWeight("love ", false)).toBe(0);
+    expect(holdBudget(1000, 0)).toBe(0);
+    expect(holdBudget(1000, 1000)).toBe(1000);
+    expect(holdBudget(1000, 10_000)).toBeCloseTo(1350 + 0.15 * 8650, 6);
+  });
+
+  it("fills a line the singer hurries through, or any line without a pace, as before", () => {
+    const units = splitWords("a quick line with many words in it");
+    expect(paceWords(units, 0, 1500, 5)).toEqual(timeWords(units, 0, 1500));
+    expect(paceWords(units, 0, 6000, Number.NaN)).toEqual(timeWords(units, 0, 6000));
+    expect(paceWords([], 0, 6000, 5)).toEqual([]);
+  });
+
+  it("is what parseLrc does with lines that have no word tags: a pause no longer stretches the line before it", () => {
+    const rows = ["[00:00.00]one two three", "[00:01.10]four five six", "[00:02.20]seven eight nine", "[00:03.30]ten eleven twelve", "[00:10.00]thirteen fourteen", "[00:11.10]fifteen sixteen"];
+    const lines = parseLrc(rows.join("\n"), 14_000);
+    expect(lines.every((l) => l.estimated === true)).toBe(true);
+    // a steady line fills its slot as before
+    const steadyLine = lines[1] as Line;
+    expect(steadyLine.words).toEqual(timeWords(splitWords(steadyLine.text), steadyLine.start, steadyLine.end));
+    // the line before the pause is sung at the song's pace, holds its end a while, and is done long before the next line
+    const paused = lines[3] as Line;
+    expect(last(paused.words)?.end).toBeLessThan(paused.end - 2500);
+    expect(paused.end).toBe(10_000 - LINE_GAP_MS);
+    // plain lyrics are guessed too
+    expect(pacePlain("a b\nc d", 10_000).lines.every((l) => l.estimated === true)).toBe(true);
   });
 });
 

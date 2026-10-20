@@ -1,4 +1,26 @@
+/// The commit the app is built from, short: CI's `GITHUB_SHA`, else git's HEAD, else "dev". The
+/// tray, Settings and the logs show it, so an install can be told from an older one.
+fn build_id() -> String {
+    if let Some(sha) = std::env::var("GITHUB_SHA")
+        .ok()
+        .filter(|sha| sha.len() >= 7)
+    {
+        return sha[..7].to_owned();
+    }
+    std::process::Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|id| id.trim().to_owned())
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| "dev".into())
+}
+
 fn main() {
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    println!("cargo:rustc-env=UNDERTONE_BUILD={}", build_id());
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if std::env::var_os("CARGO_FEATURE_DESKTOP").is_some()
         && matches!(os.as_str(), "windows" | "macos")

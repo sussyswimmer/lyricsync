@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 3;
+export const CONTRACT_VERSION = 7;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -71,22 +71,35 @@ export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
 export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
-  /** the settings schema, still 1: contract v3 only added fields, and stored settings without them
-   *  get the defaults */
+  /** the settings schema, still 1: contracts v3, v4, v5 and v7 only added fields, and stored settings
+   *  without them get the defaults; v6 only stopped reading `yPos` */
   version: 1;
+  /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
   mode: Mode;
   autoColor: boolean;
   colors: { lyric: string; highlight: string; dim: string }; // #rrggbb
+  /** Not read since v4: the face is picked per song. Still validated and stored. */
   font: { family: string; weight: number };
   size: number;        // 22–140 px at 1x scale
-  curve: number;       // -100..100, used by "arc"
-  yPos: number;        // 0..100, % of the display's work area, without menu bar, Dock or taskbar
-  glow: number;        // 0..100
+  /** Not read since v4: Arc's curve is picked per song. Still validated and stored. */
+  curve: number;       // -100..100
+  /** Not read since v6: the lyrics always sit in the middle of the display's work area (without
+   *  menu bar, Dock or taskbar). Still validated and stored. */
+  yPos: number;        // 0..100
+  /** 0..100. Scales the bloom the song's look asks for (0 subtle, 40 as picked, 100 strongest) and
+   *  softens the dark shadow. */
+  glow: number;
   opacity: number;     // 20..100
   showWhen: "playing" | "always";
   displays: "primary" | "all";
   globalOffsetMs: number;                  // -2000..2000
-  trackOffsetsMs: Record<string, number>;  // keyed by trackKey
+  /** Each nudged song's own offset on top of `globalOffsetMs`, -2000..2000, keyed by trackKey. Since
+   *  v7, 0 is an offset of its own; a song without an entry follows the learned offset. */
+  trackOffsetsMs: Record<string, number>;
+  /** The songs whose sync was set most recently, oldest first, at most 9. A song without an offset of
+   *  its own starts from what theirs have in common (src/core/sync.ts `learnedOffsetMs`). Added in
+   *  contract v7. */
+  nudgedTracks: string[];
   /** false hides the lyrics on every display. The Settings switch, the tray's Hide/Show lyrics and
    *  the toggle shortcut all change this. Added in contract v3. */
   enabled: boolean;
@@ -95,6 +108,12 @@ export interface Settings {
   launchAtLogin: boolean;
   /** Added in contract v3. */
   shortcuts: Shortcuts;
+  /** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. Added in contract v4. */
+  effects: number;
+  /** Effects mode: each song moves its own way (not every word floats up), big moments splash, and
+   *  words that name something get a tiny picture. false: every word rises, nothing else is added.
+   *  Added in contract v5. */
+  effectsMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -103,7 +122,7 @@ export const DEFAULT_SETTINGS: Settings = {
   font: { family: "Fraunces", weight: 700 },
   size: 58, curve: 38, yPos: 46, glow: 40, opacity: 100,
   showWhen: "playing", displays: "primary",
-  globalOffsetMs: 0, trackOffsetsMs: {},
+  globalOffsetMs: 0, trackOffsetsMs: {}, nudgedTracks: [],
   enabled: true, launchAtLogin: false,
   shortcuts: {
     enabled: true,
@@ -111,4 +130,6 @@ export const DEFAULT_SETTINGS: Settings = {
     nudgeEarlier: "CmdOrCtrl+Alt+Shift+]",
     nudgeLater: "CmdOrCtrl+Alt+Shift+[",
   },
+  effects: 50,
+  effectsMode: true,
 };

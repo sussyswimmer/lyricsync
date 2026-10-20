@@ -47,7 +47,7 @@ function mount(licenses: () => Promise<string>) {
     { edit: () => undefined, editNow: () => undefined, setTrackOffset: () => undefined, reset: () => undefined, suspendShortcuts: () => undefined },
     { platform: "mac", licenses },
   );
-  panel.render({ settings: structuredClone(DEFAULT_SETTINGS), palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: null, loginError: false });
+  panel.render({ settings: structuredClone(DEFAULT_SETTINGS), palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } });
   const root = panel.el as unknown as FakeElement;
   const button = root.all("foot-link")[0] as FakeElement;
   return { root, button };

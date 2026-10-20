@@ -16,6 +16,14 @@ export function put(el: HTMLElement | SVGElement, prop: string, value: string): 
   else el.style.setProperty(prop, value);
 }
 
+/**
+ * Forgets what `put` last wrote to `el`, so its next writes go through: for an inline style changed
+ * behind its back (an animation committing its values, a copied element).
+ */
+export function forget(el: Element): void {
+  written.delete(el);
+}
+
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
   if (className) el.className = className;

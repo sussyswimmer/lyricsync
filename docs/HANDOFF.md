@@ -287,6 +287,274 @@ Follow-ups, not done:
 Needs from Codex: nothing.
 Contract: unchanged (v3). Only the `yPos` comment changed, in both files.
 
+## 2026-10-18 · Claude Code · proto/compositor (the prototype v4 is built on)
+Done: Beautiful-Lyrics-like motion for Drift and Stack, played by the compositor. `src/overlay/motion/` is an engine any style can use: springs solved in closed form and planned ahead as keyframes; a `SongTimeline` that keeps Web Animations on song time through play, pause, seek and clock slews; `KaraokeLine` (a soft-edged wipe per syllable, a pop, a bloom in the highlight color, a letter ripple scaled by how fast the song is sung, held syllables lit letter by letter); instrumental-break dots. Drift and Stack show several lines with distance dim and blur, scroll on a spring, and put three filling dots where the next line will be during an intro or a gap of 3 s or more. A line's animations start and end together, so the page sleeps through words (`ModeRenderer.wordWakes = false` and `nextChange`, 1 s idle sleep); slow motion steps on a shared 20 Hz song-time beat in Chromium (WebKit keeps it linear: stepped keyframes would leave Core Animation). Parser: syllable tags inside a word become `Word.parts`. Mock: track 6, "Glass Harbor" (original placeholder lyrics). Glow 0 turns the bloom off, like the halo in the other styles. USER_GUIDE describes the new motion.
+Measured against `claude/friendly-mayer-shv80u` in one session (headless Chromium without a GPU, medians of 3 runs of 20 s). Singing: main thread 1.58% → 1.94% (Stack and Drift), page rAF callbacks 14.4/s → 1.35/s, total CPU 11.8% → 40.1% (Stack) and 11.2% → 42.1% (Drift). Held note: main 0.42% → 0.50%, total 2.3% → 16.1–16.7%. The totals are the software compositor drawing every frame on the CPU (gpu process 6–7% → 30–32%); on GPU-composited machines that work moves to the GPU, which wasn't measurable here.
+Not verified: WebKit (WKWebView should give the same animations to Core Animation) and any machine with a GPU.
+Needs from Codex: nothing.
+Contract: unchanged (v3).
+
+## 2026-10-18 · Claude Code · v4: Beautiful-Lyrics-style motion, and a look picked for each song (contract v4)
+Done: Maxwell's feedback on the first real look was that the lyrics felt bland ("each letter should be moving more", "the glow is disappointing"), that Undertone should pick the style and the font for each song instead of asking, and that its sync and animation should feel like Beautiful Lyrics (BL). BL has no license, so none of its code, CSS or comments were used: its motion was studied from its promo video and its renderer's behavior, and re-implemented from scratch. Two engine prototypes were built and judged (planned compositor animations against a per-frame spring painter); v4 takes the first, with four ideas from the second. Everything below is on `claude/friendly-mayer-shv80u`; it supersedes the proto/compositor entry above where they differ (Glow 0 now keeps a faint bloom).
+- **Motion engine** (`src/overlay/motion/`):
+  - When a line comes into focus, its motion is solved in closed form (springs chasing target curves) and played by the compositor as Web Animations of `transform` and `opacity`. `SongTimeline` keeps them on song time: a pause holds them, a seek re-anchors them, a clock correction of up to 400 ms slews their playback rate, and a larger one jumps. The page sleeps between line changes (`wordWakes = false`) and checks the clock without drawing a frame.
+  - Each word fills with the highlight color behind a soft edge, syllable by syllable (`Word.parts`, from enhanced LRC tags), rises and swells on springs, and its letters hop as the color reaches them. A three-layer bloom in the highlight color follows the sung word. A syllable held for about a second or more (the look's emphasis rule) lights and lifts letter by letter while its halo builds.
+  - A dark copy of each word sits under everything, unclipped, so the legibility shadow never shows hard edges on a light wallpaper.
+  - Instrumental intros and breaks of 3 s or more show three dots that fill one after another, breathe, then swell and pop out just before the next line.
+  - Lines move 300 ms before they start (the lead), on a 1.5 Hz spring released from the position actually shown, so seeks of up to three lines glide both ways. Longer jumps, changes while paused and reduced motion crossfade.
+  - Amplitude: A = energy × (Effects ÷ 50) ÷ 0.3, capped at 2.5, in units of BL's own motion. A typical song (energy about 0.45) at Effects 50 moves about 1.5 times as much as BL, because the feedback asked for more motion than before. Upcoming words never wait smaller than BL's 0.95, so word gaps stay even.
+  - Lite tier (`motion/power.ts`): when the machine composites in software (no WebGL context, or a software renderer such as SwiftShader, llvmpipe or Microsoft Basic Render Driver: VMs, Remote Desktop), words fade instead of moving and the fades and glides step. The overlay page shows the tier as `data-power` on `<html>`.
+- **The four styles on the engine:**
+  - **Stack** is the BL-like list: neighbors at 0.92 size, fainter and softer with distance.
+  - **Drift** is that list tilted back in 3D.
+  - **Lens** plans its fisheye as one track per word (`modes/lens-plan.ts`), multiplied with the karaoke, so the magnified word is the one being lit and rising. It no longer restyles every word every frame.
+  - **Arc** sets its current line as HTML letters placed on the curve (`modes/arc-place.ts`, within 0.6 px and 0.03° of Chromium's own SVG text on a path), with the full karaoke. The neighbor lines stay SVG `textPath` bands, and the glow band is gone.
+- **The look per song** (`src/core/songlook.ts`, `src/core/faces.ts`):
+  - From the lyrics and their timing (pace, held notes, gaps, line length, repetition, shouting, script), the title (words like "Acoustic" or "Club Mix") and the cover's colors and light (`coverStats` in `core/palette.ts`), it picks the style, the face, Arc's curve, the motion's energy and snap, the glow, the emphasis rule, a size scale, letter spacing and capitals, with a reason in plain words. A face is never picked without the song's letters (`FontChoice` gains `cyrillic` and `greek`). Plain lyrics always get the calm Stack.
+  - The controller owns a `LookKeeper`. The look is committed once the cover is known, a line is about to be sung, or 1.5 s have passed. A late cover or synced lyrics replacing plain ones may refine it once, at a line change or a break, with a crossfade. The last 32 looks are remembered, so a replayed song looks the same at once.
+  - `?look=style[,family[,curve]]` on the overlay page and `--look=` on the app force a look for testing; neither is stored.
+- **Settings, tray and contract:**
+  - The Style group, the Font group and the Curve slider are gone. Under the preview, a "Picked for this song" card names the look (the face in that face) and why. Layout becomes **Look**: Size, Height, **Effects** (new: Calm to Lively, default 50), Glow (0 now keeps a faint bloom) and Opacity. The tray's Style ▸ becomes Effects ▸ Calm (20) · Balanced (50) · Lively (85).
+  - Contract v4 adds `effects` (TS and Rust; settings saved without it read as 50). `mode`, `font` and `curve` are still validated and stored, but the overlay no longer reads them.
+  - Three new demo songs with original lyrics show three looks: Ledger Lines (Stack · Bricolage), Strobe Hearts (Club Mix) (Lens · Unbounded, in capitals) and Glacier Nocturne (Drift · Instrument Serif). The settings preview's demo plays Glass Harbor and these three.
+- **Docs:** README, SPEC.md ("What it is" and a Contract v4 section), USER_GUIDE (a new Look section, Effects, Glow) and LYRICS.md are updated. `docs/ACCEPTANCE.md` checks the CPU budget per style through `--look`, and has new sections for the motion on WebKit and WebView2, the lite tier, and the look picked per song. `pnpm coverage` now covers the motion engine and the picker, with floors of 85% (75% of branches).
+Measured, in one session against `4317805` (headless Chromium with software compositing, medians of 3 runs of 20 s, harness word-tag fixture, song 5–25 s):
+
+| Style | Main thread % | rAF callbacks/s | Total CPU %, full tier | Total CPU %, lite tier |
+|---|---|---|---|---|
+| Stack | 2.02 → 2.36 (1.17×) | 14.1 → 1.9 | 14.1 → 61.3 | 14.1 → 17.5 (1.24×) |
+| Drift | 2.10 → 2.39 (1.14×) | 14.3 → 2.0 | 14.0 → 58.8 | 14.0 → 14.2 (1.01×) |
+| Lens | 6.45 → 2.62 (0.41×) | 55.2 → 1.3 | 24.2 → 57.8 | 24.2 → 23.2 (0.96×) |
+| Arc | 3.00 → 2.97 (0.99×) | 7.7 → 1.6 | 24.2 → 73.4 | 24.2 → 18.3 (0.76×) |
+
+100% is one core. The longest main-thread task, at a line change, is 27–42 ms (it was 1–4 ms).
+
+How to read it: the main thread is what carries over to a real machine. The totals are dominated by the GPU process compositing every animated layer on the CPU, which a real GPU does instead; the lite tier is what such a machine gets. Lens now draws about once a second instead of 55 times while someone sings.
+Tests: 1118 vitest (31 files), 261 Rust (1 ignored). `pnpm build`, `pnpm coverage`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- The Glow slider stays (0 is faint, never off). The design study had suggested folding it into Effects.
+- No fifth "Flow" style: Stack is the BL-like list, because the picker wanted Stack and Flow for the same songs.
+- Motion is livelier than BL by default (A = 1.5 at a typical song); `BL_ENERGY` in `motion/params.ts` sets it.
+- The lite tier's rule (no WebGL context, or a software renderer).
+- The tray's Effects presets are 20, 50 and 85.
+Known gaps:
+- Line changes cost long main-thread tasks on this box: about 18–36 ms on Neon Monsoon and 36–66 ms on Script Sampler's 20-word line, mostly committing the new line's layers (about 14 per word) and parsing its `element.animate` calls. Mounting words just ahead of their time, with fewer layers per word, would spread it out.
+- Arc splits each word's bloom copy into letters (one blur per letter); a whole-word bloom would raster faster. After a cut, a word whose overlay isn't built yet shows straight in its frame for a few frames.
+- `rebase()` in `motion/karaoke.ts` holds frames before a track's window instead of interpolating them; no current caller depends on it.
+- A window that saw plain lyrics, then synced ones, then a late cover can keep a different final look than a window opened later, because the keeper refines once.
+Not verified: none of v4 has run on a real Mac or PC, and WebKit hasn't run it at all. `docs/ACCEPTANCE.md` §7, §10 and §11 have the steps. The ones that matter most: the CPU budget per style on a mid-range laptop, the masks and blurs staying smooth under Core Animation and WebView2, and the lite tier on a VM.
+Needs from Codex: nothing.
+Contract: v4 (`effects` added; `mode`, `font` and `curve` no longer read by the overlay).
+
+## 2026-10-19 · Claude Code · macOS 26: the Automation check could hang, so Undertone never asked
+Done: Maxwell installed the v4 build on a MacBook (macOS 26.5.2) and got no lyrics while the Spotify app played. Settings kept playing the demo song, no notice showed, Undertone wasn't listed under Automation, the log had only "started" lines, and `--diagnose` stopped right after its header.
+- **Cause:** `AEDeterminePermissionToAutomateTarget` never returned, without showing the prompt. Undertone asked it on a blocking thread before any script ran, so the player stayed "waiting for consent" forever, and that state isn't logged. The report called the same function (without prompting) on its main thread and stopped there. Other apps hit the same hang: [Threek#19](https://github.com/LPFchan/Threek/issues/19) on macOS 26, and SpamSieve 3.0.3 calls it a longstanding bug ([mjtsai](https://mjtsai.com/blog/2023/12/27/spamsieve-3-0-3/)).
+- **Fix** (`media/macos.rs`, `media/applescript.rs`): the consent check first asks `AEDeterminePermissionToAutomateTarget` without prompting, on its own thread with a 2 s limit (`QUIET_CHECK_WAIT`); after one hang the run stops calling it, and logs that once. When the user hasn't decided, or that check didn't answer, `/usr/bin/osascript` sends the player one Apple event (`consent_probe`: `get player state`, only if it runs). macOS attributes it to Undertone, the process that started `osascript`, so the prompt names Undertone and the answer is kept for Undertone. The probe waits up to 120 s (`PROBE_WAIT`), then gives up with -1712, which now counts as "not answered" and asks again. Each distinct probe answer is logged once, so the next report shows how the question went. Reads still run in-process through NSAppleScript.
+- `Consent::RECHECK` goes from 5 s to 10 s, since a check may now start `osascript`; README, USER_GUIDE and NOW_PLAYING say 10 s.
+- `--diagnose` runs its check on a thread with the same 2 s limit and reports "did not answer the Automation check" instead of hanging; it still never prompts.
+- README "Nothing shows up" gains the case "Settings plays the demo song while Spotify plays, with no notice", with the `tccutil reset AppleEvents com.undertone.desktop` fallback; INSTALL links to it.
+Tests: 1118 vitest (31 files), 263 Rust (1 ignored; new: the probe's script, `osascript` answers and -1712 asking again). `pnpm build`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Not verified: no Mac here. The fix compiles and passes Clippy for aarch64-apple-darwin, and the probe's script and answer parsing are unit-tested, but the prompt itself is untested. In particular: that the prompt names Undertone rather than osascript, and that `osascript`'s Apple event isn't caught by the same hang. `docs/NOW_PLAYING.md` macOS step 8 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v4).
+
+## 2026-10-19 · Claude Code · Letters cut off where they draw past their box (WebKit)
+Done: with the Automation fix in, Maxwell saw lyrics on the Mac, in Caveat, with letters "glitched": the crossbar of a word's last "t" ended in a hard vertical edge, a white sliver sat a few pixels past it, and the top of a final "s" was cut.
+- **Cause:** a glyph may draw past its advance (Caveat's t, f, l and d reach 0.09 to 0.21 em past it). Every letter that hops is a layer of its own, and WebKit sizes a layer by its box, not its ink, so the lit copy's overhang was cut at the letter's edge. The wipe also stopped 0.06 em past the word's advance, so the base window, which starts there, showed the unlit copy's overhang: the white sliver. Chromium draws the ink, so none of this showed in the v4 checks.
+- **Fix:** `motion/letters.ts` measures each word's ink on the canvas (`canvasInk`, `wordInk`: `actualBoundingBox*` against the advance and `fontBoundingBox*`), and `WordShape.ink` carries it.
+  - **Bleed:** `KaraokeLine` sets `--kb-x` and `--kb-y` on the word box (`bleedOf`): sideways the furthest any letter (or the whole word) overhangs its own box, and up and down what the tallest and deepest glyphs draw past a box of the mode's line-height (`KaraokeLook.lineHeight`: Drift and Stack 1.12, Lens 1, Arc 1.2), each rounded up with a pixel to spare. In `stage.css`, every run of text in the overlay (`.kl`, and the new `.kw-run`, which now holds the whole word in the dark and bloom copies) is padded out by it and pulled back by negative margins, its transform-origin corrected, so nothing moves. The plain text gets the same padding while its word has an overlay, since the word box is still a layer when a line hands back to it.
+  - **Wipe:** `karaoke.ts` `trailOf` and `leadOf` replace the fixed `OVERHANG` (now the minimum): the wipe starts before ink that leads the word and ends a pixel past its last glyph, and the windows and `closedWindow` follow.
+- **Checked** in Chromium, with letter layers clipped to their boxes to stand in for WebKit (`overflow: hidden` on the windows' letters): before, "Hold" read "Hola" and every final t lost its crossbar, in all four styles; after, every letter is whole. With nothing clipped, all four styles are pixel-identical before and after. Script Sampler's Vietnamese line in Fraunces is unchanged, with a 2 to 3 px bleed.
+Tests: 1123 vitest (31 files; new: ink measuring, the wipe past overhangs, the bleed, a karaoke line's padding and its clean-up). `pnpm build` and `pnpm coverage` pass.
+Not verified: on a real Mac. `docs/ACCEPTANCE.md` §10 step 8 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v4).
+
+## 2026-10-19 · Claude Code · Lines lit as a whole, lookups that survive a busy LRCLIB, colors that look like the cover
+Done: three reports from Maxwell after the first real use.
+- **"When the singer speeds up it stays on the same speed":** most LRCLIB lyrics are timed by line only, and the karaoke swept each such line at the pace `timeWords` guesses, which drifts whenever the singer speeds up or slows down. Now:
+  - `parseLrc` and `pacePlain` flag a line whose word times are a guess (`Line.estimated`).
+  - The modes draw `karaokeWords(line)` (`core/timing.ts`): an estimated line's words each fill in one quick syllable (`WORD_FILL_MS`, 120 ms), one after another, within `LINE_FILL_MS` (400 ms, at most half the line) of its start, and each stays sung (risen, glowing) to the line's end. Lines timed word by word are unchanged. Nothing else reads the presentation timing: the stage's cues and the picker still see the estimates.
+  - `planWord` takes the ripple's hold from the wipe's own duration (the last syllable's end), so a quick fill in a long word hops as quickly as it lights.
+  - Lens magnifies no word on an estimated line (the row rests), and the picker never sets a line-timed song in Lens. Neon Monsoon, line-timed, is now Arc · Fraunces without its cover as with it, so `look-wiring`'s refinement tests use a stand-in dark gray cover that moves it to Drift.
+- **"Couldn't load lyrics for a lot of the songs":** LRCLIB's `/api/get` answers 503 (not 404) to metadata it can't match exactly, such as an album name or a length it has differently, which is common with Spotify's metadata, and `/api/search` answers 503 with `retry-after: 1` about half the time (measured from here, through Cloudflare). `lookup` propagated the exact lookup's error with `?`, so the search never ran. Now:
+  - A failed exact lookup is a miss.
+  - `/api/get` is asked again without the album.
+  - The search is asked up to `SEARCH_ATTEMPTS` (4) times while it answers busy.
+  - The lookup's `DEADLINE` goes from 6 s to 15 s.
+  - Live, with album names and lengths unlike LRCLIB's for five songs, three rounds: 14 of 15 found in 0.3 to 3.5 s. The miss was a made-up length no version on LRCLIB has. The old client would have answered error for all 15.
+- **"I want the lyrics color to match the album cover":** `paletteOf` left the lyric color near white (lightness 0.92, saturation ≤ 0.3) and the dim color gray whatever the cover, and gave black-and-white covers the default amber. Now:
+  - The highlight keeps the vivid color's own saturation (0.56 to 0.95, lightness 0.6 to 0.74).
+  - The lyric and dim colors take the cover's tone: the chroma- and share-weighted mean hue of its colorful pixels. Their tint is as strong as those pixels' saturation, times how well their hues agree, times how much of the cover they take (in full from 30%). The lyric is at lightness 0.84 to 0.87 and saturation up to 0.72; the dim at lightness 0.66.
+  - A highlight of the lyrics' own hue is held at lightness ≤ 0.66, so sung words stay distinct.
+  - Gray covers get grays: a near-white highlight (0.96) over light gray lyrics (0.74) and a gray dim (0.56), or their colorful accent as the highlight.
+  - Checked by eye on 15 real covers, fetched for a local check only and not committed.
+Tests: 1131 vitest (new: the `estimated` flag, `karaokeWords`, the hop hold, Lens resting on an estimated line, the picker never choosing Lens for line timing, and the palette rewritten for the new rules with legibility over 300 random covers). 265 Rust (1 ignored; new: a busy exact lookup still searches, the album-less exact lookup, search retries, the 15 s deadline). `pnpm build`, `pnpm coverage`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- Line-level lighting for every line without word tags, rather than a better guess at word times. The fill's speed (`LINE_FILL_MS`, `WORD_FILL_MS`) is in `core/timing.ts`.
+- No Lens for line-timed songs.
+- The lyric color may go to lightness 0.84 (the C4 rule said 0.85), and gray covers' lyrics to 0.74.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 steps 9 and 10 have the checks.
+Needs from Codex: nothing.
+Contract: unchanged (v4).
+
+
+## 2026-10-19 · Claude Code · Effects mode: each song's own motion, splashes and word pictures (contract v5)
+Done: Maxwell asked for different effects for different songs ("not every text has to be a float up"), splash effects, tiny pictures near words that name something ("if a song is talking about ice tea, generate a graphic of ice tea… tiny, so it doesn't take up too much"), and an on/off switch for all of it.
+- **Contract v5:** `Settings.effectsMode` (default true; settings saved without it read as true). TS, the mock store and Rust (`contract.rs`, `merge_patch`, migration tests) agree. Settings › Look has an **Effects mode** switch at the top with a caption that says what it does. The tray's **Effects ▸** menu has an **Effects mode** check item under the three levels. Reset to defaults turns it back on.
+- **A flair per song** (`core/flair.ts`, picked in `core/songlook.ts` `flairOf` from the same axes as the look, with a trackKey-hash nudge so similar songs differ):
+  - a `move` for most lines and an `accent` move for the hooks (lines the song repeats, `hookLines`).
+  - Six moves (`overlay/motion/params.ts` `moveTuning`): **rise** (the v4 motion, unchanged), **bounce**, **sway** (a tilt that swings back through rest, alternating sides, in its own transform list `liftTiltScale`), **wave** (taller, slower letter hops), **pulse** (a quick swell, no lift) and **drop** (waits above the line and drops in).
+  - Each mode works a line's parameters out through `LineMoves`. Lens keeps rise's swell for every move (`riseSwell`) and turns a pulse into a bounce, because its fisheye already enlarges the sung word.
+  - A `splash` of **drops**, **sparks**, **confetti**, **ripple** or **glints**, chosen by what the lyrics mention (`themesOf`: water, fire, party, night) and the pace.
+- **Splashes** (`overlay/motion/decor.ts` `planSplash`):
+  - They mark a held note (the look's held-note rule, on word-timed lines only), a hook's last word, or a shouted line's last word. At most one a line, 5 s apart (`planDecor`).
+  - 2 to 12 pieces, seeded per word, sampled at 30 fps and thinned, on transform and opacity only.
+  - They sit under every copy of the word, so a burst never covers it.
+- **Word pictures:**
+  - **How they were made:** 49 small stickers generated with Higgsfield. The model was GPT Image 2.5 at medium quality with a transparent background, in one glossy-3D-emoji style; that style was picked from a four-way test on iced tea and cost about 26 credits.
+  - **Files:** trimmed and scaled to 160 px WebP (377 kB together) in `src/overlay/pictures/`, bundled with the app (`overlay/pictures.ts`).
+  - **Matching** (`core/wordpics.ts`):
+    - Literal English words and phrases of up to three words, plus plurals, possessives and a dropped g. The longest phrase wins ("broken heart" over "heart"), and the picture goes on the phrase's last word.
+    - Words with several meanings ("ring", "wave", "tear", "ice", "present") only count inside a phrase.
+    - At most one picture a line, 6 s apart, and the same picture 25 s apart.
+  - **On screen** (`KaraokeLine`):
+    - The picture pops in above the word as it's sung, floats about 2.4 s and fades. It sits under the word instead on a wrapped line's later row (one `offsetTop` read, only for that word).
+    - Without motion it only fades. Pictures are fetched and decoded when the song's lyrics are drawn.
+  - **Lifecycle:** extras run on their own song-timeline windows (group `<line>+fx`), so the line's shared window doesn't stretch. A sung line leaving focus freezes them, and they fade out with its overlay; a re-mount starts them over.
+  - **Off:** there is no decor with Effects mode off, for unsynced lyrics, or in the lite tier.
+- **QA:** `?flair=move[,accent[,splash]]` on the overlay page forces a flair (never stored). Each lyrics scene carries `data-flair`. Checked in Chromium with `?power=full`, in all four styles:
+  - Pictures above words (Drift, Stack, Lens and Arc) and under a wrapped second row (Stack).
+  - Every splash kind mid-burst; the first round was too small and too slow to read, and was retuned.
+  - Reduced motion: pictures still, no splash.
+  - Lens no longer pushes a swelling word into its neighbors.
+  - Settings in light and dark.
+  - Main-thread time over 20 s with Effects mode on against off, in headless Chromium with software compositing: +0.1 points for Strobe Hearts and +0.4 for Glacier Nocturne.
+Tests: 1186 vitest in 33 files. New: `wordpics.test.ts`, `flair.test.ts`, KaraokeLine extras and the sway tilt in `motion.test.ts`, the switch in `settings-look.test.ts`, the v5 contract and the mock store, and the look keys. Coverage is 98.6% of statements; flair.ts 99%, wordpics.ts 99%, decor.ts 99%. 267 Rust tests (1 ignored), including v5 migration, merge, the contract and the tray item. `pnpm build`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- Effects mode is on by default.
+- Only bundled pictures; nothing is generated while a song plays.
+- The pacing limits: `PICTURE_GAP_MS`, `SAME_PICTURE_GAP_MS` and `SPLASH_GAP_MS`.
+- Splashes on held notes, hooks and shouted lines.
+- Lens never pulses.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §12 has the checks, and §7 now notes that the CPU runs include Effects mode.
+Needs from Codex: nothing.
+Contract: v5 (`effectsMode`).
+
+
+## 2026-10-19 · Claude Code · Lyrics without timing: a synced version looked for, better pacing, a readable sheet
+Done: Maxwell again: "when the singer speeds up and slows down the lyrics can't catch up because they stay on a fixed tempo".
+- **What still had a fixed tempo:** since the line-level lighting above, a song with line timestamps lights each line as the singer starts it, at whatever pace they sing. A live probe of LRCLIB for 8 popular songs found 20 records each, all synced, none plain-only, so that covers most songs. What was left: songs whose closest LRCLIB match is plain text, which `pacePlain` spread evenly from 0:00 to the end, so every line drifted as the singer's pace changed.
+- **A synced version, looked for at once** (Rust, `lyrics/`):
+  - `Provider::synced` (by default none) asks LRCLIB for a synced version of the same song: the exact record (it may have gained timing since), the exact lookup without the album, then the records a search finds under the title and under its `retry_title` form. `matching::best_synced` ranks only the records with synced lyrics that aren't instrumental, by the usual rules, so another album, or a length a duration band further off (still within 8 s), wins over plain text.
+  - The service asks it as the quiet follow-up right after any plain-only answer for the playing track. Before, only a cached plain-only answer older than 30 days was rechecked, and with the same lookup that had found plain text. A synced answer replaces the plain text live and is cached. With none, the plain text stays and its 30 days start again; a failure leaves it due for the next play.
+  - Cache entries are format version 2. A version 1 plain-only entry, saved before this follow-up existed, is served and due at once, so songs already played get the search at their next play.
+- **Better pacing when there is no timing at all** (`pacePlain`): the first line waits for an intro (6% of the song, 2 to 14 s) and the last ends before an outro (7%, 3 to 18 s). Each line takes time by its syllables plus a breath, and a blank row between stanzas is a pause as long as an average line. A short song with many lines gives up its intro and outro first, so every line keeps at least 1.2 s.
+- **A readable sheet** (the calm list unsynced lyrics get): the guess can still be a line or two off, so the two lines each side of the current one are drawn sharp in the lyric color, the next ones at 82% fading gently (`lineLevel(off, calm)`, `CALM_NEAR_LEVEL`, `CALM_SHARP_LINES`), instead of dimmed and blurred like a timed song's neighbors.
+Tests: 1190 vitest in 33 files. New: `pacePlain`'s intro, outro, syllable weights and stanza pauses; the calm `lineLevel`; unsynced near rows drawn sharp. Coverage is 98.6% of statements. 276 Rust tests (1 ignored). New: `best_synced`; `synced` finding a version by search or the exact record that gained timing, finding none, a failed search as a transient error, nothing asked for an untitled track; a plain answer replaced live; no synced version, asked about once; only the playing track asked about; the version 1 cache entry. `pnpm build`, `cargo fmt`, clippy (also for the Windows and macOS targets) and the notices check pass.
+Decisions you can reverse:
+- A synced version from another album or edition, or with a length up to 8 s off, is preferred to the exact match's plain text.
+- The plain pacing constants in `core/timing.ts`: `PLAIN_INTRO`, `PLAIN_OUTRO`, `PLAIN_MIN_LINE_MS`, and the breath and stanza weights.
+- Two sharp neighbors each side for unsynced lyrics.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §11 step 3 has the checks.
+Needs from Codex: nothing.
+Contract: unchanged (v5).
+
+
+## 2026-10-19 · Claude Code · Lyrics always in the middle, no Height setting (contract v6)
+Done: Maxwell: "ensure that lyrics are always centered, no option for height, only size".
+- **Contract v6:** nothing added or removed. `Settings.yPos` is still validated and stored (TS, the mock store, Rust) but not read since v6, as `mode`, `font` and `curve` haven't been since v4. Settings saved by older builds keep their value; it moves nothing.
+- **Placement** (`resolveLook`): `look.y` is always the middle of the stage. On the desktop that is the middle of the display's work area (below the menu bar, clear of the Dock and the taskbar); in the settings preview, the middle of the miniature desktop under its menu bar.
+  - Drift and Stack center the focus line on it. The code that moved a tall focus line in from an edge (`EDGE_PAD`) went with the Height: a line is at most 45% of the stage, so it always fits.
+  - Arc centers the song's widest line, its middle as far above the middle as its ends below (`arcGeometry(look, extent)`); shorter lines share its middle, so lines don't move up and down from one to the next. The clamp that moved the curve in from the top or bottom went with the Height; the bend's limit still keeps a deep curve whole.
+  - Lens centers the focus line, and still moves the pair up on a stage too short for the next line below it (`focusCenter`).
+  - The loading pulse, the ♪ and the not-found chip were already drawn at `look.y`.
+- **Settings › Look:** Effects mode, Size, Effects, Glow and Opacity; the Height slider is gone.
+- **Checked** in Chromium with the mock bridge and a stored `yPos` of 10, on a 900 px stage: the focus line's center is at 450.3 px in Drift and Stack, 450.5 in Lens, and 448.7, 453.1 and 447.1 in Arc at curves 38, −60 and 100. In the settings preview (light and dark) it is at 120.6 in a stage whose middle is 122.
+Tests: 1189 vitest in 33 files. Changed or new: placement in the middle whatever `yPos` says, Arc centering the widest line, Lens's next line on a short stage, the Look group without Height, the guide without a Height section, and no stage rebuild for a `yPos` change. Coverage is 98.6% of statements. 276 Rust tests (1 ignored). `pnpm build`, `cargo fmt` and clippy pass.
+Decisions you can reverse:
+- `yPos` stays in the contract, unread, rather than removed (SPEC: add fields, don't remove them).
+- Arc centers the song's widest line rather than each line, so every line keeps the same height.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §13 has the checks.
+Needs from Codex: nothing.
+Contract: v6 (`yPos` no longer read).
+
+
+## 2026-10-19 · Claude Code · Word by word again, at the song's own pace
+Done: Maxwell, on the build that lit whole lines: "now it's not even syncing by word, it's just syncing the entire section like sentence … I want it to sync by the word like the previous build". Before that build he had said the word sweep "can't catch up because it stays on a fixed tempo" when the singer speeds up and slows down.
+- **A word sweep again** for lines timed by line only. The modes draw `line.words` again (`karaokeWords`, `LINE_FILL_MS` and `WORD_FILL_MS` are gone), Lens magnifies the guessed word again, and the picker may set a line-timed song in Lens again (Neon Monsoon is Lens · Bricolage without its cover, as before 07dbaf5).
+- **Paced to the song** (`core/timing.ts`). The old estimate spread a line's words over all the time up to the next line, so where the singer paused after a line the sweep crawled through the pause, fell behind, and jumped at the next line. Now:
+  - `singingPace` reads how fast the song is sung around each line. A line's rate is its beats (word weights: syllables plus half a beat a word) over the time until the next line starts. The pace near a line is the 70th percentile (`PACE_QUANTILE`) of the rates of the lines up to 4 either side (`PACE_WINDOW`): a pause only makes a line read slower, so a high share of the nearby rates is the singing pace, and the window follows a song from a slow verse into a fast chorus.
+  - `paceWords` sings a line at that pace: for as long as its beats take, or the whole line when it has less room (the singer hurried), split by weight as before (`timeWords`). When there's room left, the last word holds up to 600 ms more, and the rest is a pause.
+  - `parseLrc` works out the pace for the whole song, then times each line without word tags.
+- **Measured** on the line timing of 20 popular songs from LRCLIB (none of their 400 versions has word tags; fetched for a local check only, not committed): the median line sweeps as before (it fills its slot); a quarter of the lines, those followed by a pause, now finish more than 20% sooner than before, and 5% in under half the old time.
+Tests: 1192 vitest in 33 files. New: `beatsOf`, `singingPace` (pauses, speeding up and slowing down, the quantile, gaps), `paceWords`, `parseLrc` pacing a line before a pause, and Lens magnifying a guessed word. The whole-line tests are gone, and the look-wiring and picker tests are back to Lens for line-timed songs. `pnpm build` passes.
+Decisions you can reverse:
+- `PACE_QUANTILE` (0.7) and `PACE_WINDOW` (4).
+- Lens may be picked for line-timed songs again.
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §10 step 9 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v6).
+
+
+## 2026-10-19 · Claude Code · Realistic word pictures, nearly three times as many, some alive
+Done: Maxwell: "the graphics … are too basic and too cartoony, they should be more mature and more common; maybe the flame can have a little effect, and there should be more of them."
+- **A new library** (`src/overlay/pictures/`): 140 photorealistic pictures on transparent backgrounds, as 160 px WebP files (884 KB together). They were generated with Higgsfield (GPT Image 2.5, medium quality, transparent background) after a style test of photorealistic, cinematic and painted versions of a flame, iced tea, a rose and the moon; the photorealistic ones won because they read as real things at 30 px.
+  - The set: 47 of the 49 before, redone (sparkles became a sparkler, and sunset's words now call the sun), and 93 new subjects, the things songs mention most. Drinks and food (whiskey, tequila, a milkshake, a burger, popcorn, ice cubes), love (a bouquet, a sunflower, perfume, a teddy bear), the sky (clouds, an umbrella, a galaxy, the Earth, a rocket, fireworks), fire and light (a campfire, a lighter, a match, a light bulb, a lantern, a street lamp, smoke), places (a city, a house, a castle, a lighthouse, a bridge, a mountain, trees, a cactus, a sailboat, an anchor), travel (a truck, a motorcycle, a paper plane, a train, a suitcase, a map, a compass), home (an hourglass, a key, a door, a window, a bed, a mirror, a polaroid, a book, a pen), clothes and jewelry (sunglasses, heels, sneakers, boots, a cowboy hat, a dress, a leather jacket, a watch, pearls, gold bars), games and things (dice, cards, a clover, a trophy, a balloon, a bottle, a laptop, a TV), music (a microphone, headphones, a radio, a cassette, a piano, a drum, a saxophone) and animals (a bird, a dove, a raven, a wolf, a snake, a horse, a dog, a cat, a lion, a tiger, a bee).
+  - 68 credits, plus 6 for the style test. The generator left a faint pale halo around four (the dice, compass, lemon and ring); processing fades out their wide, faint alpha, and only theirs.
+- **More of them** (`core/wordpics.ts`): 678 words and phrases instead of about 370, written out from the same list as the prompts. Pictures may show 4 s apart (was 6), and the same one again after 20 s (was 25). Words that often mean something else in lyrics are left out or count only in a phrase: "shades" (of gray), "jet" (black), "kicks", "pine" (for you), "pickup" (line). "Head over heels" calls the heart, not the heels.
+- **Living pictures** (`overlay/motion/decor.ts` planPictureLife, KaraokeLine's extras). With motion, on the picture's own window:
+  - A flame (fire, a campfire, a candle, a lighter, a match) flickers on its `scale`, sampled every 80 ms and seeded, in its own glow (`.kw-aura`, under the word's copies, moving with the picture). Fire and a campfire throw 3 and 4 embers.
+  - A light bulb, a lantern, a street lamp, the sun and the moon glow, with a slow breath.
+  - A star, a sparkler, fireworks and a diamond twinkle; a heart beats three times; a butterfly beats its wings.
+  - Transform and opacity only, as everything else. None without motion, in the lite tier or with Effects mode off. The pose keeps `translate` and `rotate` inline, so a picture's own motion is on `scale` only: no sway or bob.
+- **Checked** in Chromium with the mock bridge, with a demo song's lyrics swapped in the page for original test lines: the lighter flickers in a warm glow, a campfire's embers rise, the heart beats, and the rain cloud and the others pop in as before.
+Tests: 1198 vitest in 33 files. New: living pictures in a line (a flame's flicker, light and embers, all stopped as the line leaves; a heart's beat with no light; nothing without motion) and planPictureLife (every kind, tracks over the picture's window, seeded, embers only from big flames, wing and heart beats). Changed: the word tests for the new vocabulary and gaps, and two transport tests whose fixture line ("Paper lanterns…") now shows a picture on its own window. Coverage is 98.6% of statements. `pnpm build` passes.
+Decisions you can reverse:
+- The photorealistic style.
+- The 4 s and 20 s gaps.
+- Which pictures live.
+- The size is unchanged (0.6 of the line's size).
+Not verified: on a real Mac or PC. `docs/ACCEPTANCE.md` §12 step 3 has the check.
+Needs from Codex: nothing.
+Contract: unchanged (v6).
+
+
+## 2026-10-19 · Claude Code · Held notes, pictures that move with the song, Poster and Spotlight, a new README
+Done: Maxwell: "make the github pretty … a nice download … show pictures", then "way too much writing", "the text layout is always the same curved and then vertical", "the little animations … just float above", and "when the singer drags out a word … the words continue and don't stay on that word".
+- **Held notes** (`core/timing.ts`): in lyrics timed by line only, the slot's spare time goes to the words a singer is likely to hold (the last word, a word before a comma or a dash, a stretched "sooo" or "~", "oh" and "yeah", an open vowel), with `holdWeight` and `holdBudget`. A word holds for at most `HELD_WORD_MS` (4 s). Word-tagged lyrics are untouched.
+- **Pictures that join in** (`overlay/motion/routes.ts`): a picture travels its line on song time instead of sitting over its word. Most hop from word to word, landing on each as it starts; birds and planes fly across, cars and animals drive along the tops of the words, a rocket lifts off, hearts and balloons float up, rain and leaves fall with copies, stars and fireworks burst, the sun and moon circle, dice roll off, a flame or a guitar dances in place. Pictures sit in line-level layers (`.kw-pics`, `.kw-route`), positioned from where each mode draws its words (`KaraokeLook.spot`). A picture is 1.2 font sizes across, of its word as it is sung (`KaraokeLook.scaleOf`, at most 2×), so it is as big as the swollen word in Lens, Poster and Spotlight. In Poster's block (`SlotLayout.blocks`) pictures travel over the block's top row, so a picture for a word in a lower row doesn't cover the row above it.
+- **Two new styles** on Lens's slot engine (`overlay/modes/slot-layouts.ts`): **Poster** sets a short line as a block of rows in big type, tilted in one of seven compositions; **Spotlight** shows one huge word at a time and slides the line through it. The picker scores both; one-line styles within 0.1 of each other are chosen by the track's hash, so similar songs vary. `Style` adds them on the TypeScript side only; the contract's `Mode` is unchanged.
+- **README and docs**: the README is now a picture-first front page (banner, badges, a looping demo, download buttons, a 3×2 style grid, the moving-pictures clip, a small "how it's built" diagram). Long material moved out to `docs/DEVELOPMENT.md`, `docs/TROUBLESHOOTING.md` and a Permissions section in `docs/INSTALL.md`. Media is in `docs/media/`, recorded from the real overlay with the mock bridge and original placeholder lines; wallpapers were generated with Higgsfield.
+- **Release names** (`.github/workflows/release.yml`): bundles upload as `Undertone_universal.dmg` and `Undertone_x64-setup.exe`, so the README's `releases/latest/download/…` links keep working across versions.
+Tests: 1224 vitest in 35 files. New: `holdWeight`, `holdBudget` and held words in `paceWords`; `routes.test.ts` (every route, hops landing on each word's start, copies, seeded); `slot-layouts.test.ts` (Poster's balanced rows and compositions, Spotlight's slide); pictures in their line's layers on their own window, sized to their word; Poster and Spotlight on Lens's engine, Poster's pictures over its block. Coverage is 98.5% of statements. `pnpm build` passes.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v6).
+
+
+## 2026-10-20 · Claude Code · Tighter sync on the Mac, learned sync, and updates that take over (contract v7)
+Done: Maxwell: "a lot of the time it still is slightly off … I also don't want to have to tweak it so often", then "the macbook build isn't the updated build".
+- **The Mac position, timed right** (`media/applescript.rs`, `media/macos.rs`): the read script asks for the player state and the track's details before its position, near the end of the call, but the reading was stamped with the call's midpoint, so lyrics ran early by about a third of the call, and by more, unevenly, on a busy Mac. Right after each read, on the same main-thread hop, a script that asks for `player position` alone is stamped with the middle of its own call (`SPOTIFY_POSITION`, `MUSIC_POSITION`, `timed_reading`). The read's own position stands in if it fails or takes over 250 ms.
+- **A steadier clock** (`core/clock.ts`): while playing, the clock follows the middle of the last five readings' phase (position minus read time) instead of each reading in turn, counts a repeated reading once, follows a real move (a stall) once two readings agree on it, and starts over on a pause, a resume or a seek.
+- **Learned sync** (`core/sync.ts`, `settings.rs`; contract v7): a song without its own nudge starts from what the last nudged songs have in common, the middle of their own offsets (from two songs on; of two, the one nearer 0). `Settings.nudgedTracks` keeps the last 9 nudged songs; `trackOffsetsMs` keeps a 0 now (a song's own offset); `set_track_offset` takes `ms: null` to drop a song's own offset (Reset this song, the tray's Reset). Settings shows "· learned" for a song following it. The shortcuts and the tray nudge from the learned value.
+- **Updates take over** (`lib.rs`): single-instance hands every second launch to the running Undertone, so opening a newly installed build left the old one running. A second launch now checks whether the executable on disk changed since this instance started and, if so, restarts into it (`replaced_on_disk`, `AppHandle::restart`). The build's commit (`build.rs` and `vite.config.ts`: CI's `GITHUB_SHA`, else git's HEAD) shows on the tray menu's last line, at the bottom of Settings, in the log's start line and in `--diagnose`.
+Tests: 1239 vitest in 36 files (new: `sync.test.ts`; the clock's phase window; Settings' learned value; v7 settings in the mock) and 283 Rust tests (position scripts and `timed_reading`, `learned_offset_ms` on the same cases as `sync.test.ts`, `nudged_tracks`, `with_track_offset(None)`, the tray's reset and build line, `replaced_on_disk`). `pnpm coverage` and `pnpm build` pass.
+Not verified: on a real Mac or PC, which the timing needs: compare the highlight with a song whose lyrics time every word, before and after.
+Needs from Codex: nothing.
+Contract: v7 (adds `Settings.nudgedTracks`; `set_track_offset` takes `ms: null`).
+
+
+## 2026-10-20 · Claude Code · Sung words in a gradient of the cover's colors
+Done: Maxwell: "I want the lyrics to be more of a gradient because right now its one color and that one color DOES NOT match the album cover" (a cover of a wooden door in dark green ivy, gold lettering; the highlight was a tan from the door).
+- **A second color** (`core/palette.ts`): `Palette.accent`, the cover's other main color: its pixels binned by hue (24 bins), each weighted by its share of the cover and, below 0.12 chroma, by how colorful it is, so a big muted area (dark olive ivy at 0.05) still counts; the heaviest bins at least 40° from the highlight's hue, more distant ones counting more (a sky's violet edge doesn't beat its orange horizon), averaged with their neighbors; at least 12% of the main color's weight, three bins (45°) at a time. From the pixels, not the 16-level buckets: averaging a bucket turns dark olive gray. It is lightened to 0.62–0.74 and kept as muted as the cover has it (saturation from 0.36), so an olive stays an olive. A one-color cover, a gray one and the user's own colors blend into the highlight's neighbor on the color wheel (`accentFor`).
+- **The gradient** (`styles/stage.css`, `overlay/motion/bloom.ts`): the lit letters (`.kw-win .kw-in .kl`) are filled top to bottom from `--ut-hl` into `--ut-hl2` with `background-clip: text`. Every letter is filled alike, so a line reads as one gradient in every style, Arc's letters on their curve included. The bloom stays in the highlight.
+- **Checked** in Chromium with the mock bridge and a 48×48 sample of the cover from the report (not committed): tan into sage green (`#d29760` → `#9ec17b`); a sunset sea goes blue into coral; every style shows it.
+Tests: new palette cases (the muted second color, a main color's fringe, a one-color cover, `accentFor`, the accent's legibility on 300 random covers) and `--ut-hl2` on the rows.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v7).
+
 ## 2026-10-20 · Claude Code · GitHub presentation
 Done: the repo now presents itself the way `sussyswimmer/bordervisualizer` does, at Maxwell's request.
 - `README.md` is a landing page: banner, badges, download buttons, a demo GIF, features, the four styles, Settings in light and dark, a three-step install, how it works (with a Mermaid chart), privacy and the Automation permission, an FAQ, build from source, roadmap, contributing, credits and license.
@@ -296,3 +564,12 @@ Done: the repo now presents itself the way `sussyswimmer/bordervisualizer` does,
 For Maxwell, in the repo's settings (not files): description "Synced lyrics on your desktop for whatever you're playing, colored by the album art. macOS and Windows. Free & open source."; topics `lyrics`, `synced-lyrics`, `lrc`, `desktop-app`, `tauri`, `typescript`, `rust`, `spotify`, `apple-music`, `macos`, `windows`; social preview `assets/banner.png`; turn on private vulnerability reporting (Security tab), which SECURITY.md and the issue forms point to.
 Needs from Codex: nothing.
 Contract: unchanged (v3).
+
+## 2026-10-20 · Claude Code · 0.1.1: the released app on main, with the GitHub presentation
+Done: Maxwell published v0.1.0 from `claude/friendly-mayer-shv80u` while `main` had the GitHub presentation, so each lacked the other's work, and asked for the result as v0.1.1.
+- `main` merges the commit tagged `v0.1.0` (`2ca60a5`), not the branch's newer 0.2.0 work. The app is unchanged; the version is 0.1.1 in `package.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, and in the docs that quote the menu's build line.
+- README: the landing-page layout from the presentation work (badges, features, Settings, install, how it works, privacy, FAQ, roadmap, credits, license) with the released app's content and media: its banner, demo, download buttons, six styles and word pictures from `docs/media/`. Permissions and network details stay in `docs/INSTALL.md`, which the README links.
+- The four-style screenshots and `demo.gif` from `assets/` are gone; the 1280×640 banner is now `docs/media/social-preview.{svg,png}`, for the repository's social preview. `docs/media/settings-{light,dark}.png` are retaken from this version. `scripts/readme-media.mjs` keeps only those two jobs.
+- `CONTRIBUTING.md` points to `docs/DEVELOPMENT.md` instead of repeating it. The released `docs/TROUBLESHOOTING.md` won the add/add conflict, with a link to the bug report form. `CHANGELOG.md` describes 0.1.0 as it shipped and adds 0.1.1.
+Needs from Codex: nothing. Whoever merges `claude/friendly-mayer-shv80u` next: expect conflicts in the README, CHANGELOG and the version lines; keep the 0.2.0 version and content, and the README's layout and links.
+Contract: unchanged (v7).

@@ -65,6 +65,12 @@ impl std::fmt::Display for Failure {
 #[async_trait]
 pub trait Provider: Send + Sync {
     async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure>;
+    /// A synced version of a song `lookup` found only plain text for, from a broader search; None
+    /// when there is none. Plain text can only be paced by guesswork, which drifts from the singer,
+    /// so the service asks this quietly right after a plain-only answer, while the plain text shows.
+    async fn synced(&self, _track: &Track) -> Result<Option<Lyrics>, Failure> {
+        Ok(None)
+    }
 }
 pub fn empty(key: &str, status: LyricsStatus) -> Lyrics {
     Lyrics {
@@ -105,8 +111,9 @@ impl State {
     }
 }
 /// One lookup's budget, from the track change through the cache, waiting for a free slot, the
-/// exact match and the searches.
-const DEADLINE: Duration = Duration::from_secs(6);
+/// exact matches and the searches, with their retries while LRCLIB answers "busy". The overlay
+/// shows the lyrics loading meanwhile.
+const DEADLINE: Duration = Duration::from_secs(15);
 /// After a transient failure on the current track (no network yet after wake, a busy or
 /// rate-limiting LRCLIB, the deadline), the lookup is tried again after each of these waits: about
 /// a minute and a half in all.
@@ -120,7 +127,8 @@ const RETRY_BACKOFF: [Duration; 3] = [
 enum FollowUp {
     /// The lookup failed on something transient.
     Retry,
-    /// The answer is a plain-only hit due for a recheck (`cache::stale`), showing meanwhile.
+    /// The answer is plain text only, showing meanwhile: just looked up, or a cached answer due for
+    /// a recheck (`cache::stale`). A synced version replaces it live.
     Recheck(Lyrics),
 }
 pub struct Service {
@@ -187,7 +195,7 @@ impl Service {
                         (error_result, false, now_seconds(), error.transient)
                     }
                     Err(_) => {
-                        applog!("lyrics lookup timed out after six seconds");
+                        applog!("lyrics lookup timed out after {} s", DEADLINE.as_secs());
                         let error_result = empty(&track.key, LyricsStatus::Error);
                         (error_result, false, now_seconds(), true)
                     }
@@ -214,7 +222,9 @@ impl Service {
                         None
                     } else if transient {
                         Some(FollowUp::Retry)
-                    } else if from_cache && cache::stale(&result, saved_at, now_seconds()) {
+                    } else if result.status == LyricsStatus::PlainOnly
+                        && (!from_cache || cache::stale(&result, saved_at, now_seconds()))
+                    {
                         Some(FollowUp::Recheck(result.clone()))
                     } else {
                         None
@@ -252,11 +262,16 @@ impl Service {
             }
             let failure = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
                 Ok(Ok(result)) => {
+                    let plain = (result.status == LyricsStatus::PlainOnly).then(|| result.clone());
                     self.settle(track, token, result).await;
+                    // plain text only: a synced version is worth one more ask
+                    if let Some(plain) = plain {
+                        self.recheck(track, token, plain).await;
+                    }
                     return;
                 }
                 Ok(Err(failure)) => failure,
-                Err(_) => Failure::transient("timed out after six seconds"),
+                Err(_) => Failure::transient(format!("timed out after {} s", DEADLINE.as_secs())),
             };
             applog!("lyrics retry failed: {failure}");
             if !failure.transient {
@@ -264,18 +279,19 @@ impl Service {
             }
         }
     }
-    /// Asks LRCLIB once whether a plain-only song has synced lyrics now, while the plain text
-    /// shows. Synced lyrics replace it live (from unsynced to word highlight); any other answer
-    /// keeps it and starts its 30 days again; a failure leaves it due, for the next play.
+    /// Asks LRCLIB once for a synced version of a plain-only song (`Provider::synced`), while the
+    /// plain text shows. Synced lyrics replace it live (from unsynced to word highlight); none keeps
+    /// the plain text and starts its 30 days again; a failure leaves it due, for the next play.
     async fn recheck(&self, track: &Track, token: u64, plain: Lyrics) {
-        let result = match tokio::time::timeout(DEADLINE, self.fetch(track)).await {
-            Ok(Ok(result)) => result,
+        let result = match tokio::time::timeout(DEADLINE, self.fetch_synced(track)).await {
+            Ok(Ok(Some(result))) => result,
+            Ok(Ok(None)) => plain.clone(),
             Ok(Err(failure)) => {
                 applog!("lyrics recheck failed: {failure}");
                 return;
             }
             Err(_) => {
-                applog!("lyrics recheck timed out after six seconds");
+                applog!("lyrics recheck timed out after {} s", DEADLINE.as_secs());
                 return;
             }
         };
@@ -383,6 +399,27 @@ impl Service {
             ));
         }
         Ok(result)
+    }
+    /// `fetch` for `Provider::synced`: in a slot, for the current track only, a synced answer or none.
+    async fn fetch_synced(&self, track: &Track) -> Result<Option<Lyrics>, Failure> {
+        let skipped = || Failure::permanent("skipped: another track started");
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let _slot = self
+            .slots
+            .acquire()
+            .await
+            .map_err(|e| Failure::permanent(e.to_string()))?;
+        if !self.current(&track.key) {
+            return Err(skipped());
+        }
+        let found = self.provider.synced(track).await?;
+        Ok(found.filter(|lyrics| {
+            lyrics.track_key == track.key
+                && lyrics.status == LyricsStatus::Found
+                && cache::cacheable(lyrics)
+        }))
     }
     fn current(&self, key: &str) -> bool {
         self.state

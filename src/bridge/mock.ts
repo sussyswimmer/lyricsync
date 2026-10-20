@@ -11,8 +11,13 @@ import {
   type ShortcutsStatus,
 } from "../../contract/contract";
 import { detectPlatform, loadKeyLayout, mergeShortcuts, normalizeBinding, recordKey, SHORTCUT_ACTIONS, type KeyLayout } from "../core/accelerator";
+import { nudgedAfter, songOffsetMs } from "../core/sync";
 import neonMonsoon from "../../tests/fixtures/neon-monsoon.lrc?raw";
 import paperLanterns from "../../tests/fixtures/paper-lanterns.lrc?raw";
+import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
+import ledgerLines from "../../tests/fixtures/demo-ledger-lines.lrc?raw";
+import strobeHearts from "../../tests/fixtures/demo-strobe-hearts.lrc?raw";
+import glacierNocturne from "../../tests/fixtures/demo-glacier-nocturne.lrc?raw";
 import { demoCover } from "./covers";
 import type { ArgsOf, Bridge, Command, Commands, Event, Events, ResultOf, Unlisten } from "./types";
 
@@ -83,6 +88,17 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   track("Tidal Interlude", 18_000, null, "instrumental"),
   // Not a lyrics state: visual QA for scripts and line shapes. Cycle every font over it (?track=5).
   track("Script Sampler", 42_000, 0, "found", { synced: SCRIPT_SAMPLER }),
+  // The motion demo (?track=6): an intro and a mid-song break long enough for the interlude dots,
+  // syllable-timed enhanced LRC, and held line endings that light letter by letter.
+  track("Glass Harbor", 38_000, 2, "found", { synced: glassHarbor }),
+  // The look demos (?track=7–9): three songs Undertone picks three different looks for, from how
+  // they are sung and what their covers look like (src/core/songlook.ts; tests/demo-looks.test.ts).
+  // A fast, dense verse under a black-and-white cover: Stack, in Bricolage.
+  track("Ledger Lines", 76_000, 3, "found", { synced: ledgerLines }),
+  // Short shouted hooks, a club edit and a neon-on-black cover: Poster, in Unbounded capitals.
+  track("Strobe Hearts (Club Mix)", 66_000, 4, "found", { synced: strobeHearts }),
+  // Sparse, slow lines with long instrumental gaps under a cold, dark cover: Drift, in Instrument Serif.
+  track("Glacier Nocturne", 118_000, 5, "found", { synced: glacierNocturne }),
 ];
 
 /** Built exactly as SPEC defines it. */
@@ -319,9 +335,16 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
   if (!isObject(v)) return undefined;
   const entries = Object.entries(v).flatMap(([key, ms]): [string, number][] => {
     const clamped = clamp(ms, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);
-    return clamped === undefined || clamped === 0 ? [] : [[key, clamped]];
+    // 0 is a song's own offset since contract v7 (-0 reads as 0)
+    return clamped === undefined ? [] : [[key, clamped + 0]];
   });
   return Object.fromEntries(entries);
+};
+
+/** `nudgedTracks`: strings only, each once (its last place), the newest NUDGED_TRACKS_MAX. */
+const nudgedOf = (v: unknown): string[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((key): key is string => typeof key === "string").reduce<string[]>((list, key) => nudgedAfter(list, key), []);
 };
 
 /**
@@ -329,7 +352,7 @@ const offsetsOf = (v: unknown): Record<string, number> | undefined => {
  * validated field by field. Unknown keys are dropped, numbers are clamped to the SPEC ranges, and a
  * value of the wrong type or outside an enum keeps the current one. A partial `colors`, `font` or
  * `shortcuts` object changes only the keys it has; a shortcut that isn't usable or that another
- * action has keeps its current binding (`mergeShortcuts`); `trackOffsetsMs` replaces the whole map;
+ * action has keeps its current binding (`mergeShortcuts`); `trackOffsetsMs` and `nudgedTracks` replace the whole map and list;
  * `version` is ignored.
  */
 export function mergeSettings(current: Settings, patch: unknown): Settings {
@@ -356,9 +379,12 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.displays = oneOf(p.displays, DISPLAYS) ?? next.displays;
   next.globalOffsetMs = clamp(p.globalOffsetMs, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS) ?? next.globalOffsetMs;
   next.trackOffsetsMs = offsetsOf(p.trackOffsetsMs) ?? next.trackOffsetsMs;
+  next.nudgedTracks = nudgedOf(p.nudgedTracks) ?? next.nudgedTracks;
   if (typeof p.enabled === "boolean") next.enabled = p.enabled;
   if (typeof p.launchAtLogin === "boolean") next.launchAtLogin = p.launchAtLogin;
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
+  next.effects = clamp(p.effects, 0, 100) ?? next.effects;
+  if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
   return next;
 }
 
@@ -386,13 +412,21 @@ export function shortcutsStatusOf(shortcuts: Shortcuts, taken: ReadonlySet<strin
 /** How far the nudge shortcuts move the current song, as in the core (`shortcuts::SHORTCUT_NUDGE_MS`). */
 export const SHORTCUT_NUDGE_MS = 50;
 
-/** `set_track_offset` (`settings::with_track_offset`): clamped to ±2000 ms; zero removes the song. */
-export function withTrackOffset(current: Settings, trackKey: string, ms: number): Settings {
-  if (!Number.isFinite(ms)) throw new Error("offset must be finite");
+/**
+ * `set_track_offset` (`settings::with_track_offset`): the song's own offset, clamped to ±2000 ms (0
+ * included), and the song becomes the most recently nudged; `null` drops its own offset and its
+ * place among them, so it follows the learned offset again.
+ */
+export function withTrackOffset(current: Settings, trackKey: string, ms: number | null): Settings {
   const next = structuredClone(current);
-  const clamped = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms));
-  if (clamped === 0) delete next.trackOffsetsMs[trackKey];
-  else next.trackOffsetsMs[trackKey] = clamped;
+  if (ms === null) {
+    delete next.trackOffsetsMs[trackKey];
+    next.nudgedTracks = next.nudgedTracks.filter((key) => key !== trackKey);
+    return next;
+  }
+  if (!Number.isFinite(ms)) throw new Error("offset must be finite");
+  next.trackOffsetsMs[trackKey] = Math.max(-OFFSET_LIMIT_MS, Math.min(OFFSET_LIMIT_MS, ms)) + 0;
+  next.nudgedTracks = nudgedAfter(next.nudgedTracks, trackKey);
   return next;
 }
 
@@ -407,7 +441,7 @@ export interface MockOptions {
   /** Persist across reloads. Default: localStorage when available. */
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
   /**
-   * `?track=1&t=5200&paused&settings={"mode":"lens"}` set the starting state,
+   * `?track=1&t=5200&paused&settings={"effects":80}` set the starting state,
    * `?media=automation-denied|no-player` starts with that media problem,
    * `?shortcutConflict=toggleLyrics,nudgeLater` makes those actions' starting combinations
    * "unavailable", as if another app held them, and `?loginItem=refuse` refuses every Launch at
@@ -637,7 +671,7 @@ export function createMockBridge(options: MockOptions = {}): MockBridge {
       // Like the core: a nudge needs a song, and moves its offset within the same ±2000 ms.
       const trackKey = trackKeyOf(player.current);
       const step = action === "nudgeEarlier" ? SHORTCUT_NUDGE_MS : -SHORTCUT_NUDGE_MS;
-      setSettings(withTrackOffset(settings, trackKey, (settings.trackOffsetsMs[trackKey] ?? 0) + step), true);
+      setSettings(withTrackOffset(settings, trackKey, songOffsetMs(settings, trackKey) + step), true);
     }
     return true;
   };

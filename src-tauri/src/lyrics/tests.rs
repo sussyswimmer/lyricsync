@@ -53,6 +53,11 @@ impl Provider for Fake {
             Ok(self.answer.into_lyrics(&track.key))
         }
     }
+    /// The same answer, when it is synced; counted with the lookups.
+    async fn synced(&self, track: &Track) -> Result<Option<Lyrics>, Failure> {
+        let lyrics = self.lookup(track).await?;
+        Ok((lyrics.status == LyricsStatus::Found).then_some(lyrics))
+    }
 }
 impl Fake {
     fn new(answer: lrclib::Record) -> Self {
@@ -176,7 +181,7 @@ async fn timeout_emits_error_releases_flight_and_does_not_cache_failure() {
     let receiver = service.start(track(), true);
     assert_eq!(events.recv().await.unwrap().status, LyricsStatus::Loading);
     tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_secs(6)).await;
+    tokio::time::advance(DEADLINE).await;
     assert_eq!(
         wait(receiver, &track().key).await.status,
         LyricsStatus::Error
@@ -368,7 +373,7 @@ async fn a_track_the_user_skipped_past_never_reaches_the_network() {
     // ...then the user skips twice, the second time before the next song's lookup even starts.
     let passed = service.start(other(), false);
     let playing = service.start(third.clone(), false);
-    // The song passed over doesn't even wait for a slot (well within its six seconds)...
+    // The song passed over doesn't even wait for a slot (well within its deadline)...
     let passed = tokio::time::timeout(Duration::from_secs(5), wait(passed, &other().key)).await;
     assert_eq!(passed.unwrap().status, LyricsStatus::Error);
     // ...and the queued one gives its slot up without a request.
@@ -479,4 +484,95 @@ async fn a_failed_recheck_stays_due_and_a_recent_plain_only_song_is_not_rechecke
     assert_eq!(shown.status, LyricsStatus::PlainOnly);
     tokio::time::sleep(Duration::from_secs(60)).await;
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+/// Plain text from `lookup`, a synced version from `synced`.
+struct Upgrade {
+    synced: Option<lrclib::Record>,
+    lookups: AtomicUsize,
+    asks: AtomicUsize,
+    /// the tracks asked about, in order
+    asked: Mutex<Vec<String>>,
+}
+#[async_trait]
+impl Provider for Upgrade {
+    async fn lookup(&self, track: &Track) -> Result<Lyrics, Failure> {
+        self.lookups.fetch_add(1, Ordering::SeqCst);
+        Ok(unsynced().into_lyrics(&track.key))
+    }
+    async fn synced(&self, track: &Track) -> Result<Option<Lyrics>, Failure> {
+        self.asks.fetch_add(1, Ordering::SeqCst);
+        self.asked.lock().unwrap().push(track.key.clone());
+        Ok(self
+            .synced
+            .as_ref()
+            .map(|record| record.into_lyrics(&track.key)))
+    }
+}
+fn upgrade(synced: Option<lrclib::Record>) -> Arc<Upgrade> {
+    Arc::new(Upgrade {
+        synced,
+        lookups: AtomicUsize::new(0),
+        asks: AtomicUsize::new(0),
+        asked: Mutex::new(Vec::new()),
+    })
+}
+#[tokio::test(start_paused = true)]
+async fn a_plain_only_answer_shows_at_once_then_a_synced_version_replaces_it_live() {
+    let directory = tempfile::tempdir().unwrap();
+    let cache = cache::Cache::new(directory.path());
+    let provider = upgrade(Some(record()));
+    let service = Service::new(provider.clone(), cache.clone());
+    let mut events = service.subscribe();
+    let key = track().key;
+    let shown = wait(service.start(track(), false), &key).await;
+    assert_eq!(shown.status, LyricsStatus::PlainOnly);
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(
+        sent(&mut events),
+        [
+            (LyricsStatus::Loading, LyricsSource::Lrclib),
+            (LyricsStatus::PlainOnly, LyricsSource::Lrclib),
+            (LyricsStatus::Found, LyricsSource::Lrclib)
+        ]
+    );
+    assert_eq!(provider.lookups.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.asks.load(Ordering::SeqCst), 1);
+    assert_eq!(service.get(&key).await.status, LyricsStatus::Found);
+    let saved = cache.get(&key, now_seconds()).await.unwrap().unwrap();
+    assert_eq!(saved.status, LyricsStatus::Found);
+}
+#[tokio::test(start_paused = true)]
+async fn without_a_synced_version_the_plain_text_stays_and_is_asked_about_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = upgrade(None);
+    let service = Service::new(provider.clone(), cache::Cache::new(directory.path()));
+    let mut events = service.subscribe();
+    let key = track().key;
+    wait(service.start(track(), false), &key).await;
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(
+        sent(&mut events),
+        [
+            (LyricsStatus::Loading, LyricsSource::Lrclib),
+            (LyricsStatus::PlainOnly, LyricsSource::Lrclib)
+        ]
+    );
+    // Played again: served from the cache, not due for 30 days, so nothing more is asked.
+    wait(service.start(track(), false), &key).await;
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(provider.asks.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.lookups.load(Ordering::SeqCst), 1);
+}
+#[tokio::test(start_paused = true)]
+async fn only_the_playing_track_is_asked_about() {
+    let directory = tempfile::tempdir().unwrap();
+    let provider = upgrade(Some(record()));
+    let service = Service::new(provider.clone(), cache::Cache::new(directory.path()));
+    let key = track().key;
+    let first = service.start(track(), false);
+    service.start(other(), false);
+    wait(first, &key).await;
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(*provider.asked.lock().unwrap(), [other().key]);
 }

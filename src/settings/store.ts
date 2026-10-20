@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, type Settings } from "../../contract/contract";
 import type { Bridge } from "../bridge/types";
+import { nudgedAfter } from "../core/sync";
 
 /** Edits are saved this long after the last change (C7)... */
 export const SAVE_DEBOUNCE_MS = 120;
@@ -16,22 +17,33 @@ export function clampTrackOffset(ms: number): number {
 /** One save, in the order the user made it. */
 export type Write =
   | { kind: "patch"; patch: Partial<Settings> }
-  | { kind: "track"; trackKey: string; ms: number };
+  | { kind: "track"; trackKey: string; ms: number | null };
 
 /**
- * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`; the
- * window shows their defaults. Complete settings come back as the same object.
+ * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`, from
+ * one older than v4, `effects`, from one older than v5, `effectsMode`, and from one older than v7,
+ * `nudgedTracks`; the window shows their defaults. Complete settings come back as the same object.
  */
 export function withDefaults(settings: Settings): Settings {
   const s: Partial<Settings> = settings;
-  if (s.enabled !== undefined && s.launchAtLogin !== undefined && s.shortcuts !== undefined) return settings;
+  if (
+    s.enabled !== undefined &&
+    s.launchAtLogin !== undefined &&
+    s.shortcuts !== undefined &&
+    s.effects !== undefined &&
+    s.effectsMode !== undefined &&
+    s.nudgedTracks !== undefined
+  ) {
+    return settings;
+  }
   const defaults = structuredClone(DEFAULT_SETTINGS);
   return { ...defaults, ...settings, shortcuts: { ...defaults.shortcuts, ...s.shortcuts } };
 }
 
 /**
- * Reset to defaults: everything but `version`, per-song offsets (kept, unless Reset also forgets them
- * with its own `trackOffsetsMs: {}`), and the two switches that aren't about how lyrics look:
+ * Reset to defaults: everything but `version`, per-song offsets and the songs they were learned from
+ * (kept, unless Reset also forgets them with its own `trackOffsetsMs: {}, nudgedTracks: []`), and the
+ * two switches that aren't about how lyrics look:
  * resetting must neither turn the lyrics back on (or off) nor add or remove the login item. The
  * shortcuts are reset, switch and bindings.
  */
@@ -39,18 +51,25 @@ export function defaultsPatch(): Partial<Settings> {
   const patch: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
   delete patch.version;
   delete patch.trackOffsetsMs;
+  delete patch.nudgedTracks;
   delete patch.enabled;
   delete patch.launchAtLogin;
   return patch;
 }
 
-/** Settings as they will be once `write` lands. A zero track offset reads the same as none. */
+/**
+ * Settings as they will be once `write` lands. A song's offset (0 included) makes it the most recently
+ * nudged; `null` drops its offset and its place, so it follows the learned offset again.
+ */
 export function applyWrite(settings: Settings, write: Write): Settings {
   if (write.kind === "patch") return { ...settings, ...write.patch };
   const offsets = { ...settings.trackOffsetsMs };
-  if (write.ms === 0) delete offsets[write.trackKey];
-  else offsets[write.trackKey] = write.ms;
-  return { ...settings, trackOffsetsMs: offsets };
+  if (write.ms === null) {
+    delete offsets[write.trackKey];
+    return { ...settings, trackOffsetsMs: offsets, nudgedTracks: settings.nudgedTracks.filter((key) => key !== write.trackKey) };
+  }
+  offsets[write.trackKey] = write.ms;
+  return { ...settings, trackOffsetsMs: offsets, nudgedTracks: nudgedAfter(settings.nudgedTracks, write.trackKey) };
 }
 
 export interface SettingsSyncOptions {
@@ -147,11 +166,11 @@ export class SettingsSync {
     this.pump();
   }
 
-  /** Sets one song's offset right away (after any edits made before it). */
-  setTrackOffset(trackKey: string, ms: number): void {
+  /** Sets one song's own offset right away (after any edits made before it); `null` drops it. */
+  setTrackOffset(trackKey: string, ms: number | null): void {
     if (this.disposed) return;
     this.flush();
-    this.queue.push({ kind: "track", trackKey, ms: clampTrackOffset(ms) });
+    this.queue.push({ kind: "track", trackKey, ms: ms === null ? null : clampTrackOffset(ms) });
     this.onChange(this.view);
     this.pump();
   }
