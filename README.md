@@ -47,7 +47,7 @@
   </tr>
 </table>
 
-Undertone picks the layout (one of 13 styles, from a curve to kinetic type that builds up word by word), one of 27 fonts and the motion from the song, and the colors from its cover. Or pin one style for every song in Settings. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
+Undertone picks the layout (one of 10 styles, always leaning toward the ones that move most with the voice, like kinetic type that builds up word by word), one of 27 fonts and the motion from the song, and the colors from its cover. Or pin one style for every song in Settings. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
 
 ## Words you can picture
 

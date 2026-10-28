@@ -593,3 +593,14 @@ Not verified: on a real Mac or PC, in particular that WKWebView and WebView2 del
 Needs from Codex: a contract field for the pin, so the tray can show it and it survives a cleared web storage: `Settings.style: "auto" | Style` (default "auto"), stored and validated like `graphics`. Until then the pin lives in web storage only.
 Contract: unchanged (v8).
 
+
+## 2026-10-28 · Claude Code · Auto picks livelier: Arc, Drift and Stack retired
+Done: Maxwell, after trying the kinetic build: "this is better but I want it to choose better, remove some of the original styles they are just lame and always go for high reactivity". He picked Arc, Drift and Stack to go.
+- **Retired** (`songlook.ts` `RETIRED_STYLES`): Arc, Drift and Stack are out of Auto and Settings › Style. `STYLES` is now the ten live styles, most reactive first (Slant, Pop, Cascade, Tape, Spotlight, Wave, Reveal, Collage, Lens, Poster); `ALL_STYLES` keeps all thirteen drawable, so the contract's `Mode`, forced QA looks (`--look`) and plain lyrics still work. Stack stays only as plain lyrics' list. A saved pin of a retired style reads as Auto (`parseStylePin`, now typed `PickStyle`). `DEFAULT_PICK` is Slant at energy 0.62, snap 0.55.
+- **Reactivity in the pick**: each live style has a `REACTIVITY` (Pop and Slant 1 … Poster 0.55), added at `REACTIVITY_WEIGHT` 0.5 to its fit score: enough to beat most edges in fit, less than the legibility penalties. The trackKey variety pool is tighter (0.04, was 0.1) and never trades a pick for a style more than 0.2 calmer. Over a 5,760-song synthetic feature grid the kinetic six now take 89% of synced songs, Slant alone 46% (Arc and Stack took ~60% before; Spotlight, Cascade and Tape were never picked).
+- **Motion**: synced songs' energy is 0.62–1 (floor 0.55 line-timed, was 0.35–1), about twice BL's amplitude at the least; snap 0.5–1 (was 0.2–1), so words land on the voice instead of floating in. Flair moves lean to bounce, pulse and drop over sway and rise (`MOVE_PUNCH`).
+- Demo picks now: Ledger Lines Slant · Bricolage, Strobe Hearts Pop · Unbounded, Glacier Nocturne Spotlight · Instrument Serif, Neon Monsoon Cascade → Slant with its cover, Glass Harbor Spotlight, Script Sampler Slant.
+Tests: 1287 vitest in 38 files (new: `pin.test.ts`; the grid asserts every synced song gets a live style at energy ≥ 0.55, that kinetic styles take > 60% and Lens + Poster < 20%, and that a near-tie never swaps a kinetic best for Lens or Poster). Expectations for the old picks updated.
+Not verified: on a real Mac, with real songs.
+Needs from Codex: nothing new (the `Settings.style` field asked for above should accept only the live styles plus "auto").
+Contract: unchanged (v8).

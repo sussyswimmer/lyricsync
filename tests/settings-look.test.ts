@@ -419,6 +419,8 @@ describe("the settings panel since contract v4", () => {
     const inputs = tiles.all("opt").map((o) => o.children[0] as FakeElement);
     const labels = tiles.all("opt-label").map((l) => l.textContent);
     expect(labels).toEqual(["Auto", ...STYLES.map((s) => styleLabel(s))]);
+    // Arc, Drift and Stack are retired: no tile for them
+    expect(labels).toEqual(["Auto", "Slant", "Pop", "Cascade", "Tape", "Spotlight", "Wave", "Reveal", "Collage", "Lens", "Poster"]);
     expect(inputs[0]?.checked).toBe(true);
     const slant = inputs[labels.indexOf("Slant")] as FakeElement;
     slant.checked = true;
@@ -609,7 +611,7 @@ describe("the preview hands the card its song's look", () => {
     const state = card();
     expect(state).toMatchObject({ kind: "look", demo: true, key: keyOf(6) });
     if (state.kind !== "look") throw new Error("no look");
-    expect(state.look.style).toBe("arc");
+    expect(state.look.style).toBe("spotlight");
     expect(state.look.font.family).toBe("Fraunces");
     expect(looks.map((l) => l.kind)).toEqual(["finding", "look"]);
   });
@@ -620,7 +622,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(500);
     const strobe = card();
     if (strobe.kind !== "look") throw new Error(`no look: ${strobe.kind}`);
-    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("poster Unbounded");
+    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("pop Unbounded");
     bridge.player.select(3);
     await vi.advanceTimersByTimeAsync(100);
     expect(card().kind).toBe("finding");
@@ -641,7 +643,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(10);
     const state = preview.current.look;
     if (state.kind !== "look") throw new Error(`no look: ${state.kind}`);
-    expect(`${state.look.style} ${state.look.font.family}`).toBe("stack Bricolage Grotesque");
+    expect(`${state.look.style} ${state.look.font.family}`).toBe("slant Bricolage Grotesque");
   });
 
   it("once the preview's controller reports its look (onLook), the card shows only reported looks", async () => {

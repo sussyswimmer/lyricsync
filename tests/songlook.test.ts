@@ -5,10 +5,12 @@ import { FONTS } from "../src/core/faces";
 import { parseLrc } from "../src/core/lrc";
 import { coverStats, type CoverStats } from "../src/core/palette";
 import {
+  ALL_STYLES,
   CONTRACT_STYLES,
   CURVE_MAX,
   CURVE_MIN,
   LookKeeper,
+  RETIRED_STYLES,
   STYLES,
   hasWordTags,
   hintsOf,
@@ -395,6 +397,10 @@ function looksOf(builds: readonly Built[]): Map<string, SongLook> {
 
 const face = (family: string) => FONTS.find((x) => x.family === family);
 const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "slant", "pop", "cascade", "tape"];
+/** What Auto and Settings › Style choose between, most reactive first. */
+const LIVE: readonly Style[] = ["slant", "pop", "cascade", "tape", "spotlight", "wave", "reveal", "collage", "lens", "poster"];
+/** The live styles that throw words at the screen, not just light them. */
+const KINETIC: readonly Style[] = ["slant", "pop", "cascade", "tape", "spotlight", "wave"];
 
 // ───────────────────────────── tests ─────────────────────────────
 
@@ -438,10 +444,10 @@ describe("mock tracks", () => {
     expect(look?.energy).toBeLessThanOrEqual(0.2);
   });
 
-  it("never sets the script sampler in a face without Vietnamese, nor on a curve or lens", () => {
+  it("never sets the script sampler in a face without Vietnamese, nor its very long lines in one row", () => {
     const look = looks.get("mock: Script Sampler");
     expect(face(look?.font.family ?? "")?.vietnamese).toBe(true);
-    expect(["stack", "drift"]).toContain(look?.style);
+    expect(["slant", "pop"]).toContain(look?.style); // a word at a time: any line length reads
   });
 
   it("has a look for every track, lyrics or not", () => {
@@ -458,32 +464,34 @@ describe("synthetic profiles", () => {
     return look;
   };
 
-  it("fast rap verse: a flat readable list in a sturdy grotesque, snappy and lively", () => {
+  it("fast rap verse: kinetic Slant in a sturdy grotesque, snappy and at full tilt", () => {
     const look = get("fast rap verse");
-    expect(look.style).toBe("stack");
+    expect(look.style).toBe("slant");
     expect(look.font.family).toBe("Bricolage Grotesque");
-    expect(look.energy).toBeGreaterThanOrEqual(0.6);
+    expect(look.energy).toBeGreaterThanOrEqual(0.8);
     expect(look.snap).toBeGreaterThanOrEqual(0.75);
   });
 
-  it("slow ballad: Arc in a serif, only the longest notes emphasized", () => {
+  it("slow ballad: a Spotlight in a serif, only the longest notes emphasized, still reacting hard", () => {
     const look = get("slow ballad, held notes");
-    expect(look.style).toBe("arc");
+    expect(look.style).toBe("spotlight");
     expect(face(look.font.family)?.serif).toBe(true);
     expect(look.emphasis?.minMs).toBeGreaterThanOrEqual(1100);
-    expect(look.energy).toBeGreaterThanOrEqual(0.3); // synced songs always move
-    expect(look.energy).toBeLessThanOrEqual(0.5);
+    expect(look.energy).toBeGreaterThanOrEqual(0.55); // synced songs always move hard
+    expect(look.energy).toBeLessThan(get("fast rap verse").energy);
+    expect(look.snap).toBeGreaterThanOrEqual(0.5);
   });
 
-  it("sparse ambient: Drift, low energy", () => {
+  it("sparse ambient: a Spotlight or Cascade, the calmest synced songs get, still well past BL", () => {
     const look = get("sparse ambient, long gaps");
-    expect(look.style).toBe("drift");
-    expect(look.energy).toBeLessThanOrEqual(0.45);
+    expect(["spotlight", "cascade"]).toContain(look.style);
+    expect(look.energy).toBeGreaterThanOrEqual(0.55);
+    expect(look.energy).toBeLessThanOrEqual(0.7);
   });
 
-  it("dense CJK pop: a list in a sans (Gothic) stack", () => {
+  it("dense CJK pop: a live style in a sans (Gothic) stack", () => {
     const look = get("dense CJK pop");
-    expect(["stack", "lens"]).toContain(look.style);
+    expect(STYLES).toContain(look.style);
     expect(face(look.font.family)?.serif).toBe(false);
   });
 
@@ -494,9 +502,10 @@ describe("synthetic profiles", () => {
     expect(look.energy).toBeLessThanOrEqual(0.2);
   });
 
-  it("club remix: a Poster in Unbounded capitals", () => {
+  it("club remix: a Wave in Unbounded capitals, at full tilt", () => {
     const look = get("club remix chant");
-    expect(look.style).toBe("poster");
+    expect(look.style).toBe("wave");
+    expect(look.energy).toBeGreaterThanOrEqual(0.9);
     expect(look.font.family).toBe("Unbounded");
     expect(look.textCase).toBe("upper");
   });
@@ -504,7 +513,7 @@ describe("synthetic profiles", () => {
   it("acoustic diary: handwriting or a hairline serif, never a fast style", () => {
     const look = get("acoustic diary");
     expect(["Caveat", "Instrument Serif"]).toContain(look.font.family);
-    expect(["arc", "drift"]).toContain(look.style);
+    expect(["spotlight", "cascade"]).toContain(look.style);
   });
 
   it("bright pop: Lens in Syne", () => {
@@ -597,7 +606,7 @@ describe("determinism and stability", () => {
     expect(loading.traits).toContain("no lyrics");
     expect(loading.reason).toMatch(/^no lyrics.* → [A-Z]/u);
     const withLyrics = keeper.offer(b.input);
-    expect(withLyrics.style).toBe("arc");
+    expect(withLyrics.style).toBe("spotlight");
     expect(keeper.current).toBe(withLyrics);
     expect(keeper.waiting).toBe(false);
   });
@@ -674,7 +683,7 @@ describe("determinism and stability", () => {
     expect(keeper.offer(rapVerse().input)).toBe(a);
     expect(keeper.waiting).toBe(false);
     const b = keeper.offer(slowBallad().input);
-    expect(b.style).toBe("arc");
+    expect(b.style).toBe("spotlight");
   });
 
   it("ranks information by timing first, then the cover", () => {
@@ -764,7 +773,9 @@ describe("legibility invariants over a feature grid", () => {
         expect(look.energy).toBeLessThanOrEqual(0.2);
       }
       if (f.widthP90 >= 100) expect(["arc", "lens"]).not.toContain(look.style);
-      expect(look.energy).toBeGreaterThanOrEqual(f.timing === "unsynced" ? 0.2 : 0.3);
+      // synced lyrics are always drawn in a live style, moving hard (at least about twice BL)
+      if (f.timing !== "unsynced") expect(LIVE).toContain(look.style);
+      expect(look.energy).toBeGreaterThanOrEqual(f.timing === "unsynced" ? 0.2 : 0.55);
       expect(look.energy).toBeLessThanOrEqual(1);
       // a gentle bend: never a bow
       expect(Math.abs(look.curve)).toBeLessThanOrEqual(CURVE_MAX + 2);
@@ -776,18 +787,40 @@ describe("legibility invariants over a feature grid", () => {
     }
   }, 30_000); // 16,200 songs × every face and style: well past the 5 s default on a loaded machine
 
-  it("picks only the thirteen styles: the contract's four modes, Poster, Spotlight, Wave, Reveal, Collage, Slant, Pop, Cascade and Tape", () => {
-    expect(STYLES).toEqual(MODES);
-    expect(STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
+  it("picks only the ten live styles, every one of them somewhere; Arc, Drift and Stack are retired, Stack kept for plain lyrics", () => {
+    expect(ALL_STYLES).toEqual(MODES);
+    expect(ALL_STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
+    expect(STYLES).toEqual(LIVE);
+    expect([...RETIRED_STYLES]).toEqual(["arc", "drift", "stack"]);
+    expect(MODES.filter((m) => !RETIRED_STYLES.includes(m as (typeof RETIRED_STYLES)[number])).sort()).toEqual([...LIVE].sort());
     const looks = [...grid.map((f) => pickLook(f)), ...looksOf([...SYNTHETIC.map((make) => make()), ...mockInputs()]).values()];
     const picked = new Set<string>();
     for (const look of looks) {
-      expect(MODES).toContain(look.style);
-      expect(Object.keys(look.scores.style).sort()).toEqual([...MODES].sort());
+      expect([...LIVE, "stack"]).toContain(look.style);
+      expect(Object.keys(look.scores.style).sort()).toEqual([...LIVE].sort());
       picked.add(look.style);
     }
-    expect([...picked].sort()).toEqual([...MODES].sort()); // and every one of them gets picked somewhere
+    expect([...picked].sort()).toEqual([...LIVE, "stack"].sort()); // and every one of them gets picked somewhere
   }, 30_000); // the same grid again, through pickLook
+
+  it("leans toward the livelier style: kinetic styles win most songs, and a near-tie never trades down to a much calmer one", () => {
+    const counts = new Map<string, number>();
+    for (const f of grid) {
+      if (f.timing === "unsynced") continue;
+      const look = pickLook(f);
+      counts.set(look.style, (counts.get(look.style) ?? 0) + 1);
+      if (look.ties.style) {
+        const best = Math.max(...Object.values(look.scores.style));
+        const bestStyle = LIVE.find((s) => look.scores.style[s as keyof typeof look.scores.style] === best);
+        // a kinetic best is never swapped for Lens or Poster, which mostly light words where they sit
+        if (bestStyle && KINETIC.includes(bestStyle)) expect(["lens", "poster"], f.trackKey).not.toContain(look.style);
+      }
+    }
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    const kinetic = KINETIC.reduce((sum, s) => sum + (counts.get(s) ?? 0), 0);
+    expect(kinetic / total).toBeGreaterThan(0.6);
+    expect(((counts.get("lens") ?? 0) + (counts.get("poster") ?? 0)) / total).toBeLessThan(0.2);
+  }, 30_000);
 });
 
 describe("cost", () => {

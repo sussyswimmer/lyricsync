@@ -83,24 +83,24 @@ describe("the look demos (mock tracks 7–9)", () => {
     }
   });
 
-  it("Ledger Lines: a fast, dense verse under a black-and-white cover is a list in Bricolage", () => {
+  it("Ledger Lines: a fast, dense verse under a black-and-white cover is kinetic Slant in Bricolage", () => {
     const look = lookOf(demo(LEDGER));
-    expect(lookLabel(look)).toBe("Stack · Bricolage");
+    expect(lookLabel(look)).toBe("Slant · Bricolage");
     expect(look.font).toEqual({ family: "Bricolage Grotesque", weight: face("Bricolage Grotesque")?.weight });
     expect(look.textCase).toBe("as-is");
     expect(look.traits).toEqual(expect.arrayContaining(["fast", "black-and-white cover"]));
   });
 
-  it("Strobe Hearts (Club Mix): short shouted hooks under a neon cover are a Poster in Unbounded capitals", () => {
+  it("Strobe Hearts (Club Mix): short shouted hooks under a neon cover Pop in Unbounded capitals", () => {
     const look = lookOf(demo(STROBE));
-    expect(lookLabel(look)).toBe("Poster · Unbounded");
+    expect(lookLabel(look)).toBe("Pop · Unbounded");
     expect(look.textCase).toBe("upper");
     expect(look.traits).toEqual(expect.arrayContaining(["shouted lines", "remix"]));
   });
 
-  it("Glacier Nocturne: sparse, slow lines with long breaks under a cold, dark cover drift, in Instrument Serif", () => {
+  it("Glacier Nocturne: sparse, slow lines with long breaks under a cold, dark cover are a Spotlight in Instrument Serif", () => {
     const look = lookOf(demo(GLACIER));
-    expect(lookLabel(look)).toBe("Drift · Instrument Serif");
+    expect(lookLabel(look)).toBe("Spotlight · Instrument Serif");
     expect(look.traits).toEqual(expect.arrayContaining(["slow", "long instrumental gaps"]));
     // long breaks: the interlude dots get room (3 s or more between two lines)
     const sung = inputOf(demo(GLACIER)).lines.filter((l) => l.words.length > 0);

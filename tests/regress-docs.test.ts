@@ -242,11 +242,13 @@ describe("user guide", () => {
 describe("the look picked per song in the docs", () => {
   it("the guide explains the pick, the card, the Style picker and the Look group, and has no Font or Curve to set", () => {
     const guide = read("docs/USER_GUIDE.md");
-    for (const heading of ["## Look", "### Picked for this song", "### Style", "### The thirteen styles", "### Effects", "### Glow"]) {
+    for (const heading of ["## Look", "### Picked for this song", "### Style", "### The styles", "### Effects", "### Glow"]) {
       expect(guide).toContain(`\n${heading}\n`);
     }
     for (const gone of ["## Style", "## Font", "## Layout", "### Curve"]) expect(guide).not.toContain(`\n${gone}\n`);
     for (const style of ["Slant", "Pop", "Cascade", "Tape"]) expect(guide).toContain(`- **${style}.**`);
+    // retired from Auto and the Style menu: no entry of their own
+    for (const style of ["Arc", "Drift", "Stack"]) expect(guide).not.toContain(`- **${style}.**`);
     for (const label of ["Picked for this song", "Finding lyrics…", "No lyrics for this song", "**Calm**", "**Lively**"]) expect(guide).toContain(label);
   });
 

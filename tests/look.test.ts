@@ -235,13 +235,13 @@ describe("the picked look", () => {
   const pick = (over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, ...over });
   const picked = (p: PickedLook, over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look => resolveLook(settings(over), null, { ...FRAME, ...frame }, p);
 
-  it("defaults to the house look: Arc in Fraunces 700, a gentle curve, BL-like motion", () => {
+  it("defaults to the house look: Slant in Fraunces 700, moving as hard as the calmest synced song", () => {
     expect(DEFAULT_PICK).toEqual({
-      style: "arc",
+      style: "slant",
       font: { family: "Fraunces", weight: 700 },
       curve: 22,
-      energy: 0.45,
-      snap: 0.4,
+      energy: 0.62,
+      snap: 0.55,
       glow: 0.6,
       emphasis: { minMs: 1000, maxChars: 12, lastWordOnly: false },
       scale: 1,
@@ -275,7 +275,7 @@ describe("the picked look", () => {
   it("keeps the stored mode, face and curve for a caller that passes no pick, with the house motion", () => {
     const l = look({ mode: "drift", font: { family: "Caveat", weight: 600 }, curve: 90 });
     expect([l.style, l.family, l.weight, l.curve]).toEqual(["drift", "Caveat", 600, 0.9]);
-    expect([l.energy, l.snap, l.letterSpacing, l.textCase]).toEqual([0.45, 0.4, 0, "as-is"]);
+    expect([l.energy, l.snap, l.letterSpacing, l.textCase]).toEqual([0.62, 0.55, 0, "as-is"]);
     expect(l.bloom).toBeCloseTo(bloomOf(0.6, 40), 12);
   });
 
@@ -291,7 +291,7 @@ describe("the picked look", () => {
 
   it("makes any pick safe to draw", () => {
     const wild = sanePick({ ...pick(), style: "flow" as PickedLook["style"], curve: 400, energy: 7, snap: -1, glow: Number.NaN, scale: 3, letterSpacing: 1, textCase: "loud" as PickedLook["textCase"] });
-    expect(wild).toMatchObject({ style: "arc", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
+    expect(wild).toMatchObject({ style: "slant", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
     expect(sanePick({ ...pick(), emphasis: null }).emphasis).toBeNull();
     expect(picked(pick({ font: { family: "Nope", weight: 0 } })).family).toBe("Fraunces");
   });
@@ -301,7 +301,7 @@ describe("the picked look", () => {
       ...pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }),
       traits: ["big repeating hooks"],
       reason: "big repeating hooks → Lens with Syne",
-      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3, poster: 0.2, spotlight: 0.1, wave: 0.2, reveal: 0.1, collage: 0.1, slant: 0.1, pop: 0.1, cascade: 0.1, tape: 0.1 }, font: { Syne: 0.5 } },
+      scores: { style: { lens: 0.6, poster: 0.2, spotlight: 0.1, wave: 0.2, reveal: 0.1, collage: 0.1, slant: 0.1, pop: 0.1, cascade: 0.1, tape: 0.1 }, font: { Syne: 0.5 } },
       ties: { style: false, font: false },
     };
     const drawn: PickedLook = pickedOf(song);

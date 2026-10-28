@@ -1,4 +1,4 @@
-import { STYLES, type Style } from "../core/songlook";
+import { STYLES, type PickStyle, type Style } from "../core/songlook";
 import type { LookOverride } from "./look";
 
 /**
@@ -11,8 +11,8 @@ import type { LookOverride } from "./look";
 export const STYLE_PIN_KEY = "undertone.style-pin";
 
 /** What a stored value means: a style, or null for Undertone's own pick (anything else counts as that). */
-export function parseStylePin(value: unknown): Style | null {
-  return typeof value === "string" && (STYLES as readonly string[]).includes(value) ? (value as Style) : null;
+export function parseStylePin(value: unknown): PickStyle | null {
+  return typeof value === "string" && (STYLES as readonly string[]).includes(value) ? (value as PickStyle) : null;
 }
 
 /** The pin as a look override for OverlayController.forceLook: only the style, the face stays the song's. */
@@ -29,7 +29,7 @@ function storage(): Storage | null {
   }
 }
 
-export function readStylePin(): Style | null {
+export function readStylePin(): PickStyle | null {
   try {
     return parseStylePin(storage()?.getItem(STYLE_PIN_KEY));
   } catch {
