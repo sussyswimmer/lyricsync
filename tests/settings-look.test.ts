@@ -4,6 +4,7 @@ import { createMockBridge, MOCK_TRACKS, trackKeyOf, type MockBridge } from "../s
 import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
+import { STYLES, styleLabel, type Style } from "../src/core/songlook";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
 import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, GRAPHICS_OFF, GRAPHICS_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
@@ -346,6 +347,7 @@ function motionQuery(matches = false): MotionQuery & { flip(next: boolean): void
 function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | null = motionQuery()) {
   let settings: Settings = { ...structuredClone(DEFAULT_SETTINGS), ...over };
   const edits: Partial<Settings>[] = [];
+  const pins: (Style | null)[] = [];
   let state: PanelState = {
     settings,
     palette: null,
@@ -356,6 +358,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     shortcuts: null,
     loginError: false,
     look: finding(null),
+    stylePin: null,
   };
   const panel = new SettingsPanel(
     {
@@ -368,6 +371,10 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
       setTrackOffset: () => undefined,
       reset: () => undefined,
       suspendShortcuts: () => undefined,
+      pinStyle: (style) => {
+        pins.push(style);
+        panel.render((state = { ...state, stylePin: style }));
+      },
     },
     { platform: "mac", reducedMotion },
   );
@@ -387,6 +394,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     panel,
     root,
     edits,
+    pins,
     group,
     sliderIn,
     setLook(next: LookCardState): void {
@@ -396,38 +404,35 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
 }
 
 describe("the settings panel since contract v4", () => {
-  it("has no Style or Font group and no Curve: the look is picked per song (Style, in Look, can fix one)", () => {
+  it("has a Style group first (Auto or one style for every song), and no Font group or Curve: the face is picked per song", () => {
     const p = mountPanel();
-    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
+    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["Style", "General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
     expect(p.root.all("slider").map((r) => r.one("row-label").textContent)).not.toContain("Curve");
-    // the segments are Behavior's two; the Style chips are Look's
+    // the other choices are Behavior's two segments
     expect(p.root.all("seg").map((g) => g.getAttribute("aria-label"))).toEqual(["When to show lyrics", "Where to show lyrics"]);
-    expect(p.root.all("chips").map((g) => g.getAttribute("aria-label"))).toEqual(["Style"]);
-    for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles"]) expect(p.root.all(gone), gone).toEqual([]);
+    for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles", "chips"]) expect(p.root.all(gone), gone).toEqual([]);
   });
 
-  it("Style: Auto or one of the ten styles for every song, saved as `style`, with a line saying which (contract v9)", () => {
+  it("chooses a style from its tile (saved as the Style setting, contract v9), shows the choice, and Auto lets Undertone pick again", () => {
     const p = mountPanel();
-    const chips = p.group("Look").one("chips");
-    const inputOf = (opt: FakeElement): FakeElement => opt.children.find((c) => c.tagName === "INPUT") as FakeElement;
-    const inputs = chips.all("opt").map(inputOf);
-    expect(inputs.map((i) => i.value)).toEqual(["auto", "arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"]);
-    expect(chips.all("opt-label").map((l) => l.textContent)).toEqual(["Auto", "Arc", "Lens", "Drift", "Stack", "Poster", "Spotlight", "Wave", "Reveal", "Collage", "Reel"]);
-    expect(inputs.map((i) => i.checked)).toEqual([true, ...new Array<boolean>(10).fill(false)]);
-    const hint = p.group("Look").one("chips-hint");
-    expect(hint.textContent).toContain("picks a style for each song");
-    const reel = inputs[10] as FakeElement;
-    reel.checked = true;
-    reel.dispatch("change");
-    expect(p.edits).toEqual([{ style: "reel" }]);
-    expect(inputs.map((i) => i.checked)).toEqual([...new Array<boolean>(10).fill(false), true]);
-    expect(hint.textContent).toContain("Every song in Reel");
-    // the Style row comes first in Look, before the switches
-    expect(p.group("Look").all("row-label").map((l) => l.textContent)).toEqual(["Style", "Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
-    // settings without the field (a core older than v9), or with a name this build doesn't draw: Auto
-    const missing = undefined as unknown as Settings["style"];
-    expect(inputOf(mountPanel({ style: missing }).group("Look").one("chips").one("opt")).checked).toBe(true);
-    expect(inputOf(mountPanel({ style: "spiral" as Settings["style"] }).group("Look").one("chips").one("opt")).checked).toBe(true);
+    const tiles = p.group("Style").one("style-tiles");
+    const inputs = tiles.all("opt").map((o) => o.children[0] as FakeElement);
+    const labels = tiles.all("opt-label").map((l) => l.textContent);
+    expect(labels).toEqual(["Auto", ...STYLES.map((s) => styleLabel(s))]);
+    // Arc, Drift and Stack are retired: no tile for them
+    expect(labels).toEqual(["Auto", "Slant", "Pop", "Reel", "Cascade", "Tape", "Spotlight", "Wave", "Reveal", "Collage", "Lens", "Poster"]);
+    expect(inputs[0]?.checked).toBe(true);
+    const slant = inputs[labels.indexOf("Slant")] as FakeElement;
+    slant.checked = true;
+    slant.dispatch("change");
+    expect(p.pins).toEqual(["slant"]);
+    expect(slant.checked).toBe(true);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Every song in Slant");
+    const auto = inputs[0] as FakeElement;
+    auto.checked = true;
+    auto.dispatch("change");
+    expect(p.pins).toEqual(["slant", null]);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Undertone picks a style for each song");
   });
 
   it("puts the Picked for this song card right under the preview's notice, and shows what the window hands it", () => {
@@ -524,8 +529,8 @@ describe("the settings panel since contract v4", () => {
     graphics.dispatch("change");
     expect(p.edits).toEqual([{ effectsMode: false }, { graphics: false }]);
     expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_OFF);
-    // the sliders come after them, in the same order as before (Style's chips come first)
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Style", "Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
+    // the sliders come after them, in the same order as before (Style is its own group above)
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
   });
 
   it("Text effects and Graphics: show the saved states, and an older core's Effects mode for both", () => {
@@ -607,7 +612,7 @@ describe("the preview hands the card its song's look", () => {
     const state = card();
     expect(state).toMatchObject({ kind: "look", demo: true, key: keyOf(6) });
     if (state.kind !== "look") throw new Error("no look");
-    expect(state.look.style).toBe("arc");
+    expect(state.look.style).toBe("spotlight");
     expect(state.look.font.family).toBe("Fraunces");
     expect(looks.map((l) => l.kind)).toEqual(["finding", "look"]);
   });
@@ -618,7 +623,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(500);
     const strobe = card();
     if (strobe.kind !== "look") throw new Error(`no look: ${strobe.kind}`);
-    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("poster Unbounded");
+    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("pop Unbounded");
     bridge.player.select(3);
     await vi.advanceTimersByTimeAsync(100);
     expect(card().kind).toBe("finding");
@@ -639,7 +644,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(10);
     const state = preview.current.look;
     if (state.kind !== "look") throw new Error(`no look: ${state.kind}`);
-    expect(`${state.look.style} ${state.look.font.family}`).toBe("stack Bricolage Grotesque");
+    expect(`${state.look.style} ${state.look.font.family}`).toBe("slant Bricolage Grotesque");
   });
 
   it("once the preview's controller reports its look (onLook), the card shows only reported looks", async () => {

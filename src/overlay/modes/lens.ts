@@ -20,8 +20,23 @@ import { focusAt, leadTimes, untilNext } from "../motion/schedule";
 import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/scroll";
 import { commit, SongTimeline } from "../motion/timeline";
 import { warmPictures } from "../pictures";
-import { lensTransform, planLens, turnTransform, zoomAt, type LensPlan, type LensPose, type Shape } from "./lens-plan";
-import { COLLAGE_LAYOUT, LENS_LAYOUT, POSTER_LAYOUT, REEL_LAYOUT, REVEAL_LAYOUT, SPOTLIGHT_LAYOUT, WAVE_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
+import { tagFor } from "../../core/palette";
+import { lensTransform, planLens, tagKeyframe, turnTransform, zoomAt, type LensPlan, type LensPose, type Shape } from "./lens-plan";
+import {
+  CASCADE_LAYOUT,
+  COLLAGE_LAYOUT,
+  LENS_LAYOUT,
+  POP_LAYOUT,
+  POSTER_LAYOUT,
+  REEL_LAYOUT,
+  REVEAL_LAYOUT,
+  SLANT_LAYOUT,
+  SPOTLIGHT_LAYOUT,
+  TAPE_LAYOUT,
+  WAVE_LAYOUT,
+  type SlotFit,
+  type SlotLayout,
+} from "./slot-layouts";
 import type { Cue, ModeRenderer } from "./types";
 
 // The fisheye's geometry lives in lens-plan.ts (pure); these stay importable from here.
@@ -99,6 +114,8 @@ interface Row extends Geometry {
   el: HTMLDivElement;
   slots: HTMLElement[];
   words: HTMLElement[];
+  /** each word's tag, behind it in its slot (layouts with `tags`); empty otherwise */
+  tags: HTMLElement[];
   /** every slot's translateY: its baseline on the line's */
   slotY: number;
   karaoke: KaraokeLine | null;
@@ -301,6 +318,7 @@ export class LensMode implements ModeRenderer {
     this.motionKey = paramsKey(this.params);
     host.textContent = "";
     const box = h("div", this.layout.kind === "lens" ? "lens" : `lens is-${this.layout.kind}`);
+    if (this.layout.tags) box.classList.add("has-tags");
     box.style.fontFamily = look.font;
     box.style.fontWeight = String(look.weight);
     box.style.fontSize = `${look.size}px`;
@@ -320,6 +338,7 @@ export class LensMode implements ModeRenderer {
     this.interludes = look.unsynced ? [] : findInterludes(sung);
     this.leads = leadTimes(sung);
     paintVars(box, look, look.size);
+    this.paintTags(box, look);
     this.measure(box, sung, look);
     this.remeasureWhenFontsLoad(box, sung, look);
     this.current = null;
@@ -336,6 +355,7 @@ export class LensMode implements ModeRenderer {
     const box = this.box;
     if (!box) return;
     paintVars(box, look, look.size);
+    this.paintTags(box, look);
     const f = this.focus;
     if (f?.kind === "line") this.shade(f.row, look);
     if (this.prepared) this.shade(this.prepared, look);
@@ -911,10 +931,18 @@ export class LensMode implements ModeRenderer {
     const origin = `0 ${num(this.baseline, 2)}px`;
     const slots: HTMLElement[] = [];
     const words: HTMLElement[] = [];
+    const tags: HTMLElement[] = [];
     line.words.forEach((w, j) => {
       const slot = h("span", "lens-slot");
       slot.dir = "auto";
       slot.style.transformOrigin = origin;
+      if (this.layout.tags) {
+        // behind the word: painted first, in the slot's own box, so it turns and scales with it
+        const tag = h("span", "lens-tag");
+        tag.setAttribute("aria-hidden", "true");
+        slot.append(tag);
+        tags.push(tag);
+      }
       const word = h("span", "kw");
       word.append(h("span", "kw-txt", w.text.trimEnd()));
       slot.append(word);
@@ -926,7 +954,7 @@ export class LensMode implements ModeRenderer {
     });
     // under the next line (and any line fading out), so it never covers them while gliding past
     box.insertBefore(el, box.firstChild);
-    const row: Row = { ...g, index, el, slots, words, slotY: g.baseline - this.baseline, karaoke: null, plan: null };
+    const row: Row = { ...g, index, el, slots, words, tags, slotY: g.baseline - this.baseline, karaoke: null, plan: null };
     this.shade(row, look);
     // where it rests: at rest, and in the line's lens once planned (mountRow)
     this.pose(row, this.layout.pose(g.shape, g.fit, look.width, look.dpr, 0, 0));
@@ -953,6 +981,17 @@ export class LensMode implements ModeRenderer {
       put(slot, "transform", turns ? turnTransform(x, y, pose.rotate[j] ?? 0, pose.scale[j] ?? 1) : lensTransform(x, y, pose.scale[j] ?? 1));
       put(slot, "opacity", num(pose.opacity[j] ?? 1, 3));
     });
+    row.tags.forEach((tag, j) => {
+      const frame = tagKeyframe(pose.tag?.[j] ?? 0);
+      put(tag, "transform", String(frame.transform));
+      put(tag, "opacity", String(frame.opacity));
+    });
+  }
+
+  /** The tags' marker color: the highlight, deep enough that the lyric color reads on it (palette.ts tagFor). */
+  private paintTags(box: HTMLElement, look: Look): void {
+    if (!this.layout.tags) return;
+    put(box, "--ut-tag", tagFor(look.colors.lyric, look.colors.highlight));
   }
 
   /**
@@ -981,10 +1020,14 @@ export class LensMode implements ModeRenderer {
     const plan = row.plan;
     this.pose(row, plan ? plan.final : this.layout.pose(row.shape, row.fit, look.width, look.dpr, 0, 0));
     for (const slot of row.slots) put(slot, "will-change", plan ? "transform, opacity" : "auto");
+    for (const tag of row.tags) put(tag, "will-change", plan ? "transform, opacity" : "auto");
     if (look.unsynced) return;
     row.karaoke ??= this.karaokeFor(row, look);
     row.el.classList.add("has-fx");
-    row.karaoke.mount(t, settleIn, plan ? row.slots.map((el, j) => ({ el, track: plan.tracks[j] ?? { t0: origin, duration: end - origin, frames: [] } })) : []);
+    const idle = { t0: origin, duration: end - origin, frames: [] };
+    const along = plan ? row.slots.map((el, j) => ({ el, track: plan.tracks[j] ?? idle })) : [];
+    if (plan?.tagTracks) row.tags.forEach((el, j) => along.push({ el, track: plan.tagTracks?.[j] ?? idle }));
+    row.karaoke.mount(t, settleIn, along);
   }
 
   private planFor(row: Row, origin: number, end: number, rampFrom: number | null, look: Look): LensPlan {
@@ -1005,6 +1048,7 @@ export class LensMode implements ModeRenderer {
       rotates: this.layout.rotates,
       ...(this.layout.along ? { target: this.layout.along } : {}),
       ...(this.layout.spring ? { spring: this.layout.spring } : {}),
+      tags: this.layout.tags === true,
     });
   }
 
@@ -1161,6 +1205,26 @@ export function createWave(): ModeRenderer {
 /** Reveal: the line appears as it's sung, each word punching in as the voice reaches it (slot-layouts.ts). */
 export function createReveal(): ModeRenderer {
   return new LensMode(REVEAL_LAYOUT);
+}
+
+/** Slant: kinetic type, the line built up word by word in a slanted column, the sung word on a tag (slot-layouts.ts). */
+export function createSlant(): ModeRenderer {
+  return new LensMode(SLANT_LAYOUT);
+}
+
+/** Pop: one word at a time, huge in the middle, slammed in and flung away (slot-layouts.ts). */
+export function createPop(): ModeRenderer {
+  return new LensMode(POP_LAYOUT);
+}
+
+/** Cascade: the line stepping down the screen like stairs, the view panning with the voice (slot-layouts.ts). */
+export function createCascade(): ModeRenderer {
+  return new LensMode(CASCADE_LAYOUT);
+}
+
+/** Tape: cut-out words, each stuck on its own strip of tape as it's sung (slot-layouts.ts). */
+export function createTape(): ModeRenderer {
+  return new LensMode(TAPE_LAYOUT);
 }
 
 /** Collage: the line as cut-out words, each its own size and tilt (slot-layouts.ts). */

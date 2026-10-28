@@ -841,53 +841,50 @@ html.is-scrolled .top {
   color: var(--text);
 }
 
-/* many-way choices: wrapping pills, each with its glyph (the Style setting) */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
+.choice {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+
+/* ---------- style tiles (Settings › Style) ----------
+   Auto and a tile per style: the style's glyph over its name, the chosen one on the accent tint the
+   "Picked for this song" card uses. */
+.style-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
   gap: 6px;
 }
 
-.chips-row {
-  display: block;
-}
-
-.chips-row > .row-label {
-  display: block;
-  margin-bottom: 6px;
-}
-
-.chips .opt-face {
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px 0 7px;
-  border-radius: 13px;
-  background: var(--seg-bg);
+.style-tiles .opt-face {
+  flex-direction: column;
+  gap: 4px;
+  min-height: 56px;
+  padding: 8px 4px 7px;
+  border-radius: 10px;
+  background: var(--btn);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 
-.chips .opt-face svg {
-  width: 18px;
-  height: 12px;
-  flex: none;
+.style-tiles .opt-face .icon {
+  width: 24px;
+  height: 16px;
+  color: var(--muted);
+  transition: color 0.15s ease;
 }
 
-.chips input:checked + .opt-face {
-  background: var(--seg-on);
-  box-shadow:
-    inset 0 0 0 1px var(--accent),
-    var(--seg-on-shadow);
+.style-tiles .opt:hover .opt-face {
+  background: var(--btn-hover);
+}
+
+.style-tiles input:checked + .opt-face {
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--text);
 }
 
-.chips-hint {
-  margin-top: 6px;
-}
-
-.choice {
-  grid-template-columns: 74px minmax(0, 1fr);
+.style-tiles input:checked + .opt-face .icon {
+  color: var(--accent-strong);
 }
 
 /* ---------- sync ---------- */
@@ -1373,6 +1370,7 @@ html.is-scrolled .top {
   .pv-screen,
   .switch,
   .opt-face,
+  .style-tiles .opt-face .icon,
   .picked-glyph,
   .range::-webkit-slider-thumb,
   .step,
@@ -1406,12 +1404,14 @@ html.is-scrolled .top {
   }
 
   .seg .opt-face,
+  .style-tiles .opt-face,
   .step,
   .btn,
   .sc-key {
     border: 1px solid ButtonText;
   }
 
+  .style-tiles input:checked + .opt-face,
   .seg input:checked + .opt-face,
   .sc-key.is-recording {
     border: 2px solid Highlight;

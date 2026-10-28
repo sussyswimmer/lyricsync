@@ -1,7 +1,7 @@
 import type { Style } from "../../core/songlook";
 import { createArc } from "./arc";
 import { createDrift } from "./drift";
-import { createCollage, createLens, createPoster, createReel, createReveal, createSpotlight, createWave } from "./lens";
+import { createCascade, createCollage, createLens, createPop, createPoster, createReel, createReveal, createSlant, createSpotlight, createTape, createWave } from "./lens";
 import type { ModeRenderer } from "./types";
 
 export function createMode(mode: Style): ModeRenderer {
@@ -26,5 +26,13 @@ export function createMode(mode: Style): ModeRenderer {
       return createCollage();
     case "reel":
       return createReel();
+    case "slant":
+      return createSlant();
+    case "pop":
+      return createPop();
+    case "cascade":
+      return createCascade();
+    case "tape":
+      return createTape();
   }
 }

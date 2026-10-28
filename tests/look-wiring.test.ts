@@ -453,14 +453,14 @@ describe("commit timing (SPEC §4.6)", () => {
 });
 
 describe("refinement (SPEC §4.6)", () => {
-  /** Neon Monsoon committed without its cover (its first line was due): Lens · Bricolage. Its cover makes it Arc · Fraunces. */
+  /** Neon Monsoon committed without its cover (its first line was due): Cascade · Fraunces. Its cover makes it Slant · Fraunces. */
   async function committedWithoutCover(): Promise<{ r: Rig; t: MockTrack }> {
     const r = await rig();
     const t = mock("Neon Monsoon");
     await r.start(t);
     await after(300);
     await r.lyrics(lyricsOf(t));
-    expect(lookLabel(r.controller.look)).toBe("Lens · Bricolage");
+    expect(lookLabel(r.controller.look)).toBe("Cascade · Fraunces");
     return { r, t };
   }
 
@@ -474,7 +474,7 @@ describe("refinement (SPEC §4.6)", () => {
     expect(r.controller.songLook).toBe(committed);
     r.stage.reachSafePoint();
     const refined = picked(t, true);
-    expect(lookLabel(refined)).toBe("Arc · Fraunces");
+    expect(lookLabel(refined)).toBe("Slant · Fraunces");
     expect(r.stage.changes).toEqual([[drawnAs(refined), "crossfade"]]);
     expect(r.heard[r.heard.length - 1]).toEqual(refined);
     // one refinement per song: a new picture and later safe points change nothing
@@ -505,7 +505,7 @@ describe("refinement (SPEC §4.6)", () => {
     await after(8000);
     await r.lyrics(lyricsOf(t));
     const synced = picked(t, true);
-    expect(synced.style).toBe("arc");
+    expect(synced.style).toBe("slant");
     // the scene change is the safe point: the new scene comes in with the new look
     expect(r.stage.lyricScenes()).toEqual([
       { kind: "lyrics", key: trackKeyOf(t), look: drawnAs(plain) },
@@ -543,7 +543,7 @@ describe("remembered looks", () => {
     await r.artwork(t);
     r.stage.reachSafePoint();
     const final = r.controller.songLook;
-    expect(final && lookLabel(final)).toBe("Arc · Fraunces");
+    expect(final && lookLabel(final)).toBe("Slant · Fraunces");
 
     await r.start(other, { artwork: art(other) });
     await r.lyrics(lyricsOf(other));
@@ -604,7 +604,7 @@ describe("what onLook hears", () => {
     expect(committed).toBe(r.controller.songLook);
     expect(committed?.traits).not.toContain("no lyrics");
     expect(committed?.reason).toBe(picked(t, true).reason);
-    expect(committed?.scores.style.arc).toBeGreaterThan(0);
+    expect(committed?.scores.style.cascade).toBeGreaterThan(0);
     // resyncs say nothing
     const count = r.heard.length;
     r.bridge.emit("now-playing", playing(t, { artwork: art(t), positionMs: 1000, sampledAt: Date.now() }));
@@ -626,7 +626,7 @@ describe("forced looks (QA)", () => {
     await r.start(sampler, { artwork: art(sampler) });
     await r.lyrics(lyricsOf(sampler));
     const pick = picked(sampler, true);
-    expect(pick.style).toBe("stack");
+    expect(pick.style).toBe("slant");
     // the style is forced, the face stays the song's
     expect(r.stage.last).toMatchObject({ kind: "lyrics", look: { ...drawnAs(pick), style: "drift" } });
     // onLook hears the look as drawn, with the song's reasons
@@ -715,12 +715,13 @@ describe("the mock tracks through the controller", () => {
       expect(got?.look, t.title).toEqual(picked(t, t.cover !== null));
       expect(got?.drawn, t.title).toEqual(drawnAs(got?.look));
     }
-    // the script sampler and plain lyrics get the readable list; the word-timed demos a one-line style
-    expect(of("Script Sampler")?.look?.style).toBe("stack");
+    // plain lyrics get the readable list; the script sampler's very long lines go a word at a time; the
+    // word-timed demos a live one-line style
+    expect(of("Script Sampler")?.look?.style).toBe("slant");
     expect(FONTS.find((f) => f.family === of("Script Sampler")?.look?.font.family)?.vietnamese).toBe(true);
     expect(of("Letters Never Sent")?.look?.style).toBe("stack");
     expect(of("Letters Never Sent")?.look?.emphasis).toBeNull();
-    for (const title of ["Paper Lanterns", "Glass Harbor", "Neon Monsoon"]) expect(["arc", "lens", "poster", "spotlight"], title).toContain(of(title)?.look?.style);
+    for (const title of ["Paper Lanterns", "Glass Harbor", "Neon Monsoon"]) expect(["slant", "cascade", "spotlight"], title).toContain(of(title)?.look?.style);
     // the songs without lyrics keep a provisional look over their state
     expect(of("Ultraviolet Static")).toMatchObject({ kind: "not-found" });
     expect(of("Ultraviolet Static")?.look?.traits).toContain("no lyrics");

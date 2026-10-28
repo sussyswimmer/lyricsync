@@ -31,13 +31,13 @@
 
 <table>
   <tr>
-    <td width="33%" align="center"><img src="docs/media/style-arc.webp" alt="Arc: the line bends in a curve over a purple wave wallpaper"><br><sub><b>Arc</b></sub></td>
-    <td width="33%" align="center"><img src="docs/media/style-lens.webp" alt="Lens: the sung word swells in a straight line over a sunset sea"><br><sub><b>Lens</b></sub></td>
-    <td width="33%" align="center"><img src="docs/media/style-drift.webp" alt="Drift: lines float in depth over an aurora"><br><sub><b>Drift</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-slant.webp" alt="Slant: the line built up word by word in a slanted column, the sung word on a red tag, over a black-and-white street at night"><br><sub><b>Slant</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-pop.webp" alt="Pop: one huge word, slightly turned, in green capitals over an aurora"><br><sub><b>Pop</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-reel.webp" alt="Reel: one big word in the middle with a small icon beside it, the last word small above and the next below, over a dusk sky"><br><sub><b>Reel</b></sub></td>
   </tr>
   <tr>
-    <td width="33%" align="center"><img src="docs/media/style-stack.webp" alt="Stack: a scrolling block of lines over a black-and-white street"><br><sub><b>Stack</b></sub></td>
-    <td width="33%" align="center"><img src="docs/media/style-poster.webp" alt="Poster: bold capitals set as a tilted block over a rainy city"><br><sub><b>Poster</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-cascade.webp" alt="Cascade: the line stepping down the screen like stairs over purple waves"><br><sub><b>Cascade</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-tape.webp" alt="Tape: cut-out words stuck on strips of green tape as they are sung, over a mountain lake at dusk"><br><sub><b>Tape</b></sub></td>
     <td width="33%" align="center"><img src="docs/media/style-spotlight.webp" alt="Spotlight: one huge word at a time over a desert night"><br><sub><b>Spotlight</b></sub></td>
   </tr>
   <tr>
@@ -46,13 +46,13 @@
     <td width="33%" align="center"><img src="docs/media/style-collage.webp" alt="Collage: tilted cut-out capitals over a rainy city at night"><br><sub><b>Collage</b></sub></td>
   </tr>
   <tr>
-    <td width="33%" align="center"></td>
-    <td width="33%" align="center"><img src="docs/media/style-reel.webp" alt="Reel: one big word in the middle with a small icon beside it, the last word small above and the next below, over a dusk sky"><br><sub><b>Reel</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-lens.webp" alt="Lens: the sung word swells in a straight line over a sunset sea"><br><sub><b>Lens</b></sub></td>
+    <td width="33%" align="center"><img src="docs/media/style-poster.webp" alt="Poster: bold capitals set as a tilted block over a rainy city"><br><sub><b>Poster</b></sub></td>
     <td width="33%" align="center"></td>
   </tr>
 </table>
 
-Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover, or you fix one layout for every song in Settings. Reel shows one word at a time, big, with a small sign beside the words that name something: a building for *city*, an arrow for *left*, a phone for *call*. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
+Undertone picks the layout (one of 11 styles, always leaning toward the ones that move most with the voice, like kinetic type that builds up word by word), one of 27 fonts and the motion from the song, and the colors from its cover. Or choose one style for every song in Settings. Reel shows one word at a time, big, with a small sign beside the words that name something: a building for *city*, an arrow for *left*, a phone for *call*. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
 
 ## Words you can picture
 

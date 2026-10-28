@@ -93,6 +93,18 @@ export const FONTS: readonly FontChoice[] = [
   face("Pacifico", "Pacifico", 400, false, { vietnamese: true, cyrillic: true }, `"Brush Script MT"`),
   face("Rubik", "Rubik", 700, false, { cyrillic: true }),
   face("Pirata One", "Pirata One", 400, false, {}, `"Old English Text MT"`),
+  face("Archivo Black", "Archivo Black", 400, false, {}, `"Arial Black"`),
+  face("Bebas Neue", "Bebas Neue", 400, false, {}, `Impact, "Arial Narrow"`),
+  face("Oswald", "Oswald", 700, false, { vietnamese: true, cyrillic: true }, `"Arial Narrow"`),
+  face("DM Serif Display", "DM Serif", 400, true, {}),
+  face("Abril Fatface", "Abril Fatface", 400, true, {}, `Didot, "Bodoni MT"`),
+  face("Sedgwick Ave Display", "Sedgwick Ave", 400, false, { vietnamese: true }, `"Marker Felt"`),
+  face("Bungee", "Bungee", 400, false, { vietnamese: true }, "Impact"),
+  face("Silkscreen", "Silkscreen", 700, false, {}, "ui-monospace, Menlo, Consolas"),
+  face("Bodoni Moda", "Bodoni Moda", 700, true, {}, `Didot, "Bodoni MT"`),
+  face("Shrikhand", "Shrikhand", 400, false, {}, `"Cooper Black"`),
+  face("Chakra Petch", "Chakra Petch", 700, false, { vietnamese: true }),
+  face("Lilita One", "Lilita One", 400, false, {}, `"Arial Rounded MT Bold"`),
   face("System", "System", 700, false, { vietnamese: true, cyrillic: true, greek: true }),
 ];
 

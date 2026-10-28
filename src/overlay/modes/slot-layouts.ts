@@ -17,6 +17,12 @@
  *   and low; each one comes up into its place as the voice reaches it (its own swell is the punch).
  * - Collage: the line as words cut from different magazines: each its own size and tilt, a little off
  *   its row, set in one to three rows. Words not sung yet wait dim and small, and pop as they're sung.
+ * - Slant: kinetic type. The line builds up word by word in a slanted column: each word slides in big
+ *   on a tag of marker color as it's sung, then shrinks into the stack above as the next one lands.
+ * - Pop: one word at a time, huge in the middle, slammed in and flung away, each its own tilt.
+ * - Cascade: the line steps down the screen like stairs, each word one step lower and slanted; the
+ *   view pans down the stairs with the voice, sung words solid, the ones ahead faint.
+ * - Tape: the collage's cut-out words, each stuck on its own strip of tape as it's sung.
  * - Reel: one word at a time, big in the middle of the screen, the word just sung small and faint
  *   above it and the next one small below, like a reel rolling up a word at a time with the voice.
  *   Nothing else: no next line. Its singing position is its own (REEL_LAYOUT.along): it steps to each
@@ -31,7 +37,7 @@ import { MIN_TEXT_PX } from "../look";
 import type { SpringSpec } from "../motion/spring";
 import { blankPose, fitRow, OPACITY_MIN, poseOf, ROW_FIT, smallestScale, type LensPose, type RowFit, type Shape } from "./lens-plan";
 
-export type SlotKind = "lens" | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel";
+export type SlotKind = "lens" | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "slant" | "pop" | "cascade" | "tape" | "reel";
 
 /** A poster's rows: which visual positions each holds, its width at the look's size and its scale. */
 export interface PosterRow {
@@ -83,7 +89,21 @@ export interface ReelFit {
   side: number;
 }
 
+/** Slant, Pop and Cascade: each word's own offset and turn, drawn from the line and word so a song always looks the same. */
+export interface KineticBlock {
+  /** per word, by logical index: how far left (-) or right (+) of the column, in its own sizes */
+  sway: number[];
+  /** per word: its own turn, degrees, on top of the layout's */
+  tilt: number[];
+  /** the baseline's depth in a 1 em box, as a share of the em */
+  baseline: number;
+  /** the look's size, px */
+  size: number;
+}
+
 export interface SlotFit extends RowFit {
+  /** Slant, Pop and Cascade: each word's own offset and turn */
+  kinetic?: KineticBlock;
   /** Poster: its block */
   block?: PosterBlock;
   /** Collage: its block */
@@ -110,12 +130,18 @@ export interface SlotLayout {
   readonly glides: boolean;
   /** words sit in a block of rows: a word's picture travels over the block, not into the row above its word */
   readonly blocks: boolean;
-  /** the focus line is all there is: no next line waits below it, and its words are stacked, so no picture travels its row (Reel) */
+  /**
+   * the focus line is all there is: no next line waits below it, its words are stacked, so no picture
+   * travels its row, and words that name something carry a sign instead (Reel). Slant and Pop hide
+   * their next line in lens.css and keep their pictures.
+   */
   readonly alone: boolean;
   /** its own singing position at song time `t`, in words, in place of lens-plan.ts singingAt (the voice's place in the line) */
   readonly along?: (words: readonly Pick<Word, "start" | "end">[], t: number) => number;
   /** the spring the singing position follows its target on, in place of lens-plan.ts LENS_SPRING */
   readonly spring?: SpringSpec;
+  /** words are set on tags of marker color (LensPose.tag): the mode draws one behind each word */
+  readonly tags?: boolean;
   /** fits line number `line`, measured at `size` px, to the stage; `baseline` is the baseline's depth in a 1 em box, as a share of the em */
   fit(shape: Shape, size: number, stage: Stage, moving: boolean, line: number, baseline: number): SlotFit;
   pose(shape: Shape, fit: SlotFit, width: number, dpr: number, lens: number, a: number, out?: LensPose): LensPose;
@@ -725,6 +751,401 @@ export const REEL_LAYOUT: SlotLayout = {
   },
 };
 
+// ──────────────────────────────────────────── kinetic ───────────────────────────────────────────
+
+/** 0 at or below 0, 1 at or above 1, smooth in between. */
+function ease(x: number): number {
+  const t = clamp01(x);
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Where a word's left baseline point goes when it is drawn `scale` px per px with its middle at
+ * (cx, cy) and turned `deg` around that middle (turnTransform turns around the left baseline point).
+ */
+function aroundMiddle(cx: number, cy: number, w: number, em: number, baseline: number, deg: number): { x: number; y: number } {
+  const theta = (deg * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const dx = -w / 2;
+  const dy = (baseline - 0.5) * em;
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+/** Each word's sway and turn for line `line`: alternating sides, so the column zigzags. */
+function kineticBlock(n: number, line: number, sway: number, tilt: number, baseline: number, size: number): KineticBlock {
+  const out: KineticBlock = { sway: new Array<number>(n), tilt: new Array<number>(n), baseline, size };
+  for (let j = 0; j < n; j++) {
+    const side = (j + line) % 2 === 0 ? -1 : 1;
+    out.sway[j] = side * sway * (0.2 + 0.8 * jitter(line, j, 4));
+    out.tilt[j] = side * tilt * (0.3 + 0.7 * jitter(line, j, 5));
+  }
+  return out;
+}
+
+/** `rest` moved `lens` of the way to the kinetic pose `to`, word by word (reduced motion stays at rest). */
+function blendPose(rest: LensPose, to: LensPose, lens: number): LensPose {
+  const n = rest.x.length;
+  rest.tag ??= new Array<number>(n).fill(0);
+  for (let j = 0; j < n; j++) {
+    rest.x[j] = (rest.x[j] ?? 0) + lens * ((to.x[j] ?? 0) - (rest.x[j] ?? 0));
+    rest.y[j] = (rest.y[j] ?? 0) + lens * ((to.y[j] ?? 0) - (rest.y[j] ?? 0));
+    rest.scale[j] = (rest.scale[j] ?? 1) + lens * ((to.scale[j] ?? 1) - (rest.scale[j] ?? 1));
+    rest.rotate[j] = (rest.rotate[j] ?? 0) + lens * ((to.rotate[j] ?? 0) - (rest.rotate[j] ?? 0));
+    rest.opacity[j] = 1 + lens * ((to.opacity[j] ?? 1) - 1);
+    rest.tag[j] = lens * (to.tag?.[j] ?? 0);
+  }
+  return rest;
+}
+
+// ───────────────────────────────────────────── Slant ────────────────────────────────────────────
+
+/** The whole column is turned this many degrees: it climbs to the right. */
+export const SLANT_TILT = -6;
+/** The word being sung is set this much larger than the line's size... */
+export const SLANT_BIG = 1.75;
+/** ...the word just sung settles to this... */
+const SLANT_PAST = 0.6;
+/** ...and each older one to this share of the one below it. */
+const SLANT_DECAY = 0.84;
+/** Rows are this many of their own sizes apart: set tight, like stacked stickers. */
+const SLANT_LEAD = 1.06;
+/** A word sits up to this many of its sizes left or right of the column, and turns up to this many degrees of its own. */
+const SLANT_SWAY = 0.32;
+const SLANT_WOBBLE = 2.5;
+/** Sung words are gone this many words above the one being sung. */
+export const SLANT_KEEP = 4;
+/** A word comes in over this share of the word before it... */
+const SLANT_ENTER = 0.2;
+/** ...sliding in from this many of its sizes to the right, set this much larger than it lands. */
+const SLANT_SLIDE = 0.85;
+const SLANT_OVERSHOOT = 0.18;
+/** A sung word shrinks into the stack over this share of the next word. */
+const SLANT_SETTLE = 0.3;
+/** The column takes at most this share of the stage's width and height. */
+const SLANT_WIDTH = 0.84;
+const SLANT_HEIGHT = 0.66;
+
+/** Word j's size against the line's at singing position a: coming in, being sung, then settling into the stack. */
+export function slantScale(u: number): number {
+  if (u < 0) return SLANT_BIG * (1 + SLANT_OVERSHOOT * (1 - ease((u + SLANT_ENTER) / SLANT_ENTER)));
+  if (u <= 1) return SLANT_BIG;
+  const q = u - 1;
+  return SLANT_PAST * SLANT_DECAY ** q + (SLANT_BIG - SLANT_PAST) * (1 - ease(q / SLANT_SETTLE));
+}
+
+/** Word j's opacity at u = a - j: in as it arrives, out as it climbs past SLANT_KEEP. */
+export function slantOpacity(u: number): number {
+  if (u < 0) return ease((u + SLANT_ENTER) / SLANT_ENTER);
+  if (u <= 1) return 1;
+  const q = u - 1;
+  // gone by u = SLANT_KEEP: SLANT_KEEP words above the one being sung (whose u is in [0, 1])
+  return (0.78 + 0.22 * (1 - ease(q / SLANT_SETTLE))) * (1 - ease((q - (SLANT_KEEP - 2.4)) / 1.4));
+}
+
+/** Word j's tag at u = a - j: slapped on as the word starts, peeled off as the next one lands. */
+export function slantTag(u: number): number {
+  return ease((u + 0.04) / 0.16) * (1 - ease((u - 1) / 0.18));
+}
+
+export const SLANT_LAYOUT: SlotLayout = {
+  kind: "slant",
+  rotates: true,
+  glides: false,
+  blocks: true,
+  alone: false,
+  tags: true,
+  fit(shape, size, stage, moving, line, baseline) {
+    const rest = fitRow(shape, size, stage.width, false);
+    if (!moving) return { ...rest, restFit: rest.fit, big: 1, em: size };
+    const n = shape.widths.length;
+    const longest = Math.max(1, ...shape.widths);
+    const across = SLANT_BIG * (longest + 2 * SLANT_SWAY * size);
+    let stack = SLANT_BIG;
+    for (let k = 0; k < SLANT_KEEP - 1; k++) stack += SLANT_PAST * SLANT_DECAY ** k;
+    const tall = SLANT_LEAD * stack * size;
+    const turned = Math.abs(Math.sin((SLANT_TILT * Math.PI) / 180));
+    const fit = Math.min(
+      1.1,
+      stage.width > 0 ? (SLANT_WIDTH * stage.width) / (across + turned * tall) : 1,
+      stage.height > 0 ? (SLANT_HEIGHT * stage.height) / (tall + turned * across) : 1,
+    );
+    return {
+      low: SLANT_PAST * SLANT_DECAY ** (SLANT_KEEP - 2),
+      rest: rest.rest,
+      widest: across,
+      fit,
+      restFit: rest.fit,
+      big: SLANT_BIG,
+      em: size,
+      kinetic: kineticBlock(n, line, SLANT_SWAY, SLANT_WOBBLE, baseline, size),
+    };
+  },
+  pose(shape, fit, width, dpr, lens, a, out) {
+    const n = shape.widths.length;
+    const pose = restPose(shape, fit, width, dpr, out ?? blankPose(n));
+    const k = fit.kinetic;
+    if (lens <= 0 || !k) return blendPose(pose, pose, 0);
+    const f = fit.fit;
+    const em = k.size * f;
+    const scales = new Array<number>(n);
+    const heights = new Array<number>(n);
+    for (let j = 0; j < n; j++) {
+      scales[j] = slantScale(a - j);
+      heights[j] = SLANT_LEAD * (scales[j] ?? 1) * em;
+    }
+    // the words top to bottom in sung order, then slid so the one being sung sits on the line's center
+    const z = new Array<number>(n).fill(0);
+    for (let j = 1; j < n; j++) z[j] = (z[j - 1] ?? 0) + ((heights[j - 1] ?? 0) + (heights[j] ?? 0)) / 2;
+    const i = Math.max(0, Math.min(n - 1, Math.floor(a)));
+    const hop = i + 1 < n ? ease((a - i - (1 - SLANT_ENTER)) / SLANT_ENTER) : 0;
+    const focus = (z[i] ?? 0) + hop * ((z[i + 1] ?? z[i] ?? 0) - (z[i] ?? 0));
+    const cx = width / 2;
+    const theta = (SLANT_TILT * Math.PI) / 180;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    // the line's own baseline in a frame centered on the line's center
+    const own = -em / 2 + k.baseline * em;
+    const to = blankPose(n);
+    to.tag = new Array<number>(n).fill(0);
+    for (let j = 0; j < n; j++) {
+      const u = a - j;
+      const s = scales[j] ?? 1;
+      const w = (shape.widths[j] ?? 0) * s * f;
+      const slide = u < 0 ? (1 - ease((u + SLANT_ENTER) / SLANT_ENTER)) * SLANT_SLIDE * s * em : 0;
+      // the word's middle in the column, before the column turns
+      const mx = cx + (k.sway[j] ?? 0) * s * em + slide;
+      const my = (z[j] ?? 0) - focus;
+      const tilt = SLANT_TILT + (k.tilt[j] ?? 0);
+      const p = aroundMiddle(mx, my, w, s * em, k.baseline, k.tilt[j] ?? 0);
+      // the column turns about the line's center
+      to.x[j] = cx + (p.x - cx) * cos - p.y * sin;
+      to.y[j] = (p.x - cx) * sin + p.y * cos - own;
+      to.rotate[j] = tilt;
+      to.scale[j] = s * f;
+      to.opacity[j] = slantOpacity(u);
+      to.tag[j] = slantTag(u);
+    }
+    return blendPose(pose, to, lens);
+  },
+  faintest(fit, width, moving) {
+    if (!moving) return { scale: fit.restFit ?? smallestScale(fit, width, false), opacity: 1 };
+    return { scale: fit.fit * SLANT_PAST * SLANT_DECAY ** 2, opacity: 0.55 };
+  },
+  extent(fit, size) {
+    const big = fit.big ?? 1;
+    if (big === 1) return { above: size / 2, below: size / 2 };
+    let above = 0.5 * big * size;
+    for (let k = 0; k < SLANT_KEEP - 1; k++) above += SLANT_LEAD * SLANT_PAST * SLANT_DECAY ** k * size;
+    return { above, below: 0.62 * big * size };
+  },
+};
+
+// ────────────────────────────────────────────── Pop ─────────────────────────────────────────────
+
+/** The word being sung is set this much larger than the line's size... */
+export const POP_BIG = 2.4;
+/** ...slammed in from this much larger still... */
+const POP_FROM = 1.45;
+/** ...over this share of its word (starting a little before it), rising from this many of its sizes below... */
+const POP_IN = 0.16;
+const POP_LEAD = 0.05;
+const POP_RISE = 0.3;
+/** ...and flung up out of the way over this share of the next word, shrinking to this: both travel up, so the two never sit on each other. */
+const POP_OUT = 0.2;
+const POP_GONE = 0.5;
+const POP_FLING = 1.05;
+/** Each word is turned up to this many degrees, alternating sides. */
+const POP_TILT = 5;
+/** The largest word fills at most this share of the stage's width. */
+const POP_FIT = 0.82;
+
+/** Word j at u = a - j: how far in (0..1) and how far out (0..1). */
+export function popPhase(u: number): { into: number; away: number } {
+  return { into: ease((u + POP_LEAD) / POP_IN), away: ease((u - 1 + POP_LEAD) / POP_OUT) };
+}
+
+export const POP_LAYOUT: SlotLayout = {
+  kind: "pop",
+  rotates: true,
+  glides: false,
+  blocks: true,
+  alone: false,
+  fit(shape, size, stage, moving, line, baseline) {
+    const rest = fitRow(shape, size, stage.width, false);
+    if (!moving) return { ...rest, restFit: rest.fit, big: 1, em: size };
+    const longest = Math.max(1, ...shape.widths);
+    const fit = Math.min(1, stage.width > 0 ? (POP_FIT * stage.width) / (POP_BIG * longest) : 1, stage.height > 0 ? (0.5 * stage.height) / (POP_BIG * size) : 1);
+    const low = Math.max(POP_GONE, Math.min(1, MIN_TEXT_PX / (size * fit)));
+    return {
+      low,
+      rest: rest.rest,
+      widest: POP_BIG * longest,
+      fit,
+      restFit: rest.fit,
+      big: POP_BIG,
+      em: size,
+      kinetic: kineticBlock(shape.widths.length, line, 0, POP_TILT, baseline, size),
+    };
+  },
+  pose(shape, fit, width, dpr, lens, a, out) {
+    const n = shape.widths.length;
+    const pose = restPose(shape, fit, width, dpr, out ?? blankPose(n));
+    const k = fit.kinetic;
+    if (lens <= 0 || !k) return blendPose(pose, pose, 0);
+    const f = fit.fit;
+    const em = k.size * f;
+    const own = -em / 2 + k.baseline * em;
+    const to = blankPose(n);
+    for (let j = 0; j < n; j++) {
+      const { into, away } = popPhase(a - j);
+      const s = POP_BIG * (POP_FROM - (POP_FROM - 1) * into) * (1 - (1 - POP_GONE) * away);
+      const w = (shape.widths[j] ?? 0) * s * f;
+      const tilt = (k.tilt[j] ?? 0) * (1 + 0.6 * (1 - into) + 1.4 * away);
+      // up from below, then up and out to its side: a conveyor, so the outgoing word clears the incoming one
+      const mx = width / 2 + away * Math.sign(k.tilt[j] ?? 1) * 0.5 * em;
+      const my = (1 - into) * POP_RISE * POP_BIG * em - away * POP_FLING * POP_BIG * em;
+      const p = aroundMiddle(mx, my, w, s * em, k.baseline, tilt);
+      to.x[j] = p.x;
+      to.y[j] = p.y - own;
+      to.rotate[j] = tilt;
+      to.scale[j] = s * f;
+      // in late and out early, so at the hand-off one word is mostly there and the other mostly gone
+      to.opacity[j] = into * into * (1 - away) ** 2;
+    }
+    return blendPose(pose, to, lens);
+  },
+  faintest(fit, width, moving) {
+    if (!moving) return { scale: fit.restFit ?? smallestScale(fit, width, false), opacity: 1 };
+    return { scale: fit.fit * POP_BIG * POP_GONE, opacity: 0.4 };
+  },
+  extent(fit, size) {
+    const big = fit.big ?? 1;
+    return { above: 0.62 * big * size, below: 0.45 * big * size };
+  },
+};
+
+// ──────────────────────────────────────────── Cascade ───────────────────────────────────────────
+
+/** Each word is one step lower than the one before, this many of the line's sizes... */
+const CASCADE_STEP = 0.72;
+/** ...and turned this many degrees (give or take its own wobble): each step climbs to the right. */
+export const CASCADE_TILT = -7;
+const CASCADE_WOBBLE = 2;
+/** The word being sung is drawn this much larger... */
+export const CASCADE_BIG = 1.3;
+/** ...words ahead wait this faint, sung ones stay at this... */
+export const CASCADE_GHOST = 0.24;
+const CASCADE_SUNG = 0.86;
+/** ...and words more than this many away fade out over about as many again. */
+const CASCADE_NEAR = 2.2;
+const CASCADE_FADE = 2.4;
+/** The word being sung takes at most this share of the stage's width. */
+const CASCADE_FIT = 0.42;
+
+export const CASCADE_LAYOUT: SlotLayout = {
+  kind: "cascade",
+  rotates: true,
+  glides: false,
+  blocks: true,
+  alone: false,
+  fit(shape, size, stage, moving, line, baseline) {
+    const rest = fitRow(shape, size, stage.width, false);
+    if (!moving) return { ...rest, restFit: rest.fit, big: 1, em: size };
+    const longest = Math.max(1, ...shape.widths);
+    const fit = Math.min(1.05, stage.width > 0 ? (CASCADE_FIT * stage.width) / (CASCADE_BIG * longest) : 1, stage.height > 0 ? (0.6 * stage.height) / ((CASCADE_BIG + 4 * CASCADE_STEP) * size) : 1);
+    return {
+      low: 1,
+      rest: rest.rest,
+      widest: rest.rest,
+      fit,
+      restFit: rest.fit,
+      big: CASCADE_BIG,
+      em: size,
+      kinetic: kineticBlock(shape.widths.length, line, 0, CASCADE_WOBBLE, baseline, size),
+    };
+  },
+  pose(shape, fit, width, dpr, lens, a, out) {
+    const n = shape.widths.length;
+    const pose = restPose(shape, fit, width, dpr, out ?? blankPose(n));
+    const k = fit.kinetic;
+    if (lens <= 0 || !k || n === 0) return blendPose(pose, pose, 0);
+    const f = fit.fit;
+    const em = k.size * f;
+    const own = -em / 2 + k.baseline * em;
+    const scales = new Array<number>(n);
+    for (let j = 0; j < n; j++) {
+      const d = j + 0.5 - a;
+      scales[j] = f * (1 + (CASCADE_BIG - 1) * Math.exp(-(d * d) / 0.5));
+    }
+    // the stairs: left to right in visual order, one step down per word in sung order
+    const starts = new Array<number>(n).fill(0);
+    let x = 0;
+    for (let v = 0; v < shape.order.length; v++) {
+      const j = shape.order[v] ?? v;
+      starts[j] = x;
+      const s = scales[j] ?? f;
+      x += s * (shape.widths[j] ?? 0) + (shape.gaps[v] ?? 0) * s * 1.4;
+    }
+    // the view follows the voice down the stairs: the singing point sits on the stage's middle
+    const i = Math.max(0, Math.min(n - 1, Math.floor(a)));
+    const into = clamp01(a - i);
+    const along = (starts[i] ?? 0) + into * (scales[i] ?? f) * (shape.widths[i] ?? 0);
+    const down = (i + ease(into)) * CASCADE_STEP * em;
+    const to = blankPose(n);
+    for (let j = 0; j < n; j++) {
+      const d = j + 0.5 - a;
+      const s = scales[j] ?? f;
+      const w = (shape.widths[j] ?? 0) * s;
+      const tilt = CASCADE_TILT + (k.tilt[j] ?? 0);
+      const p = aroundMiddle(width / 2 + (starts[j] ?? 0) - along + w / 2, j * CASCADE_STEP * em - down, w, s * k.size, k.baseline, tilt);
+      const u = a - j;
+      const lit = u >= 1 ? CASCADE_SUNG : u >= 0 ? 1 : CASCADE_GHOST + (1 - CASCADE_GHOST) * ease((u + 0.15) / 0.15);
+      to.x[j] = p.x;
+      to.y[j] = p.y - own;
+      to.rotate[j] = tilt;
+      to.scale[j] = s;
+      to.opacity[j] = lit * (1 - ease((Math.abs(d) - CASCADE_NEAR) / CASCADE_FADE));
+    }
+    return blendPose(pose, to, lens);
+  },
+  faintest(fit, width, moving) {
+    if (!moving) return { scale: fit.restFit ?? smallestScale(fit, width, false), opacity: 1 };
+    return { scale: fit.fit, opacity: CASCADE_GHOST };
+  },
+  extent(fit, size) {
+    const big = fit.big ?? 1;
+    const reach = big > 1 ? 2 * CASCADE_STEP * size : 0;
+    return { above: 0.62 * big * size + reach, below: 0.45 * big * size + reach };
+  },
+};
+
+// ───────────────────────────────────────────── Tape ─────────────────────────────────────────────
+
+/** A sung word's strip of tape: on as the word starts, and it stays. */
+export function tapeTag(u: number): number {
+  return ease((u + 0.03) / 0.18);
+}
+
+export const TAPE_LAYOUT: SlotLayout = {
+  kind: "tape",
+  rotates: true,
+  glides: false,
+  blocks: true,
+  alone: false,
+  tags: true,
+  fit: (shape, size, stage, moving, line, baseline) => COLLAGE_LAYOUT.fit(shape, size, stage, moving, line + 3, baseline),
+  pose(shape, fit, width, dpr, lens, a, out) {
+    const pose = COLLAGE_LAYOUT.pose(shape, fit, width, dpr, lens, a, out);
+    const n = shape.widths.length;
+    pose.tag ??= new Array<number>(n).fill(0);
+    for (let j = 0; j < n; j++) pose.tag[j] = lens * tapeTag(a - j);
+    return pose;
+  },
+  faintest: (fit, width, moving) => COLLAGE_LAYOUT.faintest(fit, width, moving),
+  extent: (fit, size) => COLLAGE_LAYOUT.extent(fit, size),
+};
+
 export const SLOT_LAYOUTS: Record<SlotKind, SlotLayout> = {
   lens: LENS_LAYOUT,
   poster: POSTER_LAYOUT,
@@ -733,4 +1154,8 @@ export const SLOT_LAYOUTS: Record<SlotKind, SlotLayout> = {
   reveal: REVEAL_LAYOUT,
   collage: COLLAGE_LAYOUT,
   reel: REEL_LAYOUT,
+  slant: SLANT_LAYOUT,
+  pop: POP_LAYOUT,
+  cascade: CASCADE_LAYOUT,
+  tape: TAPE_LAYOUT,
 };

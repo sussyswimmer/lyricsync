@@ -1,7 +1,7 @@
 import type { Settings } from "../../contract/contract";
 import { isMove, isSplash, PLAIN_FLAIR, saneFlair, type Flair } from "../core/flair";
 import type { Palette } from "../core/palette";
-import { STYLES, type Style } from "../core/songlook";
+import { ALL_STYLES, STYLES, type PickStyle, type Style } from "../core/songlook";
 import { FONTS, fontFor, stackFor, type CjkLang } from "./fonts";
 import type { TextCase } from "./motion/letters";
 import { bloomOf, type EmphasisRule } from "./motion/params";
@@ -40,11 +40,11 @@ export interface PickedLook {
 
 /** The house look, for a song nothing is known about yet (SPEC §2.2). */
 export const DEFAULT_PICK: PickedLook = Object.freeze({
-  style: "arc" as const,
+  style: "slant" as const,
   font: Object.freeze({ family: "Fraunces", weight: 700 }),
   curve: 22,
-  energy: 0.45,
-  snap: 0.4,
+  energy: 0.62,
+  snap: 0.55,
   glow: 0.6,
   emphasis: Object.freeze({ minMs: 1000, maxChars: 12, lastWordOnly: false }),
   scale: 1,
@@ -133,8 +133,8 @@ export function workAreaReference(stageHeight: number, screenHeight: number): nu
 const clamp = (x: number, lo: number, hi: number): number => (x <= lo ? lo : x >= hi ? hi : x);
 const finiteOr = (x: unknown, fallback: number): number => (typeof x === "number" && Number.isFinite(x) ? x : fallback);
 
-/** Every style a look can be drawn in (core/songlook.ts STYLES). */
-export const MODES: readonly Style[] = STYLES;
+/** Every style a look can be drawn in (core/songlook.ts ALL_STYLES), the retired ones included. */
+export const MODES: readonly Style[] = ALL_STYLES;
 
 export function isMode(value: unknown): value is Style {
   return typeof value === "string" && (MODES as readonly string[]).includes(value);
@@ -170,11 +170,11 @@ export function graphicsOf(settings: Settings): boolean {
 /**
  * Settings.style (contract v9), the Style setting: the style every song is drawn in, or null for
  * "auto" (Undertone picks one per song). A store from before v9 has none, which counts as auto; so
- * does a name this build doesn't draw.
+ * does a name Settings › Style doesn't offer (a retired style, or one this build doesn't draw).
  */
-export function styleChoiceOf(settings: Settings): Style | null {
+export function styleChoiceOf(settings: Settings): PickStyle | null {
   const value: unknown = "style" in settings ? settings.style : undefined;
-  return isMode(value) ? value : null;
+  return typeof value === "string" && (STYLES as readonly string[]).includes(value) ? (value as PickStyle) : null;
 }
 
 /** A song's look with the Style setting's style in place of its own (`chosen` null: as picked). */

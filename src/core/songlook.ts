@@ -9,7 +9,7 @@
  * overrides a clear pick. `LookKeeper` keeps the look stable while a song plays (one refinement at
  * most, applied at a safe point). Legibility comes first: a face without the song's letters, or too
  * wide or busy for its lines, is vetoed before any taste is scored, and long lines weigh heavily
- * against Arc and Lens.
+ * against the styles that set the whole line in one row. Among styles that fit, the livelier one wins.
  */
 import type { Lyrics, Mode, NowPlaying } from "../../contract/contract";
 import { cjkLang, FONTS, fontFor, type CjkLang, type FontChoice } from "./faces";
@@ -21,19 +21,33 @@ import { splitWords, syllables, type Timeline } from "./timing";
 // ───────────────────────────────────────────── types ─────────────────────────────────────────────
 
 /**
- * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and six the
+ * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and ten the
  * overlay draws without the core knowing: Poster (the line as a block of rows set big), Spotlight
  * (the line sliding through the middle with the voice), Wave (the line riding a wave whose crest
  * follows the voice), Reveal (the line appearing word by word as it's sung), Collage (the line as
- * cut-out words, each its own size and tilt) and Reel (one word at a time, big in the middle, the
- * last word above it and the next below). Settings never names a style since contract v4, so the
- * new ones need no contract change.
+ * cut-out words, each its own size and tilt), Slant (kinetic type: the line built up word by word in a
+ * slanted column, the sung word on a tag), Pop (one word at a time, huge, slammed in), Cascade (the
+ * line stepping down the screen like stairs), Tape (cut-out words stuck on strips of tape as they're
+ * sung) and Reel (one word at a time, big in the middle, the last word above it and the next below,
+ * a sign beside the words that have one). Settings › Style (contract v9) names one of them, or
+ * "auto" for the picker's choice; the overlay draws all of them without the core knowing how.
  */
-export type Style = Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel";
+export type Style = Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "slant" | "pop" | "cascade" | "tape" | "reel";
 /** The contract's modes. */
 export const CONTRACT_STYLES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
-/** The styles the picker chooses between; on equal scores the earlier one ranks first. */
-export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight", "wave", "reveal", "collage", "reel"];
+/** Every style the overlay can draw. */
+export const ALL_STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight", "wave", "reveal", "collage", "slant", "pop", "cascade", "tape", "reel"];
+/**
+ * Styles neither Auto nor Settings › Style offers any more: they light the line but barely move with
+ * the voice. Stack is still how plain lyrics are drawn (nothing can follow a voice without timing).
+ */
+export const RETIRED_STYLES = ["arc", "drift", "stack"] as const satisfies readonly Style[];
+export type PickStyle = Exclude<Style, (typeof RETIRED_STYLES)[number]>;
+/**
+ * The styles the picker chooses between and Settings › Style offers, most reactive first; on equal
+ * scores the earlier one ranks first.
+ */
+export const STYLES: readonly PickStyle[] = ["slant", "pop", "reel", "cascade", "tape", "spotlight", "wave", "reveal", "collage", "lens", "poster"];
 
 /** How the lyrics are timed: per word (enhanced LRC), per line, evenly paced plain text, or no lyrics. */
 export type Timing = "word" | "line" | "unsynced" | "none";
@@ -160,7 +174,7 @@ export interface SongLook {
   /** e.g. "slow, long held notes → Arc with Instrument Serif" */
   reason: string;
   /** the scores behind the pick, for QA */
-  scores: { style: Record<Style, number>; font: Record<string, number> };
+  scores: { style: Record<PickStyle, number>; font: Record<string, number> };
   /** true where a near-tie was settled by the trackKey hash rather than by the scores */
   ties: { style: boolean; font: boolean };
 }
@@ -517,39 +531,52 @@ const STYLE_LABEL: Record<Style, string> = {
   reveal: "Reveal",
   collage: "Collage",
   reel: "Reel",
+  slant: "Slant",
+  pop: "Pop",
+  cascade: "Cascade",
+  tape: "Tape",
 };
-/** How far the house look (Arc, Fraunces) is favored when the lyrics are too short to tell much. */
+/** How far the house face (Fraunces) is favored when the lyrics are too short to tell much. */
 const HOUSE_PRIOR = 0.15;
-/** A near-tie this close goes to the trackKey hash, so similar songs don't all look the same. */
-const STYLE_TIE = 0.04;
 /**
- * The one-line styles (the song in focus a line at a time) are each other's alternatives: any of them
- * scoring within this of the best one-line pick can be a song's look, chosen by the trackKey hash. So
- * one song gets Arc, the next Poster, Spotlight or Lens, where each would suit it, instead of every
- * such song getting the same one.
+ * How much each style moves with the voice, 0..1: Pop and Slant throw every word at the screen; Lens
+ * and Poster mostly light words where they sit. The picker always leans toward the livelier ones.
  */
-export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight", "wave", "reveal", "collage", "reel"];
-const ONE_LINE_VARIETY = 0.1;
+const REACTIVITY: Record<PickStyle, number> = {
+  slant: 1,
+  pop: 1,
+  reel: 0.85,
+  cascade: 0.9,
+  tape: 0.85,
+  spotlight: 0.85,
+  wave: 0.85,
+  reveal: 0.7,
+  collage: 0.7,
+  lens: 0.6,
+  poster: 0.55,
+};
+/**
+ * How far reactivity weighs against fit. Pop over Poster is worth about 0.22: more than most edges in
+ * fit, less than the legibility penalties (long lines, a pace too fast to read a word at a time).
+ */
+const REACTIVITY_WEIGHT = 0.5;
+/**
+ * Styles scoring within this of the best can be a song's look, chosen by the trackKey hash, so similar
+ * songs don't all look the same. Tight: the best fit wins unless another is about as good, and never
+ * for a style much calmer than the best.
+ */
+const STYLE_VARIETY = 0.04;
+const VARIETY_CALMER = 0.2;
 const FONT_TIE = 0.03;
 
-function styleScores(f: SongFeatures, a: Axes): Record<Style, number> {
+function styleScores(f: SongFeatures, a: Axes): Record<PickStyle, number> {
   const timed = f.timing === "word" ? 1 : f.timing === "line" ? 0.5 : 0;
-  const moody = (1 - a.vivid) * 0.5 + (1 - a.light) * 0.5;
-  const scores: Record<Style, number> = {
-    // one line at a time on a curve: held notes, slower songs, lines short enough to bend; and the
-    // house look, leaned toward as short lyrics say less
-    arc:
-      0.34 * a.sustain + 0.24 * (1 - a.pace) + 0.16 * (1 - a.density) + 0.12 * a.punch * (1 - a.pace) + 0.14 * (0.5 + 0.5 * timed) - 0.45 * a.longLines +
-      HOUSE_PRIOR * (1 - a.confidence),
+  const scores: Record<PickStyle, number> = {
     // the spotlight follows the voice: needs real timing (it magnifies the estimated word of a line-timed
     // song more than any other style), a pace the eye can follow, hooks
     lens:
       0.26 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.3 : 0) + 0.26 * bell(a.pace, 0.5, 0.32) + 0.2 * a.punch + 0.14 * a.vivid + 0.14 * (1 - 0.5 * a.sustain) -
       0.5 * a.longLines - 0.3 * smooth(a.pace, 0.8, 1),
-    // floating depth: room between lines, slow, moody covers
-    drift: 0.42 * a.space + 0.2 * (1 - a.pace) + 0.18 * moody + 0.1 * has(f, "dreamy") + 0.1 * (1 - a.punch) - 0.2 * a.longLines,
-    // a flat, readable list: fast and dense, long lines (it wraps), reading ahead
-    stack: 0.36 * a.density + 0.3 * a.pace + 0.14 * a.longLines + 0.1 * (1 - a.space) + 0.1 * (f.script === "cjk" ? a.density : 0),
     // a gig poster: hooks, a beat to dance to, bright covers; short and medium lines set big in rows
     poster:
       0.3 * a.punch + 0.22 * bell(a.pace, 0.55, 0.3) + 0.16 * a.vivid + 0.12 * (1 - a.sustain) + 0.1 * has(f, "dance") + 0.1 * timed + 0.25 * smooth(f.shout, 0.05, 0.4) -
@@ -574,36 +601,48 @@ function styleScores(f: SongFeatures, a: Axes): Record<Style, number> {
     collage:
       0.3 * a.punch + 0.3 * smooth(f.shout, 0.05, 0.4) + 0.2 * bell(a.pace, 0.6, 0.3) + 0.16 * has(f, "live") + 0.18 * (1 - a.vivid) * (1 - 0.5 * a.light) +
       0.1 * timed - 0.45 * a.longLines - 0.2 * smooth(f.widthMedian, 32, 48) - 0.1 * a.intimacy - 0.02,
-    // one word at a time, big: R&B, hip-hop and pop sung at a pace the eye keeps up with word by word,
-    // with a beat, under late-night and dark covers; the only one-line style easy with long lines (it
-    // never sets a whole line); needs real timing, not a blur of words, not a diary song (those get a
-    // curve or depth), and not CJK (a character at a time)
+    // one word at a time, big, like the lyric reels on social media: R&B, hip-hop and pop with hooks
+    // that come back, sung without held notes at a pace the eye keeps up with word by word, under
+    // muted late-night covers; easy with long lines (it never sets a whole line). Needs real word
+    // timing (an estimated word, a word at a time, lands wrong), and isn't for a blur of words, a
+    // shouted chant (Pop's), a bright acoustic song or CJK (a character at a time)
     reel:
-      0.26 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.55 : 0) + 0.26 * bell(a.pace, 0.45, 0.32) + 0.16 * a.punch + 0.1 * (1 - a.density) +
-      0.08 * a.longLines + 0.1 * (1 - a.light) - 0.15 * a.intimacy - 0.35 * smooth(a.pace, 0.72, 0.95) - 0.5 * f.cjkShare + 0.08,
+      0.28 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.15 : 0) + 0.16 * bell(a.pace, 0.35, 0.38) + 0.14 * a.punch + 0.18 * smooth(f.repetition, 0.15, 0.55) +
+      0.1 * (1 - a.sustain) + 0.05 * (1 - a.density) + 0.1 * (1 - a.vivid) + 0.1 * (1 - a.light) - 0.2 * smooth(a.light, 0.5, 0.8) - 0.2 * smooth(f.shout, 0.05, 0.4) -
+      0.35 * smooth(a.pace, 0.72, 0.95) - 0.5 * f.cjkShare - 0.18,
+    // kinetic type, word by word up a slanted column: rap, drill and fast punchy hooks, dark covers;
+    // each word gets its own row, so long bars still fit; needs the timing to be real
+    slant:
+      0.28 * a.pace + 0.24 * a.punch + 0.16 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.45 : 0) + 0.12 * a.density + 0.1 * (1 - a.sustain) +
+      0.1 * (1 - a.light) - 0.08 * a.longLines - 0.12 * a.intimacy - 0.25 * smooth(a.pace, 0.92, 1) - 0.06,
+    // one word at a time, huge: chants and hooks, shouted and repeated lines, a pace slow enough to read
+    // a word at a time
+    pop:
+      0.24 * a.punch + 0.22 * smooth(f.shout, 0.05, 0.4) + 0.18 * bell(a.pace, 0.5, 0.25) + 0.16 * smooth(f.repetition, 0.3, 0.7) + 0.12 * timed + 0.1 * f.shortLines -
+      0.3 * smooth(a.pace, 0.7, 0.9) - 0.2 * a.longLines - 0.06,
+    // stairs down the screen: flowing mid-tempo songs, held notes, vivid covers, dreamy titles
+    cascade:
+      0.22 * bell(a.pace, 0.45, 0.3) + 0.18 * a.sustain + 0.16 * a.vivid + 0.14 * timed + 0.12 * has(f, "dreamy") + 0.1 * (1 - a.density) + 0.08 * a.space -
+      0.3 * a.longLines - 0.06,
+    // a DIY zine taped together: indie, punk-pop and garage songs, bright covers, live takes, hooks
+    tape:
+      0.26 * a.punch + 0.2 * bell(a.pace, 0.55, 0.3) + 0.24 * a.vivid * (0.4 + 0.6 * a.light) + 0.14 * has(f, "live") + 0.2 * smooth(f.shout, 0.05, 0.4) + 0.1 * timed -
+      0.4 * a.longLines - 0.15 * smooth(f.widthMedian, 32, 48) - 0.03,
   };
-  for (const s of STYLES) scores[s] = round(scores[s], 3);
+  for (const s of STYLES) scores[s] = round(scores[s] + REACTIVITY_WEIGHT * REACTIVITY[s], 3);
   return scores;
 }
 
-function pickStyle(f: SongFeatures, a: Axes): { style: Style; scores: Record<Style, number>; tie: boolean } {
+function pickStyle(f: SongFeatures, a: Axes): { style: Style; scores: Record<PickStyle, number>; tie: boolean } {
   const scores = styleScores(f, a);
   // Plain lyrics paced evenly can be anywhere in the song: show several lines, and nothing that
   // tracks a word. Without lyrics the stage shows a state, so the style is only a placeholder.
   if (f.timing === "none" || f.timing === "unsynced") return { style: "stack", scores, tie: false };
-  const ranked = STYLES.map((s): [Style, number] => [s, scores[s]]).sort((x, y) => y[1] - x[1]);
-  const [first, second] = ranked;
-  if (!first) return { style: "arc", scores, tie: false };
-  if (ONE_LINE_STYLES.includes(first[0])) {
-    const near = ranked.filter(([s, v]) => ONE_LINE_STYLES.includes(s) && first[1] - v < ONE_LINE_VARIETY);
-    if (near.length > 1) {
-      const pick = near[Math.min(near.length - 1, Math.floor(stableHash(`${f.trackKey}#style`) * near.length))] ?? first;
-      return { style: pick[0], scores, tie: true };
-    }
-  }
-  const tie = !!second && first[1] - second[1] < STYLE_TIE;
-  if (second && tie && stableHash(`${f.trackKey}#style`) >= 0.5) return { style: second[0], scores, tie };
-  return { style: first[0], scores, tie };
+  const order = ranked(scores, STYLES);
+  const best = order[0] ?? "slant";
+  const near = order.filter((s) => scores[best] - scores[s] < STYLE_VARIETY && REACTIVITY[s] >= REACTIVITY[best] - VARIETY_CALMER);
+  if (near.length < 2) return { style: best, scores, tie: false };
+  return { style: near[Math.min(near.length - 1, Math.floor(stableHash(`${f.trackKey}#style`) * near.length))] ?? best, scores, tie: true };
 }
 
 // ─────────────────────────────────────────── fonts ───────────────────────────────────────────
@@ -630,6 +669,18 @@ const METRICS: Record<string, { scale: number; spacing: number }> = {
   Pacifico: { scale: 0.96, spacing: 0 },
   Rubik: { scale: 0.96, spacing: -0.01 },
   "Pirata One": { scale: 1.08, spacing: 0.01 },
+  "Archivo Black": { scale: 0.9, spacing: -0.01 },
+  "Bebas Neue": { scale: 1.12, spacing: 0.02 },
+  Oswald: { scale: 1.04, spacing: 0 },
+  "DM Serif Display": { scale: 1.02, spacing: 0 },
+  "Abril Fatface": { scale: 0.98, spacing: 0 },
+  "Sedgwick Ave Display": { scale: 1.08, spacing: 0 },
+  Bungee: { scale: 0.84, spacing: 0 },
+  Silkscreen: { scale: 0.82, spacing: 0 },
+  "Bodoni Moda": { scale: 1.02, spacing: 0 },
+  Shrikhand: { scale: 0.9, spacing: 0 },
+  "Chakra Petch": { scale: 0.98, spacing: 0 },
+  "Lilita One": { scale: 1, spacing: 0 },
   System: { scale: 1, spacing: 0 },
 };
 
@@ -666,22 +717,67 @@ function fontVeto(face: FontChoice, f: SongFeatures, a: Axes): string | null {
     case "Pirata One":
       if (f.widthMedian > 28 || f.widthP90 > 46 || a.pace > 0.75 || a.light > 0.42) return "blackletter only for short lines of dark, heavy songs";
       break;
+    case "Archivo Black":
+      if (f.widthP90 > 64) return "too heavy and wide for long lines";
+      break;
+    case "Bungee":
+      if (f.widthP90 > 40 || f.widthMedian > 28) return "block capitals too wide for long lines";
+      break;
+    case "Silkscreen":
+      if (f.widthP90 > 40 || a.pace > 0.75) return "pixel face too wide or busy for long, fast lines";
+      break;
+    case "Shrikhand":
+      if (f.widthP90 > 48) return "too wide for long lines";
+      break;
+    case "Sedgwick Ave Display":
+      if (f.widthP90 > 70 || a.pace < 0.25) return "graffiti hand for street songs, not long or slow lines";
+      break;
+    case "Abril Fatface":
+      if (a.pace > 0.8) return "hairline serif too thin for fast lines";
+      break;
+    case "Bodoni Moda":
+      if (a.pace > 0.7 || a.density > 0.65) return "hairline serif too thin for fast dense lines";
+      break;
   }
   return null;
 }
 
 /** Faces that suit each style. */
-const HARMONY: Record<Style, Partial<Record<string, number>>> = {
-  arc: { Fraunces: 0.08, "Instrument Serif": 0.08, "Playfair Display": 0.06, Caveat: 0.04, Pacifico: 0.04 },
-  poster: { Unbounded: 0.1, Syne: 0.1, Anton: 0.1, "Bricolage Grotesque": 0.08, Righteous: 0.06, "Pirata One": 0.06, Rubik: 0.04, Fraunces: 0.04 },
-  spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, "Playfair Display": 0.08, Syne: 0.04, Anton: 0.04 },
-  wave: { Rubik: 0.08, Righteous: 0.08, Pacifico: 0.06, Syne: 0.06, "Space Grotesk": 0.06, Unbounded: 0.04 },
-  reveal: { Anton: 0.08, "Bricolage Grotesque": 0.08, "Space Grotesk": 0.06, "JetBrains Mono": 0.06, System: 0.04 },
-  collage: { Anton: 0.08, "Pirata One": 0.08, Unbounded: 0.06, "Bricolage Grotesque": 0.06, Syne: 0.04, "Playfair Display": 0.04 },
-  reel: { "Space Grotesk": 0.08, Rubik: 0.08, "Bricolage Grotesque": 0.08, "Playfair Display": 0.06, Anton: 0.04, System: 0.04 },
-  lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "Space Grotesk": 0.06, Rubik: 0.06, "JetBrains Mono": 0.04, Righteous: 0.04 },
-  drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06, "Playfair Display": 0.04, Pacifico: 0.04 },
-  stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, "Space Grotesk": 0.06, Anton: 0.04, Rubik: 0.04, Fraunces: 0.03 },
+const HARMONY: Partial<Record<Style, Partial<Record<string, number>>>> = {
+  poster: {
+    Unbounded: 0.1,
+    Syne: 0.1,
+    Anton: 0.1,
+    "Bebas Neue": 0.08,
+    "Bricolage Grotesque": 0.08,
+    Bungee: 0.06,
+    "Abril Fatface": 0.06,
+    Righteous: 0.06,
+    "Pirata One": 0.06,
+    Rubik: 0.04,
+    Fraunces: 0.04,
+  },
+  spotlight: { "Instrument Serif": 0.08, Fraunces: 0.08, "Playfair Display": 0.08, "Bodoni Moda": 0.06, "DM Serif Display": 0.06, Syne: 0.04, Anton: 0.04 },
+  wave: { Rubik: 0.08, Righteous: 0.08, Pacifico: 0.06, Syne: 0.06, "Space Grotesk": 0.06, Shrikhand: 0.06, "Lilita One": 0.06, Unbounded: 0.04 },
+  reveal: { Anton: 0.08, "Bricolage Grotesque": 0.08, "Space Grotesk": 0.06, "JetBrains Mono": 0.06, Oswald: 0.06, "Chakra Petch": 0.04, System: 0.04 },
+  collage: { Anton: 0.08, "Pirata One": 0.08, Unbounded: 0.06, "Bricolage Grotesque": 0.06, "Sedgwick Ave Display": 0.06, Syne: 0.04, "Playfair Display": 0.04, "Abril Fatface": 0.04 },
+  reel: { "Space Grotesk": 0.08, Rubik: 0.08, "Bricolage Grotesque": 0.08, "Archivo Black": 0.06, "Playfair Display": 0.06, "Bebas Neue": 0.04, Anton: 0.04, System: 0.04 },
+  lens: {
+    Syne: 0.08,
+    Unbounded: 0.08,
+    "Bricolage Grotesque": 0.06,
+    "Space Grotesk": 0.06,
+    Rubik: 0.06,
+    "JetBrains Mono": 0.04,
+    Righteous: 0.04,
+    "Chakra Petch": 0.04,
+    Bungee: 0.04,
+  },
+  stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, "Space Grotesk": 0.06, Oswald: 0.06, Anton: 0.04, Rubik: 0.04, Fraunces: 0.03, "Archivo Black": 0.03 },
+  slant: { "Archivo Black": 0.12, Anton: 0.08, "Bebas Neue": 0.08, "Sedgwick Ave Display": 0.08, Oswald: 0.06, "Bricolage Grotesque": 0.06, Unbounded: 0.04 },
+  pop: { Bungee: 0.1, "Archivo Black": 0.1, "Lilita One": 0.08, Unbounded: 0.08, "Bebas Neue": 0.06, Shrikhand: 0.06, Anton: 0.06 },
+  cascade: { "DM Serif Display": 0.08, "Bodoni Moda": 0.08, "Playfair Display": 0.06, "Instrument Serif": 0.06, Fraunces: 0.06, Syne: 0.04, "Chakra Petch": 0.04 },
+  tape: { "Archivo Black": 0.08, Oswald: 0.06, "Bebas Neue": 0.06, "Sedgwick Ave Display": 0.06, Silkscreen: 0.06, "Bricolage Grotesque": 0.06, "Abril Fatface": 0.04 },
 };
 
 /** Each face's character, as taste written down. */
@@ -721,6 +817,30 @@ function fontScore(family: string, f: SongFeatures, a: Axes): number {
       const dark = smooth(0.42 - a.light, 0, 0.3);
       return 0.45 * dark * (0.4 + 0.6 * a.punch) + 0.26 * smooth(f.shout, 0.05, 0.4) + 0.12 * (1 - a.vivid) + 0.08 * (1 - a.intimacy) - 0.16;
     }
+    case "Archivo Black": // heavy grotesque: rap and drill, punchy hooks, dark covers; the kinetic-type face
+      return 0.26 * a.punch + 0.22 * a.pace + 0.16 * (1 - a.light) + 0.14 * a.density + 0.1 * smooth(f.shout, 0.05, 0.4) - 0.12 * a.intimacy - 0.06;
+    case "Bebas Neue": // tall condensed capitals: anthems, festival EDM, trailer drama, cool covers
+      return 0.24 * a.punch + 0.2 * bell(a.pace, 0.6, 0.3) + 0.16 * cool + 0.14 * has(f, "dance") + 0.1 * a.vivid + 0.1 * smooth(f.shout, 0.05, 0.4) - 0.1 * a.intimacy - 0.08;
+    case "Oswald": // condensed workhorse: rock and dense fast verses, long lines read at a glance
+      return 0.06 + 0.28 * a.density + 0.24 * a.pace + 0.1 * a.punch + 0.08 * has(f, "live") + 0.06 * (1 - a.vivid) - 0.04;
+    case "DM Serif Display": // soft display serif: R&B, soul, indie folk, warm and unhurried
+      return 0.22 * a.sustain + 0.2 * warm + 0.18 * bell(a.pace, 0.35, 0.3) + 0.16 * a.intimacy + 0.1 * elegant - 0.08;
+    case "Abril Fatface": // fat didone: glam, diva pop, big held notes under rich covers
+      return 0.24 * a.punch * (1 - 0.5 * a.pace) + 0.22 * a.vivid + 0.18 * a.sustain + 0.12 * warm + 0.1 * (1 - a.light) - 0.12;
+    case "Sedgwick Ave Display": // graffiti hand: hip-hop, street and gritty songs, fast and loud
+      return 0.3 * a.pace * a.punch + 0.2 * smooth(f.shout, 0.05, 0.4) + 0.16 * (1 - a.light) + 0.08 * a.density + 0.12 * has(f, "live") - 0.14 * a.sustain - 0.1;
+    case "Bungee": // block signage capitals: chants, shouted short lines, bright loud covers
+      return 0.26 * a.punch + 0.22 * smooth(f.shout, 0.05, 0.4) + 0.2 * a.vivid + 0.14 * f.shortLines + 0.1 * has(f, "dance") - 0.12;
+    case "Silkscreen": // pixel type: chiptune, game and glitchy electronic songs, cold neon covers
+      return 0.3 * cool * a.vivid + 0.2 * has(f, "dance") + 0.16 * bell(a.pace, 0.6, 0.25) + 0.14 * smooth(f.vocables, 0.02, 0.2) + 0.1 * f.shortLines - 0.16;
+    case "Bodoni Moda": // fashion serif: elegant, slow songs, grey and muted covers
+      return 0.26 * elegant + 0.2 * a.sustain + 0.18 * bell(a.pace, 0.3, 0.3) + 0.14 * a.gray + 0.08 * a.intimacy - 0.08;
+    case "Shrikhand": // retro bold italic: seventies funk, summer grooves, warm saturated covers
+      return 0.4 * warm * a.vivid + 0.2 * bell(a.pace, 0.55, 0.25) + 0.16 * has(f, "dance") + 0.12 * a.punch + 0.1 * a.light - 0.14;
+    case "Chakra Petch": // squared techno: synthwave, cyberpunk, cool neon on dark covers
+      return 0.3 * cool + 0.22 * a.vivid * (1 - a.light) + 0.18 * bell(a.pace, 0.6, 0.3) + 0.12 * has(f, "dance") + 0.08 * a.punch - 0.1;
+    case "Lilita One": // chunky and friendly: bubblegum pop, bright light covers, sing-along hooks
+      return 0.5 * a.light * a.vivid + 0.2 * bell(a.pace, 0.6, 0.25) + 0.14 * a.punch + 0.1 * smooth(f.repetition, 0.3, 0.7) - 0.2 * (1 - a.light) - 0.1;
     case "System": // neutral, covers every script
       return 0.18 + 0.08 * a.density;
     default:
@@ -733,7 +853,7 @@ function pickFont(f: SongFeatures, a: Axes, style: Style): { face: FontChoice; s
   const eligible: [FontChoice, number][] = [];
   for (const face of FONTS) {
     if (fontVeto(face, f, a)) continue;
-    let s = fontScore(face.family, f, a) + (HARMONY[style][face.family] ?? 0);
+    let s = fontScore(face.family, f, a) + (HARMONY[style]?.[face.family] ?? 0);
     if (face.family === "Fraunces") s += 0.5 * HOUSE_PRIOR * (1 - a.confidence);
     // CJK lines take the face's serif or sans system stack: serif (Mincho, Song) for slow songs, sans (Gothic) for pop
     if (f.script === "cjk") s += face.serif ? 0.15 * (1 - a.pace) : 0.15 * a.pace;
@@ -767,12 +887,13 @@ function curveOf(f: SongFeatures, a: Axes): number {
 
 function energyOf(f: SongFeatures, a: Axes): number {
   if (f.timing === "unsynced" || f.timing === "none") return 0.2; // only line-to-line motion
-  // Synced songs always move (0.35 is about BL's own amplitude); pace drives most of the rest.
+  // Synced songs always move hard: twice BL's amplitude at least (0.3 is BL's own), so even a ballad
+  // reacts to every word; pace and hooks push it to the cap.
   const dynamic = smooth(f.rateSpread, 0.2, 0.8);
-  let e = 0.35 + 0.65 * (0.5 * a.pace + 0.25 * a.punch + 0.15 * a.vivid + 0.1 * dynamic) - 0.1 * a.intimacy * (1 - a.pace);
-  e += 0.08 * has(f, "dance") + 0.08 * has(f, "fast") - 0.08 * has(f, "dreamy") - 0.05 * has(f, "intimate");
-  if (f.timing === "line") e *= 0.9; // word times are estimates: big per-word pops would land on the wrong words
-  return round(clamp(e, 0.3, 1));
+  let e = 0.62 + 0.38 * (0.5 * a.pace + 0.25 * a.punch + 0.15 * a.vivid + 0.1 * dynamic);
+  e += 0.08 * has(f, "dance") + 0.08 * has(f, "fast");
+  if (f.timing === "line") e *= 0.92; // word times are estimates: big per-word pops would land on the wrong words
+  return round(clamp(e, 0.55, 1));
 }
 
 function emphasisOf(f: SongFeatures, a: Axes): EmphasisRule | null {
@@ -790,6 +911,8 @@ function emphasisOf(f: SongFeatures, a: Axes): EmphasisRule | null {
 
 /** How far the trackKey hash moves each move's and splash's score: similar songs don't all get the same flair. */
 const FLAIR_JITTER = 0.3;
+/** Every song leans toward the moves that hit on the word (bounce, pulse, drop) over the floaty ones. */
+const MOVE_PUNCH: Record<Move, number> = { rise: -0.15, bounce: 0.15, sway: -0.3, wave: 0.05, pulse: 0.15, drop: 0.1 };
 
 /** The best of `scores`, then the runner-up; equal scores rank in `order`. */
 function ranked<K extends string>(scores: Record<K, number>, order: readonly K[]): K[] {
@@ -818,7 +941,7 @@ function flairOf(f: SongFeatures, a: Axes): Flair {
     pulse: 0.1 + 0.4 * a.punch + 0.3 * shout + 0.15 * dance + 0.1 * a.pace,
     drop: 0.15 + 0.3 * a.punch * (1 - a.light) + 0.2 * (1 - a.light) - 0.1 * a.intimacy,
   };
-  for (const m of MOVES) moves[m] += jitter(m);
+  for (const m of MOVES) moves[m] += MOVE_PUNCH[m] + jitter(m);
   const [move = "rise", accent = "rise"] = ranked(moves, MOVES);
   const t = f.themes;
   const splashes: Record<SplashKind, number> = {
@@ -899,7 +1022,8 @@ export function pickLook(f: SongFeatures): SongLook {
     font: { family: face.family, weight: face.weight },
     curve: curveOf(f, a),
     energy: energyOf(f, a),
-    snap: round(clamp(0.2 + 0.75 * a.pace + 0.1 * a.punch - 0.15 * a.sustain)),
+    // springs settle fast even in slow songs, so a word lands on the voice instead of floating in after it
+    snap: round(clamp(0.55 + 0.4 * a.pace + 0.1 * a.punch - 0.1 * a.sustain, 0.5, 1)),
     glow: round(clamp(0.45 + 0.3 * a.vivid * (1 - 0.6 * a.light) + 0.2 * a.sustain + 0.1 * a.punch - 0.2 * a.gray * (1 - a.vivid), 0.3, 1)),
     emphasis: emphasisOf(f, a),
     scale: round(clamp((1 + 0.06 * (1 - a.density) - 0.06 * a.density) * m.scale, 0.82, 1.2)),
@@ -915,7 +1039,7 @@ export function pickLook(f: SongFeatures): SongLook {
 }
 
 /** "Lens · Syne", for the settings panel. */
-/** A style's name as the window shows it: "Reel". */
+/** A style's name as Settings shows it ("Slant", "Reel"). */
 export function styleLabel(style: Style): string {
   return STYLE_LABEL[style];
 }

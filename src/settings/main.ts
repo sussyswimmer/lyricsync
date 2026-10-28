@@ -6,6 +6,8 @@ import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, typ
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
 import { h } from "../overlay/dom";
+import { styleChoiceOf } from "../overlay/look";
+import { migrateStylePin } from "../overlay/pin";
 import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
@@ -15,6 +17,8 @@ import { defaultsPatch, SettingsSync, withDefaults } from "./store";
 
 async function boot(host: HTMLElement): Promise<void> {
   const bridge = await connect();
+  // A style chosen in Undertone 0.3.0 (kept in web storage then) becomes the Style setting (overlay/pin.ts).
+  void migrateStylePin(bridge);
 
   // Subscribe first, then read the initial state, so nothing that happens in between is lost.
   // An event that beats its query's reply is newer than the reply.
@@ -99,6 +103,8 @@ async function boot(host: HTMLElement): Promise<void> {
       loginError,
       // the preview's song and the look the preview draws it with
       look: info.look,
+      // the Style setting: the style every song is drawn in, or null for Undertone's own pick per song
+      stylePin: styleChoiceOf(view),
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -152,6 +158,8 @@ async function boot(host: HTMLElement): Promise<void> {
       sync.flush();
     },
     suspendShortcuts,
+    // Settings › Style: saved like every setting, so every overlay and the preview hear it as settings-changed
+    pinStyle: (style) => sync.edit({ style: style ?? "auto" }),
   });
 
   preview = new SettingsPreview({
@@ -245,6 +253,7 @@ function samePanelState(a: PanelState, b: PanelState): boolean {
     a.shortcuts?.nudgeEarlier === b.shortcuts?.nudgeEarlier &&
     a.shortcuts?.nudgeLater === b.shortcuts?.nudgeLater &&
     a.loginError === b.loginError &&
+    a.stylePin === b.stylePin &&
     // the preview hands over a new card state only when it changed
     a.look === b.look
   );

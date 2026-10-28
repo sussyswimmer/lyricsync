@@ -739,11 +739,12 @@ describe("migrateSettings", () => {
   });
 
   it("takes any style the overlay draws as the Style setting (contract v9), and reads settings saved without one as auto", () => {
-    for (const style of ["auto", "arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"] as const) {
+    for (const style of ["auto", "slant", "pop", "reel", "cascade", "tape", "spotlight", "wave", "reveal", "collage", "lens", "poster"] as const) {
       expect(mergeSettings(DEFAULT_SETTINGS, { style }).style).toBe(style);
     }
     const reel = mergeSettings(DEFAULT_SETTINGS, { style: "reel" });
-    for (const junk of ["Reel", "spiral", "", 3, null, true]) expect(mergeSettings(reel, { style: junk }).style, String(junk)).toBe("reel");
+    // the retired styles (Arc, Drift, Stack) are junk too: Settings doesn't offer them
+    for (const junk of ["Reel", "spiral", "arc", "drift", "stack", "", 3, null, true]) expect(mergeSettings(reel, { style: junk }).style, String(junk)).toBe("reel");
     const v8: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS) };
     delete v8["style"];
     expect(migrateSettings(v8)).toEqual(DEFAULT_SETTINGS);

@@ -45,10 +45,11 @@ export type Mode = "arc" | "lens" | "drift" | "stack";
 
 /**
  * The Style setting (contract v9): "auto" lets Undertone pick each song's style; any other name
- * draws every song in that style (its face, curve and motion stay the song's own). The names past
- * the four modes are styles the overlay draws (src/core/songlook.ts STYLES); the core only stores them.
+ * draws every song in that style (its face, curve and motion stay the song's own). The names are
+ * the styles Settings › Style offers (src/core/songlook.ts STYLES, the retired Arc, Drift and Stack
+ * not among them); the core only stores them.
  */
-export type StyleChoice = "auto" | Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel";
+export type StyleChoice = "auto" | "slant" | "pop" | "reel" | "cascade" | "tape" | "spotlight" | "wave" | "reveal" | "collage" | "lens" | "poster";
 
 /** A global shortcut's action. Added in contract v3. */
 export type ShortcutAction = "toggleLyrics" | "nudgeEarlier" | "nudgeLater";

@@ -88,3 +88,39 @@
   height: 0;
   vertical-align: baseline;
 }
+
+/* ---------- tags (Slant, Tape) ----------
+   A strip of marker color behind a word: first in its slot, so it sits under the word and turns and
+   scales with it. Its wipe (scaleX from the left edge) and opacity run as Web Animations alongside the
+   slot's (lens-plan.ts tagTracks). Lit words on these rows take the lyric color, and palette.ts tagFor
+   keeps the tag dark (or light) enough for it to read; the bloom keeps the highlight's color. */
+.lens-tag {
+  position: absolute;
+  left: -0.16em;
+  right: -0.16em;
+  top: 0.1em;
+  bottom: -0.02em;
+  transform-origin: 0 50%;
+  opacity: 0;
+}
+
+.lens-tag::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ut-tag, var(--ut-hl));
+  border-radius: 0.04em;
+  transform: skewX(-8deg);
+  box-shadow: 0 0.05em 0.16em rgba(0, 0, 0, 0.34);
+}
+
+.lens.has-tags .lens-row {
+  --ut-hl: var(--ut-lyric);
+  --ut-hl2: var(--ut-lyric);
+}
+
+/* Slant and Pop are about the word being sung: no next line waiting under it. */
+.lens.is-slant .lens-next,
+.lens.is-pop .lens-next {
+  visibility: hidden;
+}

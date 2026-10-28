@@ -84,23 +84,24 @@ pub enum Mode {
     Stack,
 }
 /// The Style setting (contract v9): `Auto` lets the overlay pick each song's style; any other
-/// draws every song in that style. The names past the four modes are styles only the overlay
-/// draws; the core stores them.
+/// draws every song in that style. The names are the styles Settings offers, which only the
+/// overlay draws (the retired Arc, Drift and Stack aren't among them); the core stores them.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StyleChoice {
     #[default]
     Auto,
-    Arc,
-    Lens,
-    Drift,
-    Stack,
-    Poster,
+    Slant,
+    Pop,
+    Reel,
+    Cascade,
+    Tape,
     Spotlight,
     Wave,
     Reveal,
     Collage,
-    Reel,
+    Lens,
+    Poster,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -604,27 +605,32 @@ mod tests {
         let v8: Settings = serde_json::from_value(saved).unwrap();
         assert_eq!(v8, *DEFAULT_SETTINGS);
         assert_eq!(v8.style, StyleChoice::Auto);
-        // every style the overlay draws, and nothing else
+        // every style Settings offers, and nothing else: not the retired ones, not a case variant
         for name in [
             "auto",
-            "arc",
-            "lens",
-            "drift",
-            "stack",
-            "poster",
+            "slant",
+            "pop",
+            "reel",
+            "cascade",
+            "tape",
             "spotlight",
             "wave",
             "reveal",
             "collage",
-            "reel",
+            "lens",
+            "poster",
         ] {
             assert!(
                 serde_json::from_value::<StyleChoice>(json!(name)).is_ok(),
                 "{name}"
             );
         }
-        assert!(serde_json::from_value::<StyleChoice>(json!("Reel")).is_err());
-        assert!(serde_json::from_value::<StyleChoice>(json!("spiral")).is_err());
+        for name in ["Reel", "spiral", "arc", "drift", "stack"] {
+            assert!(
+                serde_json::from_value::<StyleChoice>(json!(name)).is_err(),
+                "{name}"
+            );
+        }
     }
     #[test]
     fn settings_saved_before_contract_v8_read_as_graphics_on() {

@@ -1258,23 +1258,28 @@ mod tests {
         use crate::contract::StyleChoice;
         for (name, expected) in [
             ("auto", StyleChoice::Auto),
-            ("arc", StyleChoice::Arc),
-            ("lens", StyleChoice::Lens),
-            ("drift", StyleChoice::Drift),
-            ("stack", StyleChoice::Stack),
-            ("poster", StyleChoice::Poster),
+            ("slant", StyleChoice::Slant),
+            ("pop", StyleChoice::Pop),
+            ("reel", StyleChoice::Reel),
+            ("cascade", StyleChoice::Cascade),
+            ("tape", StyleChoice::Tape),
             ("spotlight", StyleChoice::Spotlight),
             ("wave", StyleChoice::Wave),
             ("reveal", StyleChoice::Reveal),
             ("collage", StyleChoice::Collage),
-            ("reel", StyleChoice::Reel),
+            ("lens", StyleChoice::Lens),
+            ("poster", StyleChoice::Poster),
         ] {
             assert_eq!(patched(json!({ "style": name })).style, expected, "{name}");
         }
         let reel = patched(json!({ "style": "reel" }));
+        // the retired styles (Arc, Drift, Stack) are junk too: Settings doesn't offer them
         for junk in [
             json!("Reel"),
             json!("spiral"),
+            json!("arc"),
+            json!("drift"),
+            json!("stack"),
             json!(""),
             json!(3),
             json!(null),
