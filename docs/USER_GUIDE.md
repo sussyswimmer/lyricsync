@@ -328,7 +328,7 @@ The Undertone icon in the menu bar (macOS) or system tray (Windows) has:
 | **Refetch lyrics** | Looks the current song up on LRCLIB again, skipping Undertone's saved copy |
 | **Settings…** | Opens the settings window |
 | **Launch at login** | Starts Undertone when you log in, the same as [Launch at login](#launch-at-login) in Settings |
-| **Undertone 0.2.0 (build …)** | Grayed out: which build is running. Settings shows the same at the bottom |
+| **Undertone 0.3.0 (build …)** | Grayed out: which build is running. Settings shows the same at the bottom |
 | **Quit Undertone** | Quits Undertone |
 
 Shortcuts that work from any app, by default (change or turn them off in [Settings › Shortcuts](#shortcuts)):
