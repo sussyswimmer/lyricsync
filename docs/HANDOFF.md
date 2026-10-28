@@ -579,3 +579,15 @@ Tests: `scenes.test.ts` (the vocabulary, matching, the plan's spacing, every sce
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · Reel: one word at a time, with a sign beside it
+Done: Maxwell sent an Instagram reel of Verci for Mac ("I want the lyrics to look like this"): one big word in the middle of the screen, the word just sung small above it and the next one small below, each word rolling up with a bounce as it's sung, with small line icons beside the words (a building for "city", an arrow for "left", a play sign for "Started", glasses, a dancer), over a dark cover.
+- **Reel**, a tenth style on Lens's engine (`slot-layouts.ts` `REEL_LAYOUT`): the word being sung 2.2 line sizes tall in the middle, the one just sung at line size and half faint above, the next below, nothing else (no next line). Its singing position is its own: `reelAt` steps to each word 80 ms early and the step rolls on a bouncy spring (`REEL_SPRING`), so the word lands in the middle with a little bounce as the voice reaches it; the last word holds the middle to the line's end. `SlotLayout` gained `alone`, `along` and `spring`; `planLens` takes `target` and `spring`. Scored (`songlook.ts`) for mid-tempo R&B, hip-hop and pop with real timing under dark covers, and it is the one one-line style that likes long lines; in the one-line variety window with the rest. Glyph on the Settings card; `?look=reel` and `--look=reel`.
+- **Word glyphs** (Graphics, in Reel): `core/wordglyphs.ts` maps about 1,900 words to a hundred signs, `overlay/glyphs.ts` draws them by hand as SVG paths (24 × 24, a round 2 px stroke in the lyric color), and `LensMode` puts a word's glyph in its slot after the word's box, counted in the word's width, so it rolls with the word. A word that becomes a scene carries none. Reel shows no pictures (`DecorParts.pictures: false`, its words aren't in a row); scenes and splashes stay.
+- **Dial Tone Avenue** (`?track=10`, `tests/fixtures/demo-dial-tone-avenue.lrc`, original placeholder lyrics): a mid-tempo late-night song full of words that carry a sign, under the cold dark cover, which Undertone draws as Reel in Space Grotesk.
+- **Checked** in Chromium with the mock bridge (`?power=full`): Glass Harbor, Paper Lanterns and Dial Tone Avenue in Reel on the dusk and the light wallpapers: the stack reads prev / sung / next, each word rolls in with a bounce, the glyphs sit beside their words ("city" with a building, "Phone" with a phone, "floor" with a dancer, "Started" with a play sign, "driving" with a car) and read on both wallpapers; the line change crossfades the stacks. README gets `docs/media/style-reel.webp`.
+Tests: 1282 vitest in 38 files (new: `wordglyphs.test.ts`, the vocabulary once over and matching the reel's lines, the plan, every drawing's path data; Reel's layout, fit, rest, `reelAt` and its planned roll with the spring's overshoot in `slot-layouts.test.ts`; `pictures: false` in `flair.test.ts`; the demo's pick in `demo-looks.test.ts`).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v8).

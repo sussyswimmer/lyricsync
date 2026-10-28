@@ -18,6 +18,7 @@ import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
 import ledgerLines from "../../tests/fixtures/demo-ledger-lines.lrc?raw";
 import strobeHearts from "../../tests/fixtures/demo-strobe-hearts.lrc?raw";
 import glacierNocturne from "../../tests/fixtures/demo-glacier-nocturne.lrc?raw";
+import dialToneAvenue from "../../tests/fixtures/demo-dial-tone-avenue.lrc?raw";
 import { demoCover } from "./covers";
 import type { ArgsOf, Bridge, Command, Commands, Event, Events, ResultOf, Unlisten } from "./types";
 
@@ -99,6 +100,9 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   track("Strobe Hearts (Club Mix)", 66_000, 4, "found", { synced: strobeHearts }),
   // Sparse, slow lines with long instrumental gaps under a cold, dark cover: Drift, in Instrument Serif.
   track("Glacier Nocturne", 118_000, 5, "found", { synced: glacierNocturne }),
+  // A mid-tempo late-night song, word-timed, full of words that carry a sign, under the cold, dark
+  // cover again (?track=10): Reel, one word at a time with its glyphs.
+  track("Dial Tone Avenue", 120_000, 5, "found", { synced: dialToneAvenue }),
 ];
 
 /** Built exactly as SPEC defines it. */

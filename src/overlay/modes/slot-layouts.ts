@@ -17,15 +17,21 @@
  *   and low; each one comes up into its place as the voice reaches it (its own swell is the punch).
  * - Collage: the line as words cut from different magazines: each its own size and tilt, a little off
  *   its row, set in one to three rows. Words not sung yet wait dim and small, and pop as they're sung.
+ * - Reel: one word at a time, big in the middle of the screen, the word just sung small and faint
+ *   above it and the next one small below, like a reel rolling up a word at a time with the voice.
+ *   Nothing else: no next line. Its singing position is its own (REEL_LAYOUT.along): it steps to each
+ *   word as it starts, and the step rolls on a bouncy spring.
  *
  * Every pose is a function of the motion's ease-in `lens` (0 at rest, 1 in full: reduced motion and
  * plain lyrics stay at rest) and of `a`, the singing position in words (lens-plan.ts singingAt,
  * smoothed). Sizes are px at the look's size; `fit` scales the whole line to the stage.
  */
+import type { Word } from "../../core/lrc";
 import { MIN_TEXT_PX } from "../look";
+import type { SpringSpec } from "../motion/spring";
 import { blankPose, fitRow, OPACITY_MIN, poseOf, ROW_FIT, smallestScale, type LensPose, type RowFit, type Shape } from "./lens-plan";
 
-export type SlotKind = "lens" | "poster" | "spotlight" | "wave" | "reveal" | "collage";
+export type SlotKind = "lens" | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel";
 
 /** A poster's rows: which visual positions each holds, its width at the look's size and its scale. */
 export interface PosterRow {
@@ -66,12 +72,25 @@ export interface CollageBlock {
   size: number;
 }
 
+/** A reel's rows: the look's size and baseline, how far apart its rows are, and how small its side words get. */
+export interface ReelFit {
+  /** the look's size, px, and the baseline's depth in a 1 em box, as a share of the em */
+  size: number;
+  baseline: number;
+  /** from the middle of one row to the next, px at the look's size */
+  pitch: number;
+  /** the word just sung and the next one, in line sizes */
+  side: number;
+}
+
 export interface SlotFit extends RowFit {
   /** Poster: its block */
   block?: PosterBlock;
   /** Collage: its block */
   collage?: CollageBlock;
-  /** Spotlight, Wave and Reveal: the at-rest fit (one plain row), and how much larger than the line's size the sung word gets */
+  /** Reel: its rows (unset at rest: one plain row) */
+  reel?: ReelFit;
+  /** Spotlight, Wave, Reveal and Reel: the at-rest fit (one plain row), and how much larger than the line's size the sung word gets */
   restFit?: number;
   big?: number;
   /** Wave and Reveal: the look's size, px (the wave's height and a waiting word's drop are in it) */
@@ -91,6 +110,12 @@ export interface SlotLayout {
   readonly glides: boolean;
   /** words sit in a block of rows: a word's picture travels over the block, not into the row above its word */
   readonly blocks: boolean;
+  /** the focus line is all there is: no next line waits below it, and its words are stacked, so no picture travels its row (Reel) */
+  readonly alone: boolean;
+  /** its own singing position at song time `t`, in words, in place of lens-plan.ts singingAt (the voice's place in the line) */
+  readonly along?: (words: readonly Pick<Word, "start" | "end">[], t: number) => number;
+  /** the spring the singing position follows its target on, in place of lens-plan.ts LENS_SPRING */
+  readonly spring?: SpringSpec;
   /** fits line number `line`, measured at `size` px, to the stage; `baseline` is the baseline's depth in a 1 em box, as a share of the em */
   fit(shape: Shape, size: number, stage: Stage, moving: boolean, line: number, baseline: number): SlotFit;
   pose(shape: Shape, fit: SlotFit, width: number, dpr: number, lens: number, a: number, out?: LensPose): LensPose;
@@ -109,6 +134,7 @@ export const LENS_LAYOUT: SlotLayout = {
   rotates: false,
   glides: true,
   blocks: false,
+  alone: false,
   fit: (shape, size, stage, moving) => fitRow(shape, size, stage.width, moving),
   pose: (shape, fit, width, dpr, lens, a, out) => poseOf(shape, fit, width, dpr, lens, a, out),
   faintest: (fit, width, moving) => ({ scale: smallestScale(fit, width, moving), opacity: moving ? OPACITY_MIN : 1 }),
@@ -195,6 +221,7 @@ export const POSTER_LAYOUT: SlotLayout = {
   rotates: true,
   glides: false,
   blocks: true,
+  alone: false,
   fit(shape, size, stage, moving, line, baseline) {
     const spans = balancedRows(shape, posterRows(shape.order.length));
     const widest = Math.max(1, ...spans.map((s) => spanWidth(shape, s.from, s.to)));
@@ -292,6 +319,7 @@ export const SPOTLIGHT_LAYOUT: SlotLayout = {
   rotates: false,
   glides: false,
   blocks: false,
+  alone: false,
   fit(shape, size, stage, moving) {
     const rest = fitRow(shape, size, stage.width, false);
     if (!moving) return { ...rest, restFit: rest.fit, big: 1 };
@@ -412,6 +440,7 @@ export const WAVE_LAYOUT: SlotLayout = {
   rotates: true,
   glides: false,
   blocks: false,
+  alone: false,
   fit: (shape, size, stage, moving) => rowFit(shape, size, stage, moving, WAVE_BIG),
   pose(shape, fit, width, dpr, lens, a, out) {
     const n = shape.widths.length;
@@ -467,6 +496,7 @@ export const REVEAL_LAYOUT: SlotLayout = {
   rotates: false,
   glides: false,
   blocks: false,
+  alone: false,
   fit: (shape, size, stage, moving) => rowFit(shape, size, stage, moving, 1),
   pose(shape, fit, width, dpr, lens, a, out) {
     const n = shape.widths.length;
@@ -529,6 +559,7 @@ export const COLLAGE_LAYOUT: SlotLayout = {
   rotates: true,
   glides: false,
   blocks: true,
+  alone: false,
   fit(shape, size, stage, moving, line, baseline) {
     const n = shape.widths.length;
     const mean = n > 0 ? shape.widths.reduce((sum, w) => sum + w, 0) / n : 1;
@@ -615,6 +646,85 @@ export const COLLAGE_LAYOUT: SlotLayout = {
   },
 };
 
+// ───────────────────────────────────────────── Reel ─────────────────────────────────────────────
+
+/** The word being sung is drawn this many line sizes tall... */
+export const REEL_BIG = 2.2;
+/** ...the word just sung above it and the next one below, this many (raised at small sizes so they stay readable)... */
+export const REEL_SIDE = 1.0;
+/** ...the one above this faint, the one below this; further off, a word isn't drawn. */
+export const REEL_ABOVE = 0.5;
+export const REEL_BELOW = 0.78;
+/** Rows are this many of their two words' mean size apart, middle to middle: set tight. */
+const REEL_LEAD = 1.02;
+/** The big word fills at most this share of the stage's width, and the three rows this share of its height. */
+const REEL_FIT = 0.78;
+const REEL_HEIGHT = 0.72;
+/** The reel steps to a word this long before the voice reaches it, so the roll lands as the word is sung, ms. */
+export const REEL_LEAD_MS = 80;
+/** The roll: quick, with a little bounce as it lands. */
+export const REEL_SPRING: SpringSpec = { hz: 4.5, damping: 0.62 };
+
+/** The word the reel has in the middle at song time `t`: the last to have started (REEL_LEAD_MS early), held to the line's end. */
+export function reelAt(words: readonly Pick<Word, "start" | "end">[], t: number): number {
+  let i = -1;
+  while (i + 1 < words.length && t >= (words[i + 1]?.start ?? Infinity) - REEL_LEAD_MS) i++;
+  return Math.max(0, Math.min(words.length - 1, i));
+}
+
+export const REEL_LAYOUT: SlotLayout = {
+  kind: "reel",
+  rotates: false,
+  glides: false,
+  blocks: false,
+  alone: true,
+  along: reelAt,
+  spring: REEL_SPRING,
+  fit(shape, size, stage, moving, _line, baseline) {
+    const rest = fitRow(shape, size, stage.width, false);
+    if (!moving) return { ...rest, restFit: rest.fit, big: 1 };
+    const longest = Math.max(1, ...shape.widths);
+    const pitch = 0.5 * (REEL_BIG + REEL_SIDE) * size * REEL_LEAD;
+    const height = 2 * pitch + REEL_SIDE * size;
+    const fit = Math.min(1, stage.width > 0 ? (REEL_FIT * stage.width) / (REEL_BIG * longest) : 1, stage.height > 0 ? (REEL_HEIGHT * stage.height) / height : 1);
+    const side = Math.min(0.8 * REEL_BIG, Math.max(REEL_SIDE, MIN_TEXT_PX / (size * fit)));
+    return { low: side, rest: rest.rest, widest: REEL_BIG * longest, fit, restFit: rest.fit, big: REEL_BIG, reel: { size, baseline, pitch, side } };
+  },
+  // the reel holds its rows whatever the ease-in `lens`: a line arriving before its first word already has it in the middle
+  pose(shape, fit, width, dpr, _lens, a, out) {
+    const n = shape.widths.length;
+    const pose = restPose(shape, fit, width, dpr, out ?? blankPose(n));
+    const r = fit.reel;
+    if (!r) return pose;
+    const f = fit.fit;
+    for (let j = 0; j < n; j++) {
+      // rows from the word being sung: the one just sung is at -1, the next at 1
+      const d = j - a;
+      const near = Math.max(0, 1 - Math.abs(d));
+      const k = f * (r.side + (REEL_BIG - r.side) * near * near * (3 - 2 * near));
+      pose.x[j] = (width - (shape.widths[j] ?? 0) * k) / 2;
+      // its em box's middle `d` rows from the line's; its baseline is drawn `baseline - 0.5` of its own em below that
+      pose.y[j] = d * r.pitch * f + (r.baseline - 0.5) * r.size * (k - f);
+      pose.scale[j] = k;
+      pose.rotate[j] = 0;
+      const dim = d < 0 ? REEL_ABOVE : REEL_BELOW;
+      const off = Math.abs(d);
+      pose.opacity[j] = off <= 1 ? 1 - (1 - dim) * off : Math.max(0, dim * (2 - off));
+    }
+    return pose;
+  },
+  faintest(fit, width, moving) {
+    if (!moving || !fit.reel) return { scale: fit.restFit ?? smallestScale(fit, width, false), opacity: 1 };
+    return { scale: fit.fit * fit.reel.side, opacity: Math.min(REEL_ABOVE, REEL_BELOW) };
+  },
+  extent(fit, size) {
+    const r = fit.reel;
+    if (!r) return { above: size / 2, below: size / 2 };
+    const reach = (0.5 * (REEL_BIG + r.side) * REEL_LEAD + 0.5 * r.side) * size;
+    return { above: reach, below: reach };
+  },
+};
+
 export const SLOT_LAYOUTS: Record<SlotKind, SlotLayout> = {
   lens: LENS_LAYOUT,
   poster: POSTER_LAYOUT,
@@ -622,4 +732,5 @@ export const SLOT_LAYOUTS: Record<SlotKind, SlotLayout> = {
   wave: WAVE_LAYOUT,
   reveal: REVEAL_LAYOUT,
   collage: COLLAGE_LAYOUT,
+  reel: REEL_LAYOUT,
 };

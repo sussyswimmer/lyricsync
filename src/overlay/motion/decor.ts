@@ -452,6 +452,8 @@ export interface DecorLook {
   unsynced: boolean;
   power: Power;
   emphasis: EmphasisRule | null;
+  /** false: no pictures even with Graphics on (a mode whose words are stacked, like Reel) */
+  pictures?: boolean;
 }
 
 /**
@@ -461,7 +463,7 @@ export interface DecorLook {
  */
 export function songDecor(lines: readonly Line[], look: DecorLook): LineDecor[] {
   const on = !look.unsynced && look.power !== "lite";
-  return planDecor(lines, on ? look.flair : null, look.emphasis, { text: look.effectsMode, graphics: look.graphics });
+  return planDecor(lines, on ? look.flair : null, look.emphasis, { text: look.effectsMode, graphics: look.graphics, pictures: look.pictures !== false });
 }
 
 /** Every picture a song's decor shows, to fetch and decode ahead. */

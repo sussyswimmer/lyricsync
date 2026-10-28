@@ -1,8 +1,10 @@
 import "../../styles/lens.css";
 import type { LineDecor } from "../../core/flair";
 import type { Line } from "../../core/lrc";
+import { planGlyphs, type GlyphId } from "../../core/wordglyphs";
 import { h, put } from "../dom";
 import { whenFaceLoads } from "../fonts";
+import { GLYPH_EM, GLYPH_GAP_EM, glyphElement } from "../glyphs";
 import { MIN_TEXT_PX, shadowLayers, snap, textShadow, type Look } from "../look";
 import { paintVars } from "../motion/bloom";
 import { clamp01 } from "../motion/curve";
@@ -19,7 +21,7 @@ import { playWall, springFrames, WallGlide, type WallFrames } from "../motion/sc
 import { commit, SongTimeline } from "../motion/timeline";
 import { warmPictures } from "../pictures";
 import { lensTransform, planLens, turnTransform, zoomAt, type LensPlan, type LensPose, type Shape } from "./lens-plan";
-import { COLLAGE_LAYOUT, LENS_LAYOUT, POSTER_LAYOUT, REVEAL_LAYOUT, SPOTLIGHT_LAYOUT, WAVE_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
+import { COLLAGE_LAYOUT, LENS_LAYOUT, POSTER_LAYOUT, REEL_LAYOUT, REVEAL_LAYOUT, SPOTLIGHT_LAYOUT, WAVE_LAYOUT, type SlotFit, type SlotLayout } from "./slot-layouts";
 import type { Cue, ModeRenderer } from "./types";
 
 // The fisheye's geometry lives in lens-plan.ts (pure); these stay importable from here.
@@ -237,6 +239,8 @@ export class LensMode implements ModeRenderer {
   private lines: Line[] = [];
   /** each line's flair (Effects mode), by line index */
   private decor: LineDecor[] = [];
+  /** the words' glyphs (Graphics, a layout that stands alone), by line index then word index */
+  private glyphs: Map<number, Map<number, GlyphId>> = new Map();
   /** the lens swells the sung word itself: moves keep rise's swell */
   private readonly moves = new LineMoves({ riseSwell: true });
   private metrics: Metrics[] = [];
@@ -309,7 +313,9 @@ export class LensMode implements ModeRenderer {
     this.next = next;
     const sung = casedLines(lines, look.textCase);
     this.lines = sung;
-    this.decor = songDecor(sung, look);
+    // a layout that stacks its words (Reel) has no row for a picture to travel: its words carry glyphs instead
+    this.decor = songDecor(sung, { ...look, pictures: !this.layout.alone });
+    this.glyphs = this.layout.alone && look.graphics && look.power !== "lite" ? planGlyphs(sung) : new Map();
     warmPictures(picturesOf(this.decor));
     this.interludes = look.unsynced ? [] : findInterludes(sung);
     this.leads = leadTimes(sung);
@@ -449,6 +455,7 @@ export class LensMode implements ModeRenderer {
     this.current = null;
     this.lines = [];
     this.decor = [];
+    this.glyphs = new Map();
     this.metrics = [];
     this.leads = [];
     this.interludes = [];
@@ -549,13 +556,20 @@ export class LensMode implements ModeRenderer {
         order.sort((a, b) => (centers[a] ?? 0) - (centers[b] ?? 0));
       }
       return {
-        widths: alone.map((s) => s.getBoundingClientRect().width * unit),
+        // a word's glyph sits after it, in its slot: part of the word's width
+        widths: alone.map((s, j) => s.getBoundingClientRect().width * unit + (this.glyphOf(i, j) ? (GLYPH_GAP_EM + GLYPH_EM) * look.size : 0)),
         spaced: words.map((w) => /\s$/u.test(w.text)),
         order,
         full: flow.getBoundingClientRect().width * unit,
       };
     });
     probe.remove();
+  }
+
+  /** The glyph word `word` of line `index` carries (core/wordglyphs.ts), unless the word becomes a scene (its own show). */
+  private glyphOf(index: number, word: number): GlyphId | undefined {
+    const id = this.glyphs.get(index)?.get(word);
+    return id && !this.decor[index]?.words.get(word)?.scene ? id : undefined;
   }
 
   /** Where line `index` goes in focus: fitted to the stage, centered so the line after it fits below. */
@@ -565,7 +579,7 @@ export class LensMode implements ModeRenderer {
     const shape: Shape = { widths: m.widths, order: m.order, gaps: gapsFor(m, this.space) };
     const fit = this.layout.fit(shape, look.size, { width: look.width, height: look.height }, this.lensed(look), index, look.size > 0 ? this.baseline / look.size : 0.8);
     const size = look.size * fit.fit;
-    const after = this.lines[index + 1] ? this.metrics[index + 1] : undefined;
+    const after = this.lines[index + 1] && !this.layout.alone ? this.metrics[index + 1] : undefined;
     const next = after ? nextSize(after.full, size, look) : null;
     let y: number;
     let drop: number;
@@ -828,7 +842,8 @@ export class LensMode implements ModeRenderer {
    * drawn at once.
    */
   private showNext(index: number, focusSize: number, y: number, look: Look, how: "glide" | "fade" | "cut", drop = focusSize * NEXT_DROP): void {
-    const line = this.lines[index];
+    // a layout that stands alone (Reel) never shows the next line
+    const line = this.layout.alone ? undefined : this.lines[index];
     const m = this.metrics[index];
     const shown = this.nextShown;
     const same = shown?.index === (line && m ? index : -1);
@@ -896,17 +911,19 @@ export class LensMode implements ModeRenderer {
     const origin = `0 ${num(this.baseline, 2)}px`;
     const slots: HTMLElement[] = [];
     const words: HTMLElement[] = [];
-    for (const w of line.words) {
+    line.words.forEach((w, j) => {
       const slot = h("span", "lens-slot");
       slot.dir = "auto";
       slot.style.transformOrigin = origin;
       const word = h("span", "kw");
       word.append(h("span", "kw-txt", w.text.trimEnd()));
       slot.append(word);
+      const glyph = this.glyphOf(index, j);
+      if (glyph) slot.append(glyphElement(glyph));
       el.append(slot);
       slots.push(slot);
       words.push(word);
-    }
+    });
     // under the next line (and any line fading out), so it never covers them while gliding past
     box.insertBefore(el, box.firstChild);
     const row: Row = { ...g, index, el, slots, words, slotY: g.baseline - this.baseline, karaoke: null, plan: null };
@@ -986,6 +1003,8 @@ export class LensMode implements ModeRenderer {
       hold: look.power === "lite" && this.steps,
       poseAt: (lens, a, out) => this.layout.pose(row.shape, row.fit, look.width, look.dpr, lens, a, out),
       rotates: this.layout.rotates,
+      ...(this.layout.along ? { target: this.layout.along } : {}),
+      ...(this.layout.spring ? { spring: this.layout.spring } : {}),
     });
   }
 
@@ -1147,4 +1166,9 @@ export function createReveal(): ModeRenderer {
 /** Collage: the line as cut-out words, each its own size and tilt (slot-layouts.ts). */
 export function createCollage(): ModeRenderer {
   return new LensMode(COLLAGE_LAYOUT);
+}
+
+/** Reel: one word at a time, big in the middle, the last one above and the next below, rolling with the voice (slot-layouts.ts). */
+export function createReel(): ModeRenderer {
+  return new LensMode(REEL_LAYOUT);
 }

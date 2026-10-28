@@ -21,18 +21,19 @@ import { splitWords, syllables, type Timeline } from "./timing";
 // ───────────────────────────────────────────── types ─────────────────────────────────────────────
 
 /**
- * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and five the
+ * A style: the contract's four modes (Stack is how synced lyrics are drawn as a list), and six the
  * overlay draws without the core knowing: Poster (the line as a block of rows set big), Spotlight
  * (the line sliding through the middle with the voice), Wave (the line riding a wave whose crest
- * follows the voice), Reveal (the line appearing word by word as it's sung) and Collage (the line as
- * cut-out words, each its own size and tilt). Settings never names a style since contract v4, so the
+ * follows the voice), Reveal (the line appearing word by word as it's sung), Collage (the line as
+ * cut-out words, each its own size and tilt) and Reel (one word at a time, big in the middle, the
+ * last word above it and the next below). Settings never names a style since contract v4, so the
  * new ones need no contract change.
  */
-export type Style = Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage";
+export type Style = Mode | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel";
 /** The contract's modes. */
 export const CONTRACT_STYLES: readonly Mode[] = ["arc", "lens", "drift", "stack"];
 /** The styles the picker chooses between; on equal scores the earlier one ranks first. */
-export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight", "wave", "reveal", "collage"];
+export const STYLES: readonly Style[] = [...CONTRACT_STYLES, "poster", "spotlight", "wave", "reveal", "collage", "reel"];
 
 /** How the lyrics are timed: per word (enhanced LRC), per line, evenly paced plain text, or no lyrics. */
 export type Timing = "word" | "line" | "unsynced" | "none";
@@ -515,6 +516,7 @@ const STYLE_LABEL: Record<Style, string> = {
   wave: "Wave",
   reveal: "Reveal",
   collage: "Collage",
+  reel: "Reel",
 };
 /** How far the house look (Arc, Fraunces) is favored when the lyrics are too short to tell much. */
 const HOUSE_PRIOR = 0.15;
@@ -526,7 +528,7 @@ const STYLE_TIE = 0.04;
  * one song gets Arc, the next Poster, Spotlight or Lens, where each would suit it, instead of every
  * such song getting the same one.
  */
-export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight", "wave", "reveal", "collage"];
+export const ONE_LINE_STYLES: readonly Style[] = ["arc", "lens", "poster", "spotlight", "wave", "reveal", "collage", "reel"];
 const ONE_LINE_VARIETY = 0.1;
 const FONT_TIE = 0.03;
 
@@ -572,6 +574,13 @@ function styleScores(f: SongFeatures, a: Axes): Record<Style, number> {
     collage:
       0.3 * a.punch + 0.3 * smooth(f.shout, 0.05, 0.4) + 0.2 * bell(a.pace, 0.6, 0.3) + 0.16 * has(f, "live") + 0.18 * (1 - a.vivid) * (1 - 0.5 * a.light) +
       0.1 * timed - 0.45 * a.longLines - 0.2 * smooth(f.widthMedian, 32, 48) - 0.1 * a.intimacy - 0.02,
+    // one word at a time, big: R&B, hip-hop and pop sung at a pace the eye keeps up with word by word,
+    // with a beat, under late-night and dark covers; the only one-line style easy with long lines (it
+    // never sets a whole line); needs real timing, not a blur of words, not a diary song (those get a
+    // curve or depth), and not CJK (a character at a time)
+    reel:
+      0.26 * (f.timing === "word" ? 1 : f.timing === "line" ? 0.55 : 0) + 0.26 * bell(a.pace, 0.45, 0.32) + 0.16 * a.punch + 0.1 * (1 - a.density) +
+      0.08 * a.longLines + 0.1 * (1 - a.light) - 0.15 * a.intimacy - 0.35 * smooth(a.pace, 0.72, 0.95) - 0.5 * f.cjkShare + 0.08,
   };
   for (const s of STYLES) scores[s] = round(scores[s], 3);
   return scores;
@@ -669,6 +678,7 @@ const HARMONY: Record<Style, Partial<Record<string, number>>> = {
   wave: { Rubik: 0.08, Righteous: 0.08, Pacifico: 0.06, Syne: 0.06, "Space Grotesk": 0.06, Unbounded: 0.04 },
   reveal: { Anton: 0.08, "Bricolage Grotesque": 0.08, "Space Grotesk": 0.06, "JetBrains Mono": 0.06, System: 0.04 },
   collage: { Anton: 0.08, "Pirata One": 0.08, Unbounded: 0.06, "Bricolage Grotesque": 0.06, Syne: 0.04, "Playfair Display": 0.04 },
+  reel: { "Space Grotesk": 0.08, Rubik: 0.08, "Bricolage Grotesque": 0.08, "Playfair Display": 0.06, Anton: 0.04, System: 0.04 },
   lens: { Syne: 0.08, Unbounded: 0.08, "Bricolage Grotesque": 0.06, "Space Grotesk": 0.06, Rubik: 0.06, "JetBrains Mono": 0.04, Righteous: 0.04 },
   drift: { "Instrument Serif": 0.06, Fraunces: 0.06, Caveat: 0.06, "Playfair Display": 0.04, Pacifico: 0.04 },
   stack: { "Bricolage Grotesque": 0.08, System: 0.06, "JetBrains Mono": 0.06, "Space Grotesk": 0.06, Anton: 0.04, Rubik: 0.04, Fraunces: 0.03 },

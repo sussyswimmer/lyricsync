@@ -137,6 +137,12 @@ const GLYPHS: Record<Style, readonly [string, number, number][]> = {
     ["M12.5 4.4 L20.5 5.8", 1.8, 0.6],
     ["M6 12.2 L17 13.4", 3.4, 0.85],
   ],
+  // one word at a time, big in the middle, the last one faint above and the next below
+  reel: [
+    ["M8.5 2.4 H15.5", 1.4, 0.35],
+    ["M5 8 H19", 4.6, 1],
+    ["M8.5 13.6 H15.5", 1.4, 0.6],
+  ],
 };
 /** Three dots while the lyrics are on their way; one faint line when there are none. */
 const WAITING: readonly [string, number, number][] = [

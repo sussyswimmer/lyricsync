@@ -22,13 +22,13 @@ The Rust core in `src-tauri/src` has `media/` (now playing: the Windows media se
 
 Debug builds read four more flags: `--media-test` prints each now-playing and lyrics event, `--overlay-probe` prints every 2 s whether each page is visible and drawing, `--desktop-layer-test` shows a test line in place of the lyrics, even with nothing playing, and `--desktop-layer-all` shows the overlay on every display. Pass them with two `--`, as in `pnpm tauri dev -- -- --media-test`. [docs/NOW_PLAYING.md](NOW_PLAYING.md) and [docs/DESKTOP_LAYER.md](DESKTOP_LAYER.md) explain them, and [docs/ACCEPTANCE.md](ACCEPTANCE.md) lists the checks a real Mac and PC still need.
 
-Every build, release included, also reads `--look=<style>[,<family>[,<curve>]]`. It makes every overlay draw with that style (`arc`, `lens`, `drift`, `stack`, `poster`, `spotlight`, `wave`, `reveal` or `collage`) instead of the look Undertone picks for each song, optionally in that face (a family name such as `Instrument Serif`) and, for Arc, with that curve (−100 to 100). An empty part keeps the pick, as in `--look=arc,,-50`. It's for checking one style on purpose, as the CPU checks in [docs/ACCEPTANCE.md](ACCEPTANCE.md) do, and it's never saved; a malformed value is ignored (the log says why). Quit Undertone first, then start it with the flag: `pnpm tauri dev -- -- --look=lens`, `open -a Undertone --args --look=lens` on macOS, or `undertone.exe --look=lens` on Windows. In a browser, the overlay page's `?look=` does the same.
+Every build, release included, also reads `--look=<style>[,<family>[,<curve>]]`. It makes every overlay draw with that style (`arc`, `lens`, `drift`, `stack`, `poster`, `spotlight`, `wave`, `reveal`, `collage` or `reel`) instead of the look Undertone picks for each song, optionally in that face (a family name such as `Instrument Serif`) and, for Arc, with that curve (−100 to 100). An empty part keeps the pick, as in `--look=arc,,-50`. It's for checking one style on purpose, as the CPU checks in [docs/ACCEPTANCE.md](ACCEPTANCE.md) do, and it's never saved; a malformed value is ignored (the log says why). Quit Undertone first, then start it with the flag: `pnpm tauri dev -- -- --look=lens`, `open -a Undertone --args --look=lens` on macOS, or `undertone.exe --look=lens` on Windows. In a browser, the overlay page's `?look=` does the same.
 
 ## Frontend in a browser
 
 `pnpm dev` serves the frontend at <http://localhost:1420>. In a plain browser there is no Tauri, so both pages run against the **mock bridge**, a fake player that sends the same events as the Rust core. Open the overlay at <http://localhost:1420/> and the settings window at <http://localhost:1420/settings.html> side by side: they share the player and settings, so a change in one shows up in the other.
 
-The mock plays ten demo tracks with original placeholder lyrics:
+The mock plays eleven demo tracks with original placeholder lyrics:
 
 | # | Track | Shows |
 |---|---|---|
@@ -42,6 +42,7 @@ The mock plays ten demo tracks with original placeholder lyrics:
 | 7 | Ledger Lines | a look demo: a fast, dense verse under a black-and-white cover, which Undertone sets as Stack in Bricolage, 76 s |
 | 8 | Strobe Hearts (Club Mix) | a look demo: short shouted hooks, a club edit and a neon-on-black cover, set as a Poster in Unbounded capitals, 66 s |
 | 9 | Glacier Nocturne | a look demo: sparse, slow lines with long instrumental breaks under a cold, dark cover, set as Drift in Instrument Serif, 118 s |
+| 10 | Dial Tone Avenue | a look demo: a mid-tempo late-night song, timed word by word, full of words that carry a sign (city, phone, started, left, dance…), under the cold, dark cover again, set as Reel in Space Grotesk, 120 s |
 
 Keys in mock mode (ignored while a form control has focus):
 
@@ -59,11 +60,11 @@ URL parameters (combine them with `&`):
 | Parameter | Effect |
 |---|---|
 | `?mock` | Use the mock even inside the Tauri webview. A plain browser always uses it. |
-| `?track=N` | Start on demo track N (0–9). |
+| `?track=N` | Start on demo track N (0–10). |
 | `?t=MS` | Start at this position, in ms. |
 | `?paused` | Start paused. |
 | `?settings=JSON` | URL-encoded JSON patch over the saved settings, e.g. `%7B%22effects%22%3A80%7D` for `{"effects":80}`. In the mock, `mode`, `font` and `curve` in it force a look like `?look=` (the app no longer reads them). |
-| `?look=STYLE[,FAMILY[,CURVE]]` | On the overlay page, with either bridge: draw every song in that style (`arc`, `lens`, `drift`, `stack`, `poster`, `spotlight`, `wave`, `reveal` or `collage`), optionally in that font family and, for Arc, with that curve (−100 to 100), instead of the look Undertone picks. An empty part keeps the pick: `?look=lens`, `?look=lens,Syne`, `?look=arc,,-50`. Never saved. |
+| `?look=STYLE[,FAMILY[,CURVE]]` | On the overlay page, with either bridge: draw every song in that style (`arc`, `lens`, `drift`, `stack`, `poster`, `spotlight`, `wave`, `reveal`, `collage` or `reel`), optionally in that font family and, for Arc, with that curve (−100 to 100), instead of the look Undertone picks. An empty part keeps the pick: `?look=lens`, `?look=lens,Syne`, `?look=arc,,-50`. Never saved. |
 | `?power=full\|lite` | On the overlay page: force the full motion, or the lighter drawing Undertone uses on computers without graphics acceleration (detected otherwise). Graphics (the splashes, the pictures and the words answering them) need the full motion: headless Chromium reports `lite`, so add `?power=full` to see them there. |
 | `?flair=MOVE[,ACCENT[,SPLASH]]` | On the overlay page, with either bridge: force the song's flair (its Text effects moves and its splash) instead of the one Undertone picks. MOVE and ACCENT are each `rise`, `bounce`, `sway`, `wave`, `pulse` or `drop`; ACCENT is how the song's repeated lines (its hooks) move, and follows MOVE when left out. SPLASH is `drops`, `sparks`, `confetti`, `ripple` or `glints`. An empty part keeps the pick: `?flair=bounce`, `?flair=sway,pulse,confetti`, `?flair=,,drops`. Never saved. |
 | `?shortcutConflict=toggleLyrics,nudgeLater` | Act as if another app held the combinations those actions start with: they report `"unavailable"` in `shortcuts-status`, and Settings warns under them. Recording a different combination clears the warning. Actions: `toggleLyrics`, `nudgeEarlier`, `nudgeLater`. |
@@ -71,7 +72,7 @@ URL parameters (combine them with `&`):
 | `?loginItem=refuse` | Act like a core whose system refuses the login item: a **Launch at login** change fails, the rest of the change applies, and Settings shows its note under the switch. |
 | `?wallpaper=dusk\|light\|busy\|none` | Stand-in wallpaper behind the overlay page (default `dusk`). |
 
-For example, <http://localhost:1420/?mock&track=1&t=4900&look=arc> opens Paper Lanterns mid-line in Arc, whatever Undertone would pick for it, and <http://localhost:1420/?mock&track=8> plays Strobe Hearts in the look Undertone picks (Poster, in Unbounded). <http://localhost:1420/?mock&track=9&t=7000&flair=,,drops> plays Glacier Nocturne just before its snowflake picture and its first splash.
+For example, <http://localhost:1420/?mock&track=1&t=4900&look=arc> opens Paper Lanterns mid-line in Arc, whatever Undertone would pick for it, and <http://localhost:1420/?mock&track=8> plays Strobe Hearts in the look Undertone picks (Poster, in Unbounded). <http://localhost:1420/?mock&track=9&t=7000&flair=,,drops> plays Glacier Nocturne just before its snowflake picture and its first splash. <http://localhost:1420/?mock&track=10&t=7000> plays Dial Tone Avenue, the Reel demo, one word at a time with a sign beside the words that name something.
 
 `?settings` applies only to the page it's on and isn't saved, so the other page keeps the saved settings until you change one. Give both pages the same `?settings=`, or make the change in the settings window, to keep them matching. The patch is applied like `update_settings`: inside `colors`, `font` or `shortcuts` only the keys you give change, and the rest keep their saved values. `trackOffsetsMs` replaces the whole map, and invalid values are ignored.
 
@@ -87,7 +88,7 @@ src/bridge/            Tauri bridge, mock bridge, and the switch between them
 src/core/              LRC parser, word timing, playback clock, album palette, the look picker (pure TS)
 src/overlay/           the lyric stage, controller, empty states and fonts
 src/overlay/pictures/  Graphics' word pictures (WebP), matched to words by src/core/wordpics.ts
-src/overlay/modes/     arc, lens (poster and spotlight are lens with another layout: slot-layouts.ts), drift (stack is drift without depth)
+src/overlay/modes/     arc, lens (poster, spotlight, wave, reveal, collage and reel are lens with another layout: slot-layouts.ts), drift (stack is drift without depth)
 src/settings/          settings window and its live preview
 src/styles/            CSS
 tests/                 vitest suites; tests/fixtures/ holds original placeholder LRC

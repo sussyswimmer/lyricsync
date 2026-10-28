@@ -242,7 +242,7 @@ describe("user guide", () => {
 describe("the look picked per song in the docs", () => {
   it("the guide explains the pick, the card and the Look group, and has no Style, Font or Curve to set", () => {
     const guide = read("docs/USER_GUIDE.md");
-    for (const heading of ["## Look", "### Picked for this song", "### The nine styles", "### Effects", "### Glow"]) {
+    for (const heading of ["## Look", "### Picked for this song", "### The ten styles", "### Effects", "### Glow"]) {
       expect(guide).toContain(`\n${heading}\n`);
     }
     for (const gone of ["## Style", "## Font", "## Layout", "### Curve"]) expect(guide).not.toContain(`\n${gone}\n`);

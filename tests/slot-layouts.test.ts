@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitRow, poseOf, type Shape } from "../src/overlay/modes/lens-plan";
+import { fitRow, planLens, poseOf, type Shape } from "../src/overlay/modes/lens-plan";
 import {
   balancedRows,
   COLLAGE_LAYOUT,
@@ -8,6 +8,12 @@ import {
   POSTER_LAYOUT,
   POSTER_MAX_ROW,
   posterRows,
+  REEL_ABOVE,
+  REEL_BELOW,
+  REEL_BIG,
+  REEL_LAYOUT,
+  REEL_LEAD_MS,
+  reelAt,
   REVEAL_GHOST,
   REVEAL_LAYOUT,
   SLOT_LAYOUTS,
@@ -211,6 +217,109 @@ describe("Collage", () => {
     expect(still.collage?.rows).toHaveLength(1);
     expect(rest.rotate.every((r) => r === 0)).toBe(true);
     expect(new Set(rest.y.map((y) => y.toFixed(6))).size).toBe(1);
+  });
+});
+
+describe("Reel", () => {
+  const BASELINE = 0.8;
+
+  it("has the word being sung big in the middle of the stage, the one just sung small and faint above it, the next below, the rest unseen", () => {
+    const fit = REEL_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, BASELINE);
+    const side = fit.reel?.side ?? 0;
+    const pose = REEL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 2);
+    expect(pose.scale[2]).toBeCloseTo(fit.fit * REEL_BIG, 6);
+    expect(pose.scale[1]).toBeCloseTo(fit.fit * side, 6);
+    expect(pose.scale[3]).toBeCloseTo(fit.fit * side, 6);
+    // every word centered across the stage, on its own row
+    LINE.widths.forEach((w, j) => expect((pose.x[j] ?? 0) + (w * (pose.scale[j] ?? 1)) / 2).toBeCloseTo(STAGE.width / 2, 6));
+    expect(pose.y[1]).toBeLessThan(pose.y[2] ?? 0);
+    expect(pose.y[3]).toBeGreaterThan(pose.y[2] ?? 0);
+    // the rows' middles (not their baselines: a bigger word's is further below its middle) are a pitch apart
+    const middle = (j: number): number => (pose.y[j] ?? 0) - (BASELINE - 0.5) * SIZE * (pose.scale[j] ?? 1);
+    expect(middle(3) - middle(2)).toBeCloseTo(middle(2) - middle(1), 6);
+    expect(middle(3) - middle(2)).toBeCloseTo((fit.reel?.pitch ?? 0) * fit.fit, 6);
+    // the big word's em box is centered on the line's: its baseline sits (baseline - 0.5) of the extra em lower
+    expect(pose.y[2]).toBeCloseTo((BASELINE - 0.5) * SIZE * fit.fit * (REEL_BIG - 1), 6);
+    expect(pose.opacity[2]).toBe(1);
+    expect(pose.opacity[1]).toBeCloseTo(REEL_ABOVE, 6);
+    expect(pose.opacity[3]).toBeCloseTo(REEL_BELOW, 6);
+    for (const j of [0, 4, 5, 6]) expect(pose.opacity[j]).toBe(0);
+    expect(pose.rotate.every((r) => r === 0)).toBe(true);
+    // the next word fades in as it comes up from two rows down, the last one out as it goes two rows up
+    const rolling = REEL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 2.5);
+    expect(rolling.opacity[4]).toBeGreaterThan(0);
+    expect(rolling.opacity[4]).toBeLessThan(REEL_BELOW);
+    expect(rolling.opacity[1]).toBeGreaterThan(0);
+    expect(rolling.opacity[1]).toBeLessThan(REEL_ABOVE);
+    expect(rolling.scale[2]).toBeCloseTo(rolling.scale[3] ?? 0, 6);
+  });
+
+  it("fits the biggest word and the three rows to the stage, holds its rows whatever the ease-in, and at rest is one plain row", () => {
+    const fit = REEL_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, BASELINE);
+    expect(Math.max(...LINE.widths) * fit.fit * REEL_BIG).toBeLessThanOrEqual(0.78 * STAGE.width + 1e-6);
+    const reach = REEL_LAYOUT.extent(fit, SIZE * fit.fit);
+    expect(reach.above + reach.below).toBeLessThanOrEqual(0.72 * STAGE.height + 1e-6);
+    const narrow = REEL_LAYOUT.fit(LINE, SIZE, { width: 400, height: 900 }, true, 0, BASELINE);
+    expect(narrow.fit).toBeLessThan(fit.fit);
+    expect(Math.max(...LINE.widths) * narrow.fit * REEL_BIG).toBeLessThanOrEqual(0.78 * 400 + 1e-6);
+    // a line arriving before its first word already has it in the middle: lens 0 and 1 pose alike
+    expect(REEL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 0, 0)).toEqual(REEL_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 0));
+    expect(REEL_LAYOUT.faintest(fit, STAGE.width, true).opacity).toBeCloseTo(Math.min(REEL_ABOVE, REEL_BELOW), 6);
+    const still = REEL_LAYOUT.fit(LINE, SIZE, STAGE, false, 0, BASELINE);
+    expect(still.reel).toBeUndefined();
+    expect(REEL_LAYOUT.pose(LINE, still, STAGE.width, 1, 0, 3)).toEqual(poseOf(LINE, fitRow(LINE, SIZE, STAGE.width, false), STAGE.width, 1, 0, 0));
+    expect(REEL_LAYOUT.faintest(still, STAGE.width, false).opacity).toBe(1);
+    expect(REEL_LAYOUT.alone).toBe(true);
+    expect(REEL_LAYOUT.glides).toBe(false);
+  });
+
+  it("steps to each word as it starts, a little early, and holds the first before the line and the last to its end", () => {
+    const words = [0, 1, 2].map((i) => ({ start: 10_000 + 500 * i, end: 10_500 + 500 * i }));
+    expect(reelAt(words, 0)).toBe(0);
+    expect(reelAt(words, 10_000)).toBe(0);
+    expect(reelAt(words, 10_500 - REEL_LEAD_MS - 1)).toBe(0);
+    expect(reelAt(words, 10_500 - REEL_LEAD_MS)).toBe(1);
+    expect(reelAt(words, 10_700)).toBe(1);
+    expect(reelAt(words, 11_000)).toBe(2);
+    expect(reelAt(words, 99_000)).toBe(2);
+    expect(reelAt([], 5)).toBe(0);
+  });
+
+  it("plans its own singing position: each word rolls into the middle on a bouncy spring as it starts, and the last stays", () => {
+    const shape = shapeOf([120, 60, 200, 90]);
+    const words = [0, 1, 2, 3].map((i) => ({ start: 10_000 + 500 * i, end: 10_500 + 500 * i }));
+    const fit = REEL_LAYOUT.fit(shape, SIZE, STAGE, true, 0, BASELINE);
+    const plan = planLens({
+      words,
+      shape,
+      fit,
+      width: STAGE.width,
+      y: 0,
+      dpr: 1,
+      origin: 9500,
+      end: 12_500,
+      rampFrom: 10_000,
+      motion: true,
+      poseAt: (lens, a, out) => REEL_LAYOUT.pose(shape, fit, STAGE.width, 1, lens, a, out),
+      ...(REEL_LAYOUT.along ? { target: REEL_LAYOUT.along } : {}),
+      ...(REEL_LAYOUT.spring ? { spring: REEL_LAYOUT.spring } : {}),
+    });
+    const big = fit.fit * REEL_BIG;
+    // before the first word: it waits in the middle, full size
+    expect(plan.at(9600).scale[0]).toBeCloseTo(big, 3);
+    // word 2 is on its way into the middle as it starts, and there a third of a second later
+    const starting = plan.at(11_000);
+    expect(starting.scale[2]).toBeGreaterThan(starting.scale[1] ?? 0);
+    const settled = plan.at(11_350);
+    expect(settled.scale[2]).toBeCloseTo(big, 1);
+    expect(settled.opacity[1]).toBeCloseTo(REEL_ABOVE, 1);
+    // the spring overshoots: on its way, word 2's row passes a little above where it settles
+    const ys = Array.from({ length: 40 }, (_, i) => plan.at(10_900 + 10 * i).y[2] ?? 0);
+    expect(Math.min(...ys)).toBeLessThan((settled.y[2] ?? 0) - 1);
+    // the last word holds the middle past the line's end
+    expect(plan.final.scale[3]).toBeCloseTo(big, 3);
+    expect(plan.at(12_450).opacity[2]).toBeCloseTo(REEL_ABOVE, 1);
+    expect(plan.tracks).toHaveLength(4);
   });
 });
 

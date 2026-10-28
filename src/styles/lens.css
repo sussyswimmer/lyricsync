@@ -28,6 +28,31 @@
   text-shadow: var(--ut-dark);
 }
 
+/* A word's glyph (Reel): a line icon beside it in the lyric color, a little quieter than the word,
+   with a soft dark shadow of its own so it reads on light wallpapers. It is in the slot after the
+   word's box, so the slot's transform carries it with the word. */
+.lens-slot .kw-glyph {
+  display: inline-block;
+  width: 0.72em;
+  height: 0.72em;
+  margin-left: 0.24em;
+  vertical-align: -0.06em;
+  overflow: visible;
+  color: var(--ut-lyric);
+  opacity: 0.8;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0.04em 0.07em rgba(0, 0, 0, 0.6));
+}
+
+.lens-slot .kw-glyph.is-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
 /* An instrumental break: the dots where the focus line goes. */
 .lens-break {
   position: absolute;

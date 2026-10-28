@@ -10,7 +10,7 @@
  */
 import type { Line } from "./lrc";
 import type { EmphasisRule } from "./songlook";
-import { normalizeToken, planPictures, tokensOf, type PictureId } from "./wordpics";
+import { normalizeToken, planPictures, tokensOf, type PictureId, type PicturePlan } from "./wordpics";
 import { planScenes, type SceneId } from "./wordscenes";
 
 /**
@@ -189,6 +189,8 @@ function splashCandidates(line: Line, hook: boolean, emphasis: EmphasisRule | nu
 export interface DecorParts {
   text: boolean;
   graphics: boolean;
+  /** false: no pictures, though Graphics is on (a style whose words are stacked has no row for one to travel); scenes and splashes still */
+  pictures?: boolean;
 }
 
 export const ALL_DECOR: DecorParts = Object.freeze({ text: true, graphics: true });
@@ -207,7 +209,7 @@ export function planDecor(lines: readonly Line[], flair: Flair | null, emphasis:
   const moveOf = (hook: boolean): Move => (!parts.text ? "rise" : hook ? flair.accent : flair.move);
   const hooks = hookLines(lines);
   const scenes = planScenes(lines);
-  const pictures = planPictures(lines);
+  const pictures = parts.pictures === false ? new Map<number, PicturePlan>() : planPictures(lines);
   let lastSplash = Number.NEGATIVE_INFINITY;
   return lines.map((line, index) => {
     const hook = hooks.has(index);

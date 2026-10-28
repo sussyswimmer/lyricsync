@@ -69,6 +69,16 @@ describe("a song's decor, line by line", () => {
     expect(graphics.some((d) => [...d.words.values()].some((w) => w.splash))).toBe(true);
   });
 
+  it("keeps the splashes and the scenes but no pictures for a style whose words are stacked (pictures: false)", () => {
+    const lines = [line("roses on the roof", 0), line("a verse goes by", 5000), line("roses on the roof", 10_000), line("set the night on fire", 15_000)];
+    const stacked = planDecor(lines, FLAIR, RULE, { text: true, graphics: true, pictures: false });
+    expect(stacked.map((d) => d.move)).toEqual(["pulse", "bounce", "pulse", "bounce"]);
+    expect(stacked.every((d) => [...d.words.values()].every((w) => !w.picture))).toBe(true);
+    expect(stacked.some((d) => [...d.words.values()].some((w) => w.splash))).toBe(true);
+    expect(stacked[3]?.words.get(4)?.scene).toBe("fire");
+    expect(planDecor(lines, FLAIR, RULE, { text: true, graphics: true, pictures: true })[0]?.words.get(0)?.picture).toBe("rose");
+  });
+
   it("moves hooks with the accent and the rest with the move", () => {
     const lines = [line("we sing the chorus here", 0), line("a verse goes by", 5000), line("we sing the chorus here", 10_000)];
     expect(planDecor(lines, FLAIR, RULE).map((d) => d.move)).toEqual(["pulse", "bounce", "pulse"]);
@@ -261,8 +271,10 @@ describe("a mode's decor for a song", () => {
     expect(picturesOf(decor)).toEqual(["rose"]);
   });
 
-  it("plans no pictures with Graphics off, and nothing for plain lyrics or in the lite tier", () => {
+  it("plans no pictures with Graphics off or for a mode whose words are stacked, and nothing for plain lyrics or in the lite tier", () => {
     expect(picturesOf(songDecor(lines, look({ graphics: false })))).toEqual([]);
+    expect(picturesOf(songDecor(lines, look({ pictures: false })))).toEqual([]);
+    expect(songDecor(lines, look({ pictures: false })).map((d) => d.move)).toEqual(songDecor(lines, look()).map((d) => d.move));
     expect(picturesOf(songDecor(lines, look({ effectsMode: false })))).toEqual(["rose"]);
     for (const over of [{ effectsMode: false, graphics: false }, { unsynced: true }, { power: "lite" as const }]) {
       const decor = songDecor(lines, look(over));

@@ -394,7 +394,7 @@ function looksOf(builds: readonly Built[]): Map<string, SongLook> {
 }
 
 const face = (family: string) => FONTS.find((x) => x.family === family);
-const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage"];
+const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"];
 
 // ───────────────────────────── tests ─────────────────────────────
 
@@ -441,7 +441,8 @@ describe("mock tracks", () => {
   it("never sets the script sampler in a face without Vietnamese, nor on a curve or lens", () => {
     const look = looks.get("mock: Script Sampler");
     expect(face(look?.font.family ?? "")?.vietnamese).toBe(true);
-    expect(["stack", "drift"]).toContain(look?.style);
+    // a list, or one word at a time (Reel never sets a whole line, so its long lines don't shrink it)
+    expect(["stack", "drift", "reel"]).toContain(look?.style);
   });
 
   it("has a look for every track, lyrics or not", () => {
@@ -776,7 +777,7 @@ describe("legibility invariants over a feature grid", () => {
     }
   });
 
-  it("picks only the nine styles: the contract's four modes, Poster, Spotlight, Wave, Reveal and Collage", () => {
+  it("picks only the ten styles: the contract's four modes, Poster, Spotlight, Wave, Reveal, Collage and Reel", () => {
     expect(STYLES).toEqual(MODES);
     expect(STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
     const looks = [...grid.map((f) => pickLook(f)), ...looksOf([...SYNTHETIC.map((make) => make()), ...mockInputs()]).values()];

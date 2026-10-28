@@ -20,7 +20,7 @@ const COVERS: Readonly<Record<number, CoverStats>> = {
   3: { lightness: 0.493, contrast: 0.349, chroma: 0.003, colorfulness: 0.01, warmth: 0, gray: 1, hue: null },
   // Strobe Hearts: neon rings and strobe bars on black
   4: { lightness: 0.161, contrast: 0.192, chroma: 0.183, colorfulness: 0.724, warmth: 0.017, gray: 0.613, hue: 0.155 },
-  // Glacier Nocturne: a pale moon over ridges of ice, at night
+  // Glacier Nocturne, and Dial Tone Avenue with it: a pale moon over ridges of ice, at night
   5: { lightness: 0.168, contrast: 0.143, chroma: 0.151, colorfulness: 0.243, warmth: -0.98, gray: 0.146, hue: 0.58 },
 };
 
@@ -49,6 +49,7 @@ const face = (family: string) => FONTS.find((f) => f.family === family);
 const LEDGER = "Ledger Lines";
 const STROBE = "Strobe Hearts (Club Mix)";
 const GLACIER = "Glacier Nocturne";
+const DIAL = "Dial Tone Avenue";
 
 describe("the look demos (mock tracks 7–9)", () => {
   it("come after the first seven tracks, which keep their places", () => {
@@ -123,5 +124,14 @@ describe("the look demos (mock tracks 7–9)", () => {
       return lookLabel(look);
     });
     expect(new Set(labels).size).toBe(3);
+  });
+  it("Dial Tone Avenue: a mid-tempo late-night song under a dark cover, timed word by word, is a Reel", () => {
+    const t = demo(DIAL);
+    expect(MOCK_TRACKS.indexOf(t)).toBe(10);
+    expect(t.synced).toContain("[by:Original placeholder lyrics written for Undertone]");
+    expect(hasWordTags(t.synced ?? "")).toBe(true);
+    const look = lookOf(t);
+    expect(look.style).toBe("reel");
+    expect(lookLabel(look).startsWith("Reel · ")).toBe(true);
   });
 });

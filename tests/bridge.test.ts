@@ -1600,10 +1600,10 @@ describe("demo covers with a canvas", () => {
     expect(calls).toHaveLength(drawn);
   });
 
-  it("has a cover for every demo track that names one, each used once from track 7 on", async () => {
+  it("has a cover for every demo track that names one, the look demos each their own from track 7 on (the Reel demo shares the cold one)", async () => {
     const { covers } = await withCanvas(true);
     for (const t of MOCK_TRACKS) if (t.cover !== null) expect(t.cover, t.title).toBeLessThan(covers.COVER_COUNT);
-    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5]);
+    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5, 5]);
   });
 
   it("returns null for an unknown cover or when there is no 2D context", async () => {

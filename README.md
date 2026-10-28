@@ -45,9 +45,14 @@
     <td width="33%" align="center"><img src="docs/media/style-reveal.webp" alt="Reveal: half a line sung and lit, the rest waiting as faint ghosts over a black-and-white street"><br><sub><b>Reveal</b></sub></td>
     <td width="33%" align="center"><img src="docs/media/style-collage.webp" alt="Collage: tilted cut-out capitals over a rainy city at night"><br><sub><b>Collage</b></sub></td>
   </tr>
+  <tr>
+    <td width="33%" align="center"></td>
+    <td width="33%" align="center"><img src="docs/media/style-reel.webp" alt="Reel: one big word in the middle with a small icon beside it, the last word small above and the next below, over a dusk sky"><br><sub><b>Reel</b></sub></td>
+    <td width="33%" align="center"></td>
+  </tr>
 </table>
 
-Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
+Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Reel shows one word at a time, big, with a small sign beside the words that name something: a building for *city*, an arrow for *left*, a phone for *call*. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
 
 ## Words you can picture
 

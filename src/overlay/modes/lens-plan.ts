@@ -109,6 +109,9 @@ export interface LensInput {
   poseAt?: (lens: number, a: number, out: LensPose) => LensPose;
   /** the layout turns words: every frame is `translate rotate scale` */
   rotates?: boolean;
+  /** the singing position the layout follows, in words, at song time `t` (singingAt by default) and the spring it follows it on (LENS_SPRING) */
+  target?: (words: readonly Pick<Word, "start" | "end">[], t: number) => number;
+  spring?: SpringSpec;
 }
 
 export interface LensPlan {
@@ -271,9 +274,10 @@ export function planLens(input: LensInput): LensPlan {
   const duration = end - origin;
   const n = words.length;
   const times = sampleTimes(duration, PLAN_MS);
-  const target = (ms: number): number => singingAt(words, origin + ms);
+  const position = input.target ?? singingAt;
+  const target = (ms: number): number => position(words, origin + ms);
   // the singing position, smoothed: a spring released at rest where the voice is at the origin
-  const along = motion ? chase(target, LENS_SPRING, { x: target(0), v: 0 }, duration, PLAN_MS) : [];
+  const along = motion ? chase(target, input.spring ?? LENS_SPRING, { x: target(0), v: 0 }, duration, PLAN_MS) : [];
   const xs = Array.from({ length: n }, () => new Array<number>(times.length));
   const ss = Array.from({ length: n }, () => new Array<number>(times.length));
   const os = Array.from({ length: n }, () => new Array<number>(times.length));
