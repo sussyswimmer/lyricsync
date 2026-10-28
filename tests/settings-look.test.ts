@@ -396,13 +396,38 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
 }
 
 describe("the settings panel since contract v4", () => {
-  it("has no Style or Font group and no Curve: the look is picked per song", () => {
+  it("has no Style or Font group and no Curve: the look is picked per song (Style, in Look, can fix one)", () => {
     const p = mountPanel();
     expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
     expect(p.root.all("slider").map((r) => r.one("row-label").textContent)).not.toContain("Curve");
-    // the only choices left are Behavior's two segments
+    // the segments are Behavior's two; the Style chips are Look's
     expect(p.root.all("seg").map((g) => g.getAttribute("aria-label"))).toEqual(["When to show lyrics", "Where to show lyrics"]);
+    expect(p.root.all("chips").map((g) => g.getAttribute("aria-label"))).toEqual(["Style"]);
     for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles"]) expect(p.root.all(gone), gone).toEqual([]);
+  });
+
+  it("Style: Auto or one of the ten styles for every song, saved as `style`, with a line saying which (contract v9)", () => {
+    const p = mountPanel();
+    const chips = p.group("Look").one("chips");
+    const inputOf = (opt: FakeElement): FakeElement => opt.children.find((c) => c.tagName === "INPUT") as FakeElement;
+    const inputs = chips.all("opt").map(inputOf);
+    expect(inputs.map((i) => i.value)).toEqual(["auto", "arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"]);
+    expect(chips.all("opt-label").map((l) => l.textContent)).toEqual(["Auto", "Arc", "Lens", "Drift", "Stack", "Poster", "Spotlight", "Wave", "Reveal", "Collage", "Reel"]);
+    expect(inputs.map((i) => i.checked)).toEqual([true, ...new Array<boolean>(10).fill(false)]);
+    const hint = p.group("Look").one("chips-hint");
+    expect(hint.textContent).toContain("picks a style for each song");
+    const reel = inputs[10] as FakeElement;
+    reel.checked = true;
+    reel.dispatch("change");
+    expect(p.edits).toEqual([{ style: "reel" }]);
+    expect(inputs.map((i) => i.checked)).toEqual([...new Array<boolean>(10).fill(false), true]);
+    expect(hint.textContent).toContain("Every song in Reel");
+    // the Style row comes first in Look, before the switches
+    expect(p.group("Look").all("row-label").map((l) => l.textContent)).toEqual(["Style", "Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
+    // settings without the field (a core older than v9), or with a name this build doesn't draw: Auto
+    const missing = undefined as unknown as Settings["style"];
+    expect(inputOf(mountPanel({ style: missing }).group("Look").one("chips").one("opt")).checked).toBe(true);
+    expect(inputOf(mountPanel({ style: "spiral" as Settings["style"] }).group("Look").one("chips").one("opt")).checked).toBe(true);
   });
 
   it("puts the Picked for this song card right under the preview's notice, and shows what the window hands it", () => {
@@ -499,12 +524,13 @@ describe("the settings panel since contract v4", () => {
     graphics.dispatch("change");
     expect(p.edits).toEqual([{ effectsMode: false }, { graphics: false }]);
     expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_OFF);
-    // the sliders come after them, in the same order as before
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
+    // the sliders come after them, in the same order as before (Style's chips come first)
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Style", "Text effects", "Graphics", "Size", "Effects", "Glow", "Opacity"]);
   });
 
   it("Text effects and Graphics: show the saved states, and an older core's Effects mode for both", () => {
     const switches = (over: Partial<Settings>): boolean[] => (mountPanel(over).group("Look").all("switch") as FakeElement[]).slice(0, 2).map((s) => s.checked);
+    expect(switches({})).toEqual([true, true]);
     expect(switches({ effectsMode: false })).toEqual([false, true]);
     expect(switches({ graphics: false })).toEqual([true, false]);
     // settings without the field, as a core older than v8 (or v5) sends them

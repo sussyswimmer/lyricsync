@@ -265,6 +265,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
             "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
             "graphics" => keep_or_set(&mut next.graphics, value.as_bool()),
+            "style" => keep_or_set(&mut next.style, variant(value)),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -1056,7 +1057,7 @@ mod tests {
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
                 "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk,
-                "effectsMode": junk, "graphics": junk
+                "effectsMode": junk, "graphics": junk, "style": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -1077,7 +1078,7 @@ mod tests {
         // Numbers where a boolean or a string belongs, booleans where a number or a string does.
         let next = merge_patch(
             &current,
-            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0, "graphics": "on" }),
+            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0, "graphics": "on", "style": 4 }),
         );
         assert_eq!(next, current);
         let next = merge_patch(
@@ -1248,8 +1249,53 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 21);
+        assert_eq!(keys.len(), 22);
         assert!(!keys.iter().any(|k| k == "theme"));
+    }
+
+    #[test]
+    fn style_takes_any_style_the_overlay_draws_and_nothing_else() {
+        use crate::contract::StyleChoice;
+        for (name, expected) in [
+            ("auto", StyleChoice::Auto),
+            ("arc", StyleChoice::Arc),
+            ("lens", StyleChoice::Lens),
+            ("drift", StyleChoice::Drift),
+            ("stack", StyleChoice::Stack),
+            ("poster", StyleChoice::Poster),
+            ("spotlight", StyleChoice::Spotlight),
+            ("wave", StyleChoice::Wave),
+            ("reveal", StyleChoice::Reveal),
+            ("collage", StyleChoice::Collage),
+            ("reel", StyleChoice::Reel),
+        ] {
+            assert_eq!(patched(json!({ "style": name })).style, expected, "{name}");
+        }
+        let reel = patched(json!({ "style": "reel" }));
+        for junk in [
+            json!("Reel"),
+            json!("spiral"),
+            json!(""),
+            json!(3),
+            json!(null),
+            json!(true),
+        ] {
+            assert_eq!(
+                merge_patch(&reel, &json!({ "style": junk })).style,
+                StyleChoice::Reel,
+                "{junk}"
+            );
+        }
+        // saved before contract v9: Auto, and the file is rewritten with it
+        let mut saved = serde_json::to_value(&reel).unwrap();
+        saved.as_object_mut().unwrap().remove("style");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(settings.style, StyleChoice::Auto);
+        assert!(rewrite);
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap()["style"],
+            json!("auto")
+        );
     }
 
     #[test]

@@ -915,6 +915,11 @@ export function pickLook(f: SongFeatures): SongLook {
 }
 
 /** "Lens · Syne", for the settings panel. */
+/** A style's name as the window shows it: "Reel". */
+export function styleLabel(style: Style): string {
+  return STYLE_LABEL[style];
+}
+
 export function lookLabel(look: Pick<SongLook, "style" | "font">): string {
   const face = FONTS.find((x) => x.family === look.font.family);
   return `${STYLE_LABEL[look.style]} · ${face?.label ?? look.font.family}`;

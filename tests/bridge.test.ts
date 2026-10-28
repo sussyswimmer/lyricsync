@@ -538,6 +538,7 @@ describe("mergeSettings", () => {
     autoColor: false,
     colors: { lyric: "#ffffff", highlight: "#00ff88", dim: "#202020" },
     font: { family: "Syne", weight: 500 },
+    style: "reel",
     size: 80,
     curve: -20,
     yPos: 70,
@@ -735,6 +736,19 @@ describe("migrateSettings", () => {
     // a patch changes one, never the other
     expect(mergeSettings(DEFAULT_SETTINGS, { graphics: false })).toMatchObject({ effectsMode: true, graphics: false });
     expect(mergeSettings(DEFAULT_SETTINGS, { graphics: "off" })).toMatchObject({ graphics: true });
+  });
+
+  it("takes any style the overlay draws as the Style setting (contract v9), and reads settings saved without one as auto", () => {
+    for (const style of ["auto", "arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"] as const) {
+      expect(mergeSettings(DEFAULT_SETTINGS, { style }).style).toBe(style);
+    }
+    const reel = mergeSettings(DEFAULT_SETTINGS, { style: "reel" });
+    for (const junk of ["Reel", "spiral", "", 3, null, true]) expect(mergeSettings(reel, { style: junk }).style, String(junk)).toBe("reel");
+    const v8: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS) };
+    delete v8["style"];
+    expect(migrateSettings(v8)).toEqual(DEFAULT_SETTINGS);
+    expect(migrateSettings(null).style).toBe("auto");
+    expect(migrateSettings({ style: "reel" }).style).toBe("reel");
   });
 
   it("keeps what it knows from a newer version", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v8", () => {
+describe("contract v9", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(8);
+    expect(CONTRACT_VERSION).toBe(9);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
@@ -19,7 +19,13 @@ describe("contract v8", () => {
       effects: 50,
       effectsMode: true,
       graphics: true,
+      style: "auto",
     });
+  });
+
+  it("adds style, auto by default, without touching the settings schema (v9)", () => {
+    expect(DEFAULT_SETTINGS.style).toBe("auto");
+    expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
   it("adds graphics, on by default, apart from effectsMode, without touching the settings schema (v8)", () => {

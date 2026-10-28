@@ -841,6 +841,51 @@ html.is-scrolled .top {
   color: var(--text);
 }
 
+/* many-way choices: wrapping pills, each with its glyph (the Style setting) */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chips-row {
+  display: block;
+}
+
+.chips-row > .row-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.chips .opt-face {
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px 0 7px;
+  border-radius: 13px;
+  background: var(--seg-bg);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.chips .opt-face svg {
+  width: 18px;
+  height: 12px;
+  flex: none;
+}
+
+.chips input:checked + .opt-face {
+  background: var(--seg-on);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    var(--seg-on-shadow);
+  color: var(--text);
+}
+
+.chips-hint {
+  margin-top: 6px;
+}
+
 .choice {
   grid-template-columns: 74px minmax(0, 1fr);
 }

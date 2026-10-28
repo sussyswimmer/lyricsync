@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 8;
+pub const CONTRACT_VERSION: u8 = 9;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
 /// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
 /// v6 only stopped reading `yPos`.
@@ -82,6 +82,25 @@ pub enum Mode {
     Lens,
     Drift,
     Stack,
+}
+/// The Style setting (contract v9): `Auto` lets the overlay pick each song's style; any other
+/// draws every song in that style. The names past the four modes are styles only the overlay
+/// draws; the core stores them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StyleChoice {
+    #[default]
+    Auto,
+    Arc,
+    Lens,
+    Drift,
+    Stack,
+    Poster,
+    Spotlight,
+    Wave,
+    Reveal,
+    Collage,
+    Reel,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -202,6 +221,10 @@ pub struct Settings {
     /// carries over an Effects mode that was off).
     #[serde(default = "default_graphics")]
     pub graphics: bool,
+    /// The style every song is drawn in, or `Auto` for the one the overlay picks per song. Added
+    /// in contract v9: settings saved without it read as `Auto`.
+    #[serde(default)]
+    pub style: StyleChoice,
 }
 /// `Settings.effects` when it is missing (settings saved before contract v4).
 fn default_effects() -> f64 {
@@ -252,6 +275,7 @@ impl Default for Settings {
             effects: default_effects(),
             effects_mode: default_effects_mode(),
             graphics: default_graphics(),
+            style: StyleChoice::Auto,
         }
     }
 }
@@ -556,13 +580,51 @@ mod tests {
                 },
                 "effects": 50.0,
                 "effectsMode": true,
-                "graphics": true
+                "graphics": true,
+                "style": "auto"
             })
         );
         // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Text effects and Graphics.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
         assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
         assert!(CONTRACT_TS.contains(&format!("graphics: {},", DEFAULT_SETTINGS.graphics)));
+        assert!(CONTRACT_TS.contains("style: \"auto\","));
+    }
+    #[test]
+    fn settings_saved_before_contract_v9_read_as_style_auto() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["style"] = json!("reel");
+        assert_eq!(
+            serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .style,
+            StyleChoice::Reel
+        );
+        saved.as_object_mut().unwrap().remove("style");
+        let v8: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v8, *DEFAULT_SETTINGS);
+        assert_eq!(v8.style, StyleChoice::Auto);
+        // every style the overlay draws, and nothing else
+        for name in [
+            "auto",
+            "arc",
+            "lens",
+            "drift",
+            "stack",
+            "poster",
+            "spotlight",
+            "wave",
+            "reveal",
+            "collage",
+            "reel",
+        ] {
+            assert!(
+                serde_json::from_value::<StyleChoice>(json!(name)).is_ok(),
+                "{name}"
+            );
+        }
+        assert!(serde_json::from_value::<StyleChoice>(json!("Reel")).is_err());
+        assert!(serde_json::from_value::<StyleChoice>(json!("spiral")).is_err());
     }
     #[test]
     fn settings_saved_before_contract_v8_read_as_graphics_on() {
@@ -695,7 +757,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 8);
+        assert_eq!(CONTRACT_VERSION, 9);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

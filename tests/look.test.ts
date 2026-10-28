@@ -14,6 +14,8 @@ import {
   parseLookOverride,
   pickedOf,
   resolveLook,
+  styleChoiceOf,
+  withStyleChoice,
   rgba,
   sanePick,
   shadowLayers,
@@ -339,6 +341,26 @@ describe("the picked look", () => {
     const wild = sanePick({ ...pick(), flair: { move: "spin", accent: 3, splash: null } as unknown as PickedLook["flair"] });
     expect(wild.flair).toEqual({ move: "rise", accent: "rise", splash: "ripple" });
     expect(pickedOf({ ...pick({ flair }) }).flair).toEqual(flair);
+  });
+});
+
+describe("the Style setting (contract v9)", () => {
+  it("is null for auto, a missing field or a name this build doesn't draw, and the style otherwise", () => {
+    expect(styleChoiceOf(settings())).toBeNull();
+    expect(styleChoiceOf(settings({ style: "auto" }))).toBeNull();
+    expect(styleChoiceOf(settings({ style: "reel" }))).toBe("reel");
+    expect(styleChoiceOf(settings({ style: "arc" }))).toBe("arc");
+    const v8 = { ...settings() } as Record<string, unknown>;
+    delete v8["style"];
+    expect(styleChoiceOf(v8 as unknown as Settings)).toBeNull();
+    expect(styleChoiceOf({ ...settings(), style: "spiral" as Settings["style"] })).toBeNull();
+  });
+
+  it("puts its style in place of the song's, and leaves the rest of the pick alone", () => {
+    const song = { ...DEFAULT_PICK, style: "lens" as const, font: { family: "Syne", weight: 800 } };
+    expect(withStyleChoice(song, null)).toBe(song);
+    expect(withStyleChoice(song, "lens")).toBe(song);
+    expect(withStyleChoice(song, "reel")).toEqual({ ...song, style: "reel" });
   });
 });
 

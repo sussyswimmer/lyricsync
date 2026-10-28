@@ -4,6 +4,7 @@ import type { MockBridge } from "../bridge/mock";
 import { hexToHsl, hslToHex, type CoverStats, type Palette, type PaletteCache } from "../core/palette";
 import { pickLook, songFeatures, timingOf, type SongLook } from "../core/songlook";
 import { OverlayController } from "../overlay/controller";
+import { styleChoiceOf } from "../overlay/look";
 import { h } from "../overlay/dom";
 import { LyricStage, type StageView } from "../overlay/stage";
 import { sameLyrics, viewFor } from "../overlay/view";
@@ -164,9 +165,12 @@ export class SettingsPreview {
 
   /** Every settings change, saved or not. */
   setSettings(settings: Settings): void {
+    const before = styleChoiceOf(this.settings);
     this.settings = settings;
     this.controller?.setSettings(settings);
     this.renderOff();
+    // the Style setting changed: the card shows the chosen style (or the song's own again)
+    if (styleChoiceOf(settings) !== before && this.updateLook()) this.options.onInfo?.(this.info);
   }
 
   /**
@@ -323,6 +327,9 @@ export class SettingsPreview {
     let look: CardLook | null = null;
     if (track && this.reported) look = this.reported.key === key ? this.reported.look : null;
     else if (track) look = this.interimLook(track);
+    // the Style setting's style stands in for the song's own on the card too
+    const chosen = styleChoiceOf(this.settings);
+    if (look && chosen) look = { ...look, style: chosen, chosen: true };
     const next = cardState({ key, demo: this.info.demo, view: this.lyrics?.view.kind ?? null, look });
     if (sameCard(next, this.info.look)) return false;
     this.info = { ...this.info, look: next };

@@ -591,3 +591,14 @@ Tests: 1282 vitest in 38 files (new: `wordglyphs.test.ts`, the vocabulary once o
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · The Style setting (contract v9)
+Done: so the reel's look can be had for every song, not only the ones the picker gives it to: **Style** in Settings › Look, a row of chips (Auto and the ten styles, each with its glyph), saved as `Settings.style` (`"auto"` by default). Any other name draws every song in that style; the font, the curve and the motion stay the song's own.
+- `contract.ts` / `contract.rs`: `StyleChoice`, `Settings.style`, v9; settings saved without it read as `"auto"` (serde's default, the mock's `mergeSettings`, the window's `withDefaults`); `merge_patch` validates it like `showWhen`. The tray has no Style menu.
+- `overlay/look.ts` `styleChoiceOf` (tolerant: missing, `"auto"` or an unknown name is null) and `withStyleChoice`; the controller puts the chosen style between the song's pick and the QA override, so `?look=` and `--look` still win, reports the look as drawn, and redraws at once when the setting changes. The preview's card says **Your style, the font picked for this song** (`kickerOf`, `CardLook.chosen`).
+- Docs: USER_GUIDE (Style), SPEC (v9), ACCEPTANCE §11.6, README.
+Tests: 1288 vitest in 38 files (new: the mock's merge and migration of `style`; `styleChoiceOf` and `withStyleChoice`; the panel's chips, their edits, the hint and an older core's missing field; the wiring: the setting draws every song in its style, a forced look outranks it, Auto brings the song's own back at once) and the Rust tests (v9, every name and nothing else, saved before v9 as Auto, 22 keys).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v9 (adds `Settings.style`).

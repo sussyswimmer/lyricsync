@@ -10,9 +10,10 @@ import {
 import { detectPlatform, displayAccelerator, SHORTCUT_ACTIONS, type KeyLayout, type Platform } from "../core/accelerator";
 import type { Palette } from "../core/palette";
 import { hasOwnOffset, learnedOffsetMs, songOffsetMs } from "../core/sync";
+import { STYLES, styleLabel } from "../core/songlook";
 import { h } from "../overlay/dom";
 import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle } from "./controls";
-import { LookCard, type LookCardState } from "./look-card";
+import { LookCard, styleGlyph, type LookCardState } from "./look-card";
 import { currentLayout, ShortcutRecorder } from "./recorder";
 import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
@@ -126,6 +127,8 @@ export function effectsWord(level: number): "Calm" | "Balanced" | "Lively" {
 }
 
 export const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
+export const STYLE_AUTO = "Undertone picks a style for each song, from how it's sung and its cover.";
+const STYLE_CHOSEN = (name: string): string => `Every song in ${name}. The font, the curve and the motion are still picked for each song.`;
 export const EFFECTS_MODE_ON = "Each song's words move their own way: they bounce, sway, pulse or drop.";
 export const EFFECTS_MODE_OFF = "Off: every word rises the same way.";
 export const GRAPHICS_ON = "Words like “rain” or “rocket” come to life in the line, and big moments splash.";
@@ -383,13 +386,27 @@ export class SettingsPanel {
   // ---------- look ----------
 
   /**
-   * How the picked look sits on this desktop: Text effects, Graphics, Size, Effects, Glow and Opacity.
-   * Undertone picks the style and the face for each song (the card under the preview says which), with
-   * Text effects its own motion and with Graphics its word pictures and splashes; these scale it. The
-   * lyrics always sit in the middle of the screen, so there is no height to set.
+   * How the picked look sits on this desktop: Style (Auto, or one style for every song), Text effects,
+   * Graphics, Size, Effects, Glow and Opacity. Undertone picks the style and the face for each song
+   * (the card under the preview says which) unless Style fixes one, with Text effects its own motion
+   * and with Graphics its word pictures and splashes; these scale it. The lyrics always sit in the
+   * middle of the screen, so there is no height to set.
    */
   private lookGroup(): HTMLElement {
     const edit = (patch: Partial<Settings>): void => this.actions.edit(patch);
+    const styleHintId = nextId("style-hint");
+    const style = radios<Settings["style"]>({
+      name: "style",
+      label: "Style",
+      options: [{ value: "auto", label: "Auto", description: "Auto: the style picked for each song" }, ...STYLES.map((s) => ({ value: s, label: styleLabel(s), art: icon(styleGlyph(s)) }))],
+      className: "chips",
+      onChange: (v) => edit({ style: v }),
+    });
+    style.el.setAttribute("aria-describedby", styleHintId);
+    const styleRow = h("div", "row chips-row");
+    styleRow.append(h("span", "row-label", "Style"), style.el);
+    const styleHint = hint("", "chips-hint");
+    styleHint.id = styleHintId;
     const modeCaptionId = nextId("effects-mode-caption");
     const mode = toggle({
       label: "Text effects",
@@ -429,8 +446,12 @@ export class SettingsPanel {
     const glowHint = hint(GLOW_HINT);
     glowHint.id = glowHintId;
     const opacity = slider({ label: "Opacity", min: 20, max: 100, format: (v) => `${v}%`, onInput: (v) => edit({ opacity: v }) });
-    const { el } = group("Look", mode.el, modeCaption, graphics.el, graphicsCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
+    const { el } = group("Look", styleRow, styleHint, mode.el, modeCaption, graphics.el, graphicsCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
     this.renderers.push(({ settings: s }) => {
+      // Settings without `style` (a core older than contract v9) pick per song
+      const chosen = typeof s.style === "string" && s.style !== "auto" && (STYLES as readonly string[]).includes(s.style) ? s.style : "auto";
+      style.set(chosen);
+      setText(styleHint, chosen === "auto" ? STYLE_AUTO : STYLE_CHOSEN(styleLabel(chosen)));
       // Settings without `effectsMode` (a core older than contract v5) have it on; without `graphics`
       // (older than v8), Effects mode turned the pictures and splashes on and off too.
       const on = s.effectsMode !== false;

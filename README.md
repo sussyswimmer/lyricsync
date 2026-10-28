@@ -52,7 +52,7 @@
   </tr>
 </table>
 
-Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover. Reel shows one word at a time, big, with a small sign beside the words that name something: a building for *city*, an arrow for *left*, a phone for *call*. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
+Undertone picks the layout, one of 15 fonts and the motion from the song, and the colors from its cover, or you fix one layout for every song in Settings. Reel shows one word at a time, big, with a small sign beside the words that name something: a building for *city*, an arrow for *left*, a phone for *call*. Words like *fire*, *sunrise* or *snow* become what they say: the word catches fire, a sun rises behind it, snow piles at its feet.
 
 ## Words you can picture
 

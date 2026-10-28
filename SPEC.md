@@ -7,7 +7,7 @@ Shared source of truth for both agents. Claude Code reads `CLAUDE.md`, Codex rea
 A desktop app for **macOS and Windows** that shows the synced lyrics of whatever is playing on the **desktop layer**. That layer is above the wallpaper and below desktop icons and every window. The user can still drag folders and windows over it, and clicks pass straight through.
 
 - Highlights word by word as the song plays, and the words move as they're sung. Lyrics timed by line only (no word tags) are swept word by word at the pace the song is sung around each line (`core/timing.ts` singingPace, paceWords), so a pause after a line doesn't slow the sweep.
-- A look picked for each song: the style (Arc / Lens / Drift / Stack / Poster / Spotlight / Wave / Reveal / Collage / Reel), the font (one of fifteen bundled faces, each scored by the kind of song it suits), Arc's gentle curve and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them.
+- A look picked for each song: the style (Arc / Lens / Drift / Stack / Poster / Spotlight / Wave / Reveal / Collage / Reel), the font (one of fifteen bundled faces, each scored by the kind of song it suits), Arc's gentle curve and the motion's character come from the song's lyrics and their timing, its title and its cover (`src/core/songlook.ts`). The user doesn't choose them, except that the Style setting (contract v9) can fix one style for every song; the font, the curve and the motion stay the song's.
 - Default colors come from the album cover: its most vivid color highlights, its overall tone tints the lyrics and the other lines, and gray covers get grays (`core/palette.ts`). The sung letters are filled with a gradient from the highlight into the cover's other main color (`Palette.accent`: the heaviest hue at least 40° away, a muted one counting by its area; `--ut-hl2`, `background-clip: text` in `stage.css`), or into the highlight's neighbor on the color wheel (`accentFor`). The user can override every color.
 - Always in the middle of the screen, clear of the menu bar, Dock and taskbar. Customizable: size, effects (how much the words move), glow, opacity and colors.
 - Text effects (on by default): each song moves its own way (rise, bounce, sway, wave, pulse or drop). Graphics (on by default, a switch of its own since contract v8): its big moments splash (droplets, sparks, confetti, ripples or glints), and words that name something drawable bring a bundled picture into the line that moves with the song: it hops word to word, flies or drives across, floats, falls, bursts, orbits, rolls or dances, and the words it touches answer it (they squash, duck, dip, lift, sway or are shoved aside) (`src/core/flair.ts`, `src/core/wordpics.ts`, `src/overlay/motion/decor.ts`, `src/overlay/motion/routes.ts`).
@@ -78,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v8 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5, v7 and v8 below only add to v1, and v6 stops reading one field.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v9 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5, v7 and v8 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts
@@ -263,6 +263,16 @@ nudgedTracks: string[];  // default []
 ```
 
 **Learned sync.** A song you nudge keeps its own offset; any other song starts from what the songs you nudged last have in common (`src/core/sync.ts` `learnedOffsetMs`, `settings.rs` `learned_offset_ms`, the same rule): the middle of their own offsets, from two songs on, and with an even number the middle value nearer 0. So a correction you would make for every song (headphones that play late, say) is made once or twice, and one song with badly timed lyrics doesn't pull the others. A song's sync is `globalOffsetMs` plus its own offset or, without one, the learned one. "Reset this song" (`ms: null`) drops its own offset and its place among the nudged songs; Reset to defaults with "Also clear sync" empties both.
+
+**Contract v9 (additive, 2026-10-28).** `CONTRACT_VERSION = 9`. `Settings.version` stays 1. No event or command changed.
+
+```ts
+// Settings gains:
+/** The style every song is drawn in, or "auto" for the one Undertone picks per song. */
+style: StyleChoice;      // "auto" | "arc" | "lens" | "drift" | "stack" | "poster" | "spotlight" | "wave" | "reveal" | "collage" | "reel"; default "auto"
+```
+
+The Style setting, in Settings › Look as a row of chips (Auto and the ten styles, each with its glyph). `"auto"` leaves the pick to `songlook.ts`; any other name draws every song in that style while its face, curve and motion stay the song's own: the controller puts it between the song's pick and the QA override (`withStyleChoice`, then `withOverride`, so `?look=` and `--look` still win), reports the look as drawn to `onLook` (the card then says "Your style, the font picked for this song"), and a change of the setting redraws the song at once. The core only validates and stores it (`StyleChoice` in `contract.rs`, `merge_patch`): the names past the four modes are styles only the overlay draws. Settings saved before v9 read as `"auto"` (serde's default; the mock's `mergeSettings` and the window's `withDefaults` likewise). The tray has no Style menu.
 
 **Contract v8 (additive, 2026-10-20).** `CONTRACT_VERSION = 8`. `Settings.version` stays 1. No event or command changed.
 

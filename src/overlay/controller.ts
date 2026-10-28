@@ -2,9 +2,9 @@ import { DEFAULT_SETTINGS, type Lyrics, type NowPlaying, type Settings } from ".
 import { PlaybackClock } from "../core/clock";
 import type { Line } from "../core/lrc";
 import { PaletteCache } from "../core/palette";
-import { LookKeeper, timingOf, type SongInput, type SongLook, type Timing } from "../core/songlook";
+import { LookKeeper, timingOf, type SongInput, type SongLook, type Style, type Timing } from "../core/songlook";
 import type { Bridge, Unlisten } from "../bridge/types";
-import { cleanOverride, DEFAULT_PICK, pickedOf, withOverride, type LookOverride, type PickedLook } from "./look";
+import { cleanOverride, DEFAULT_PICK, pickedOf, styleChoiceOf, withOverride, withStyleChoice, type LookOverride, type PickedLook } from "./look";
 import type { LookChange, LyricStage, StageView } from "./stage";
 import { sameLyrics, viewFor } from "./view";
 
@@ -246,9 +246,14 @@ export class OverlayController {
     return this.nowPlaying;
   }
 
-  /** The look the stage draws with: the song's (DEFAULT_PICK without a track) with any forced parts. */
+  /** The look the stage draws with: the song's (DEFAULT_PICK without a track), in the Style setting's style, with any forced parts. */
   get look(): PickedLook {
-    return pickedOf(withOverride(this.song ?? DEFAULT_PICK, this.override));
+    return pickedOf(withOverride(withStyleChoice(this.song ?? DEFAULT_PICK, this.chosenStyle), this.override));
+  }
+
+  /** The Style setting's style, null for auto (styleChoiceOf). */
+  private get chosenStyle(): Style | null {
+    return this.settings ? styleChoiceOf(this.settings) : null;
   }
 
   /**
@@ -260,7 +265,10 @@ export class OverlayController {
   }
 
   setSettings(settings: Settings): void {
+    const before = this.chosenStyle;
     this.settings = settings;
+    // the Style setting changed: the song is drawn in its new style at once, like a forced look
+    if (this.chosenStyle !== before && this.song !== null) this.apply("now");
     this.clock.setOffsets(settings);
     this.stage.setSettings(settings);
     this.update();
@@ -318,12 +326,13 @@ export class OverlayController {
 
   /**
    * Tells onLook about the song's look when it changed, or the track did (null while there is none):
-   * the keeper's SongLook itself, or under an override a copy with the forced parts.
+   * the keeper's SongLook itself, or under the Style setting or an override a copy with the
+   * chosen and forced parts.
    */
   private report(): void {
     const np = this.nowPlaying;
     const song = np ? this.song : null;
-    const look = song && this.override ? { ...song, ...this.look } : song;
+    const look = song && (this.override || this.chosenStyle) ? { ...song, ...this.look } : song;
     const key = np && look ? `${np.trackKey}\n${JSON.stringify(look)}` : "";
     if (key === this.reported) return;
     this.reported = key;

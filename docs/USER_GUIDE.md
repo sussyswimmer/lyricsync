@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Text effects, Graphics, Size, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song; Style, Text effects, Graphics, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -45,15 +45,21 @@ Undertone adds itself to the apps your system starts at login. If the system ref
 
 ## Look
 
-Undertone picks how each song looks: its style (one of the ten below) and its font (one of fifteen). There's nothing to choose. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a quick, wordy rap appears word by word as it's said, a slow song with long held notes bends along a curve in a serif, a dance track rides a wave, short shouted hooks are set as a poster in loud capitals, a shouted rock song is cut out like a collage, a mid-tempo R&B or hip-hop song under a dark cover rolls by one big word at a time, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster, Spotlight, Wave, Reveal, Collage and Reel), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
+Undertone picks how each song looks: its style (one of the ten below) and its font (one of fifteen). You can fix the style for every song with [Style](#style); the font is always picked. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a quick, wordy rap appears word by word as it's said, a slow song with long held notes bends along a curve in a serif, a dance track rides a wave, short shouted hooks are set as a poster in loud capitals, a shouted rock song is cut out like a collage, a mid-tempo R&B or hip-hop song under a dark cover rolls by one big word at a time, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster, Spotlight, Wave, Reveal, Collage and Reel), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
-The settings in the window's **Look** group, below, turn each song's own motion and its graphics on or off ([Text effects](#text-effects) and [Graphics](#graphics)) and change how big the lyrics are and how much they move and glow, whatever the look.
+The settings in the window's **Look** group, below, fix a style for every song or leave it to Undertone ([Style](#style)), turn each song's own motion and its graphics on or off ([Text effects](#text-effects) and [Graphics](#graphics)) and change how big the lyrics are and how much they move and glow, whatever the look.
 
 ### Picked for this song
 
 Under the preview, a card names the look of the song in the preview, such as **Lens · Syne** (the font's name in that font), and says in a few words why, for example "Big repeating hooks, bright warm cover." With nothing playing, it shows the demo song's look. It says **Finding lyrics…** while Undertone looks the song up, and **No lyrics for this song**, **Couldn't load lyrics** or **Instrumental** when there's nothing to pick a look by. Screen readers read the card out when the song changes.
+
+With [Style](#style) set to one style, the card says **Your style, the font picked for this song** and names that style with the font Undertone picked.
+
+### Style
+
+**Auto** by default: Undertone picks a style for each song. Pick one of the ten instead, and every song is drawn in it, in the font, with the curve and with the motion Undertone still picks for the song. Pick **Reel** for lyrics one big word at a time with a sign beside the words that name something, like the lyric apps on social media; **Stack** for a plain list; **Arc** for a curve. The change shows at once, on the desktop and in the preview, and **Auto** gives each song its own style again.
 
 ### The ten styles
 

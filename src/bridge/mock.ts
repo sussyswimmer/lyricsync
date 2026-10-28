@@ -320,6 +320,7 @@ function normalize(s: PlayerState, now: number): PlayerState {
 const OFFSET_LIMIT_MS = 2000;
 const FONT_FAMILY_MAX_CHARS = 64;
 const MODES = ["arc", "lens", "drift", "stack"] as const satisfies readonly Settings["mode"][];
+const STYLE_CHOICES = ["auto", "arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "reel"] as const satisfies readonly Settings["style"][];
 const SHOW_WHEN = ["playing", "always"] as const satisfies readonly Settings["showWhen"][];
 const DISPLAYS = ["primary", "all"] as const satisfies readonly Settings["displays"][];
 const MEDIA_PROBLEMS = ["automation-denied", "no-player"] as const satisfies readonly MediaProblem[];
@@ -390,6 +391,7 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.effects = clamp(p.effects, 0, 100) ?? next.effects;
   if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
   if (typeof p.graphics === "boolean") next.graphics = p.graphics;
+  next.style = oneOf(p.style, STYLE_CHOICES) ?? next.style;
   return next;
 }
 

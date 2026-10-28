@@ -16,6 +16,8 @@ export interface CardLook {
   reason?: string;
   /** the plain-word traits behind the pick, e.g. ["big repeating hooks", "bright, warm cover"] */
   traits?: readonly string[];
+  /** the style is the Style setting's, not the song's pick (the face and the rest still are) */
+  chosen?: boolean;
 }
 
 /**
@@ -67,7 +69,7 @@ export function cardState({ key, demo, view, look }: CardInput): LookCardState {
 export function sameCard(a: LookCardState, b: LookCardState): boolean {
   if (a.kind !== b.kind || a.key !== b.key || a.demo !== b.demo) return false;
   if (a.kind !== "look" || b.kind !== "look") return true;
-  return lookLabel(a.look) === lookLabel(b.look) && reasonSentence(a.look) === reasonSentence(b.look) && a.look.font.weight === b.look.font.weight;
+  return lookLabel(a.look) === lookLabel(b.look) && reasonSentence(a.look) === reasonSentence(b.look) && a.look.font.weight === b.look.font.weight && a.look.chosen === b.look.chosen;
 }
 
 /**
@@ -144,6 +146,17 @@ const GLYPHS: Record<Style, readonly [string, number, number][]> = {
     ["M8.5 13.6 H15.5", 1.4, 0.6],
   ],
 };
+/** A style's glyph, as the card and the Style setting's chips draw it. */
+export function styleGlyph(style: Style): readonly [string, number, number][] {
+  return GLYPHS[style];
+}
+
+/** "Picked for this song", or with the Style setting on, "Your style, the font picked for this song". */
+export function kickerOf(state: LookCardState): string {
+  const song = state.demo ? "the demo song" : "this song";
+  return state.kind === "look" && state.look.chosen ? `Your style, the font picked for ${song}` : `Picked for ${song}`;
+}
+
 /** Three dots while the lyrics are on their way; one faint line when there are none. */
 const WAITING: readonly [string, number, number][] = [
   ["M6 8 h0.01", 2.8, 0.55],
@@ -241,7 +254,7 @@ export class LookCard {
     const cut = label.indexOf(" · ");
     const [styleText, faceText] = cut < 0 ? [label, ""] : [label.slice(0, cut), label.slice(cut + 3)];
     const texts: [HTMLElement, string][] = [
-      [this.kicker, state.demo ? "Picked for the demo song" : "Picked for this song"],
+      [this.kicker, kickerOf(state)],
       [this.styleName, styleText],
       [this.faceName, faceText],
       [this.message, state.kind === "look" ? "" : MESSAGES[state.kind]],

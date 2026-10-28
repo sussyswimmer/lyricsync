@@ -643,6 +643,38 @@ describe("forced looks (QA)", () => {
     r.controller.destroy();
   });
 
+  it("the Style setting (contract v9) draws every song in its style under the song's own face and motion, and a forced look still wins", async () => {
+    const r = await rig();
+    const lanterns = mock("Paper Lanterns");
+    await r.start(lanterns, { artwork: art(lanterns) });
+    await r.lyrics(lyricsOf(lanterns));
+    const pick = picked(lanterns, true);
+    expect(pick.style).not.toBe("reel");
+    r.controller.setSettings({ ...structuredClone(DEFAULT_SETTINGS), style: "reel" });
+    const last = (): [PickedLook | null, string] | undefined => r.stage.changes[r.stage.changes.length - 1];
+    expect(last()).toEqual([{ ...drawnAs(pick), style: "reel" }, "now"]);
+    expect(r.controller.look).toEqual({ ...drawnAs(pick), style: "reel" });
+    // onLook hears the look as drawn, with the song's reasons; the keeper's own pick is untouched
+    expect(r.heard[r.heard.length - 1]).toEqual({ ...pick, style: "reel" });
+    expect(r.controller.songLook).toEqual(pick);
+    // the next song too
+    const harbor = mock("Glass Harbor");
+    await r.start(harbor, { artwork: art(harbor) });
+    await r.lyrics(lyricsOf(harbor));
+    expect(r.controller.look).toEqual({ ...drawnAs(picked(harbor, true)), style: "reel" });
+    expect(r.stage.last).toMatchObject({ kind: "lyrics", look: { ...drawnAs(picked(harbor, true)), style: "reel" } });
+    // a QA override outranks the setting
+    r.controller.forceLook({ style: "drift" });
+    expect(last()).toEqual([{ ...drawnAs(picked(harbor, true)), style: "drift" }, "now"]);
+    r.controller.forceLook(null);
+    expect(last()).toEqual([{ ...drawnAs(picked(harbor, true)), style: "reel" }, "now"]);
+    // back to auto: the song's own style, at once
+    r.controller.setSettings(structuredClone(DEFAULT_SETTINGS));
+    expect(last()).toEqual([drawnAs(picked(harbor, true)), "now"]);
+    expect(r.heard[r.heard.length - 1]).toBe(r.controller.songLook);
+    r.controller.destroy();
+  });
+
   it("outlast a refinement too", async () => {
     const r = await rig();
     r.controller.forceLook({ style: "drift", font: "Caveat" });

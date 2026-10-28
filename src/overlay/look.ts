@@ -168,6 +168,21 @@ export function graphicsOf(settings: Settings): boolean {
 }
 
 /**
+ * Settings.style (contract v9), the Style setting: the style every song is drawn in, or null for
+ * "auto" (Undertone picks one per song). A store from before v9 has none, which counts as auto; so
+ * does a name this build doesn't draw.
+ */
+export function styleChoiceOf(settings: Settings): Style | null {
+  const value: unknown = "style" in settings ? settings.style : undefined;
+  return isMode(value) ? value : null;
+}
+
+/** A song's look with the Style setting's style in place of its own (`chosen` null: as picked). */
+export function withStyleChoice<T extends PickedLook>(look: T, chosen: Style | null): T {
+  return chosen && look.style !== chosen ? { ...look, style: chosen } : look;
+}
+
+/**
  * Only the PickedLook fields of a look: what the stage draws with. A song's look (core/songlook's
  * SongLook) also carries why it was picked (traits, reason, scores), which no drawing depends on.
  */
