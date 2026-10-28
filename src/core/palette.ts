@@ -229,6 +229,47 @@ export function accentFor(highlight: string): string {
   return hslToHex((h + 0.055) % 1, clamp(s, 0, 1), clamp(l + 0.08, 0.6, 0.82));
 }
 
+/** WCAG relative luminance of a #rrggbb color. */
+export function luminance(hex: string): number {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const lin = (c: number): number => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+}
+
+/** WCAG contrast ratio between two #rrggbb colors, 1..21. */
+export function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** The tag behind a word must let the lyric color read on it at least this well (WCAG large text is 3). */
+export const TAG_CONTRAST = 3.4;
+/** A grey highlight's tag: marker red (hue, saturation, lightness). */
+const TAG_MARKER: readonly [number, number, number] = [0.99, 0.78, 0.5];
+
+/**
+ * The color of the tag a word is set on (Slant's sung word, Tape's strips): the highlight's own hue,
+ * saturated like a marker, and taken darker (under light lyrics) or lighter (under dark ones) until the
+ * lyric color reads on it at TAG_CONTRAST. A grey highlight (a black and white cover) gets a red
+ * marker instead: a grey tag reads as a disabled button, not as ink.
+ */
+export function tagFor(lyric: string, highlight: string): string {
+  const grey = hexToHsl(highlight)[1] < 0.12;
+  const [h, s0, l0] = grey ? TAG_MARKER : hexToHsl(highlight);
+  const s = clamp(s0 * 1.15, 0.5, 0.92);
+  const darker = luminance(lyric) > 0.4;
+  let l = clamp(l0, 0.2, 0.8);
+  let color = hslToHex(h, s, l);
+  for (let i = 0; i < 40 && contrast(lyric, color) < TAG_CONTRAST; i++) {
+    l = clamp(l + (darker ? -0.02 : 0.02), 0, 1);
+    color = hslToHex(h, s, l);
+  }
+  return color;
+}
+
 /**
  * The cover's colors by hue, for its second color (`second`): every pixel at least FAMILY_CHROMA
  * colorful, in HUE_BINS bins, each weighted by its share of the cover, a muted one less (pixels, not

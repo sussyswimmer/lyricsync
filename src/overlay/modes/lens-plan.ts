@@ -82,6 +82,11 @@ export interface LensPose {
   opacity: number[];
   y: number[];
   rotate: number[];
+  /**
+   * Layouts that set a word on a tag (slot-layouts.ts SlotLayout.tags): how much of the tag behind each
+   * word shows, 0 (none) to 1 (all of it, wiped in from its left edge). Absent elsewhere.
+   */
+  tag?: number[];
 }
 
 export interface LensInput {
@@ -109,6 +114,8 @@ export interface LensInput {
   poseAt?: (lens: number, a: number, out: LensPose) => LensPose;
   /** the layout turns words: every frame is `translate rotate scale` */
   rotates?: boolean;
+  /** the layout sets words on tags: plan each word's tag too (LensPose.tag, LensPlan.tagTracks) */
+  tags?: boolean;
 }
 
 export interface LensPlan {
@@ -117,6 +124,8 @@ export interface LensPlan {
   rampFrom: number | null;
   /** one per word, by logical index: `translate(x, y) scale(s)` and opacity over [origin, end] */
   tracks: Track[];
+  /** with `tags`: one per word, its tag's wipe (`scaleX`) and opacity over the same window; null without */
+  tagTracks: Track[] | null;
   /** where every word rests once the window is over (the tracks' last frame) */
   final: LensPose;
   /** the pose at song time `t` (held at the window's ends), as the tracks draw it */
@@ -258,6 +267,15 @@ export function turnTransform(x: number, y: number, deg: number, scale: number):
   return `translate(${num(x, 2)}px, ${num(y, 2)}px) rotate(${num(deg, 3)}deg) scale(${num(scale, 4)})`;
 }
 
+/**
+ * A tag at `v` (LensPose.tag): wiped in from its left edge and solid well before it is all there, so a
+ * fast word's tag reads as a slap of marker rather than a slow fade.
+ */
+export function tagKeyframe(v: number): Keyframe {
+  const g = clamp01(v);
+  return { transform: `scaleX(${num(Math.max(0.001, g), 3)})`, opacity: num(clamp01(g * 2.5), 3) };
+}
+
 /** A word's transform: its left baseline point at (x, y + its baseline), scaled around it (transform-origin: 0 baseline). */
 export function lensTransform(x: number, y: number, scale: number): string {
   return liftScale(x, y, scale);
@@ -279,6 +297,8 @@ export function planLens(input: LensInput): LensPlan {
   const os = Array.from({ length: n }, () => new Array<number>(times.length));
   const ys = Array.from({ length: n }, () => new Array<number>(times.length));
   const rs = Array.from({ length: n }, () => new Array<number>(times.length));
+  const tagged = input.tags === true;
+  const gs = tagged ? Array.from({ length: n }, () => new Array<number>(times.length)) : null;
   const pose = blankPose(n);
   const poseAt = input.poseAt ?? ((lens: number, a: number, out: LensPose): LensPose => poseOf(shape, fit, width, dpr, lens, a, out));
   for (let k = 0; k < times.length; k++) {
@@ -291,6 +311,7 @@ export function planLens(input: LensInput): LensPlan {
       (os[j] as number[])[k] = pose.opacity[j] ?? 1;
       (ys[j] as number[])[k] = pose.y[j] ?? 0;
       (rs[j] as number[])[k] = pose.rotate[j] ?? 0;
+      if (gs) (gs[j] as number[])[k] = clamp01(pose.tag?.[j] ?? 0);
     }
   }
   const last = times.length - 1;
@@ -330,12 +351,26 @@ export function planLens(input: LensInput): LensPlan {
     const points = keyPoints(times, keep, channels, input.steps === true ? { t0: origin, quantum: [STEP_QUANTUM.x, STEP_QUANTUM.scale, STEP_QUANTUM.opacity, STEP_QUANTUM.x, 0.1] } : null);
     return { t0: origin, duration, frames: framesOf(points, duration, frame) };
   });
+  const tagTracks = gs
+    ? gs.map((c): Track => {
+        const tagFrame = ([g]: readonly number[]): Keyframe => tagKeyframe(g ?? 0);
+        if (input.hold === true) {
+          const onBeats = [beats.map((ms) => valueAt(c, ms))];
+          const keep = holds(onBeats, [THIN.opacity]);
+          const frames = keep.map((i) => ({ ...tagFrame([onBeats[0]?.[i] ?? 0]), offset: Math.min(1, (beats[i] ?? 0) / duration), easing: HOLD }));
+          return { t0: origin, duration, frames };
+        }
+        const keep = thin(times, [c], [THIN.opacity]);
+        return { t0: origin, duration, frames: framesOf(keyPoints(times, keep, [c], null), duration, tagFrame) };
+      })
+    : null;
   const sampleAt = (k: number): LensPose => ({
     x: xs.map((c) => c[k] ?? 0),
     scale: ss.map((c) => c[k] ?? 1),
     opacity: os.map((c) => c[k] ?? 1),
     y: ys.map((c) => c[k] ?? 0),
     rotate: rs.map((c) => c[k] ?? 0),
+    ...(gs ? { tag: gs.map((c) => c[k] ?? 0) } : {}),
   });
   const at = (t: number): LensPose => {
     const ms = t - origin;
@@ -345,7 +380,8 @@ export function planLens(input: LensInput): LensPlan {
       opacity: os.map((c) => valueAt(c, ms)),
       y: ys.map((c) => valueAt(c, ms)),
       rotate: rs.map((c) => valueAt(c, ms)),
+      ...(gs ? { tag: gs.map((c) => valueAt(c, ms)) } : {}),
     };
   };
-  return { origin, end, rampFrom, tracks, final: sampleAt(last), at };
+  return { origin, end, rampFrom, tracks, tagTracks, final: sampleAt(last), at };
 }

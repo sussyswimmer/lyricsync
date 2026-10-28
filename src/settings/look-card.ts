@@ -85,8 +85,8 @@ export function reasonSentence(look: CardLook): string {
 /** How long a quiet update keeps the card's live region off, so a screen reader doesn't speak it. */
 export const QUIET_MS = 1000;
 
-/** Each style's glyph, as the old style tiles drew it. */
-const GLYPHS: Record<Style, readonly [string, number, number][]> = {
+/** Each style's glyph: the card's, and the Style picker's tiles. */
+export const STYLE_GLYPHS: Record<Style, readonly [string, number, number][]> = {
   arc: [
     ["M7 4.6 Q12 1.2 17 4.6", 1.3, 0.45],
     ["M2.5 10.2 Q12 3.4 21.5 10.2", 2.4, 1],
@@ -137,7 +137,33 @@ const GLYPHS: Record<Style, readonly [string, number, number][]> = {
     ["M12.5 4.4 L20.5 5.8", 1.8, 0.6],
     ["M6 12.2 L17 13.4", 3.4, 0.85],
   ],
+  // a slanted column: the sung word big at the bottom, the ones before it smaller above
+  slant: [
+    ["M9 3.6 L14 2.7", 1.3, 0.35],
+    ["M7 7.6 L15.5 6.1", 2, 0.6],
+    ["M3.5 12.8 L19.5 10", 3.6, 1],
+  ],
+  // one huge word, turned
+  pop: [
+    ["M10 2.4 L14 2", 1.2, 0.3],
+    ["M5 10 L19 7.6", 5, 1],
+  ],
+  // stairs down the screen
+  cascade: [
+    ["M2.5 3.6 L8 2.8", 2, 0.85],
+    ["M9 8.4 L15 7.4", 2.8, 1],
+    ["M16 13.2 L21.5 12.4", 2, 0.3],
+  ],
+  // words on strips of tape
+  tape: [
+    ["M3 5 L11 4.4", 4, 0.9],
+    ["M13 4.6 L21 5.4", 4, 0.4],
+    ["M6 11.6 L18 12.2", 4, 0.9],
+  ],
 };
+const INTRO_AUTO = "Undertone picks the style and font for each song.";
+const INTRO_PINNED = "Your style for every song. Undertone still picks the font.";
+
 /** Three dots while the lyrics are on their way; one faint line when there are none. */
 const WAITING: readonly [string, number, number][] = [
   ["M6 8 h0.01", 2.8, 0.55],
@@ -165,6 +191,7 @@ const MESSAGES: Record<Exclude<LookCardState["kind"], "look">, string> = {
  */
 export class LookCard {
   readonly el: HTMLElement;
+  private readonly intro: HTMLElement;
   private readonly live: HTMLElement;
   private readonly glyph: HTMLElement;
   private readonly kicker: HTMLElement;
@@ -185,7 +212,8 @@ export class LookCard {
 
   constructor() {
     this.el = h("section", "picked");
-    const intro = h("p", "hint picked-intro", "Undertone picks the style and font for each song.");
+    const intro = h("p", "hint picked-intro", INTRO_AUTO);
+    this.intro = intro;
     const card = h("div", "picked-card");
     this.live = h("div", "picked-live");
     this.live.setAttribute("aria-live", "polite");
@@ -211,6 +239,11 @@ export class LookCard {
     card.append(this.live);
     this.el.append(intro, card);
     this.render({ kind: "finding", key: null, demo: false });
+  }
+
+  /** Whether a style is pinned (Settings › Style): Undertone then picks only the face. */
+  setPinned(pinned: boolean): void {
+    setText(this.intro, pinned ? INTRO_PINNED : INTRO_AUTO);
   }
 
   /** The state to show. Cheap when nothing it shows changed. */
@@ -271,7 +304,7 @@ export class LookCard {
     const key = state.kind === "look" ? state.look.style : state.kind;
     if (key === this.glyphKey) return;
     this.glyphKey = key;
-    const paths = state.kind === "look" ? GLYPHS[state.look.style] : state.kind === "finding" ? WAITING : NOTHING;
+    const paths = state.kind === "look" ? STYLE_GLYPHS[state.look.style] : state.kind === "finding" ? WAITING : NOTHING;
     this.glyph.textContent = "";
     this.glyph.append(state.kind === "instrumental" ? h("span", "picked-note", "♪") : icon(paths));
   }

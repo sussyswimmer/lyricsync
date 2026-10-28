@@ -4,6 +4,7 @@ import { connect, type Bridge } from "../bridge";
 import { OverlayController } from "./controller";
 import { mergeOverrides, overrideFromSettings, parseFlairOverride, parseLookOverride, workAreaReference } from "./look";
 import { detectPower } from "./motion/power";
+import { onStylePin, pinOverride, readStylePin } from "./pin";
 import { LyricStage } from "./stage";
 
 /** What this page puts on `window`: the app's `--look` hand-off in, the overlay's parts out (mock and dev). */
@@ -42,10 +43,17 @@ if (host) {
     parseFlairOverride(params.get("flair")),
   );
   let fromApp = parseLookOverride(win.__UNDERTONE_LOOK__);
-  if (fromUrl || fromApp) controller.forceLook(mergeOverrides(fromUrl, fromApp));
+  // The style pinned in Settings (pin.ts), under the QA overrides: a forced look still wins over it.
+  let pinned = pinOverride(readStylePin());
+  const force = (): void => controller?.forceLook(mergeOverrides(pinned, mergeOverrides(fromUrl, fromApp)));
+  if (fromUrl || fromApp || pinned) force();
   window.addEventListener("undertone-look", () => {
     fromApp = parseLookOverride(win.__UNDERTONE_LOOK__);
-    controller?.forceLook(mergeOverrides(fromUrl, fromApp));
+    force();
+  });
+  onStylePin((style) => {
+    pinned = pinOverride(style);
+    force();
   });
   await controller.start();
   if (bridge.kind === "mock" || import.meta.env.DEV) win.undertone = { bridge, stage, controller };

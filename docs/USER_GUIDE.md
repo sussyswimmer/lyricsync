@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song; Text effects, Graphics, Size, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song, or a style you choose; Text effects, Graphics, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -45,7 +45,7 @@ Undertone adds itself to the apps your system starts at login. If the system ref
 
 ## Look
 
-Undertone picks how each song looks: its style (one of the nine below) and its font (one of fifteen). There's nothing to choose. It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a quick, wordy rap appears word by word as it's said, a slow song with long held notes bends along a curve in a serif, a dance track rides a wave, short shouted hooks are set as a poster in loud capitals, a shouted rock song is cut out like a collage, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster, Spotlight, Wave, Reveal and Collage), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
+Undertone picks how each song looks: its style (one of the thirteen below) and its font (one of twenty-seven). You don't have to choose anything, though you can keep every song in one style (see [Style](#style)). It goes by the song itself: how fast and how densely the lyrics are sung, whether notes are held, how much room there is between lines, how often lines come back and whether they're shouted, what they're written in, words in the title such as "Acoustic" or "Club Mix", and the album cover's colors and light. A fast, dense verse becomes a flat list in a sturdy sans, a quick, wordy rap appears word by word as it's said, a slow song with long held notes bends along a curve in a serif, a dance track rides a wave, short shouted hooks are set as a poster in loud capitals, a shouted rock song is cut out like a collage, a punchy rap verse builds up word by word in a slanted column, a chant slams in one huge word at a time, and a sparse, slow song drifts back in 3D. Where several one-line styles would suit a song (Arc, Lens, Poster, Spotlight, Wave, Reveal, Collage, Slant, Pop, Cascade and Tape), each song settles on one of them, so songs alike don't all look the same. Undertone doesn't hear the music, so it judges by the lyrics and their timing, not by the genre.
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
@@ -55,7 +55,11 @@ The settings in the window's **Look** group, below, turn each song's own motion 
 
 Under the preview, a card names the look of the song in the preview, such as **Lens · Syne** (the font's name in that font), and says in a few words why, for example "Big repeating hooks, bright warm cover." With nothing playing, it shows the demo song's look. It says **Finding lyrics…** while Undertone looks the song up, and **No lyrics for this song**, **Couldn't load lyrics** or **Instrumental** when there's nothing to pick a look by. Screen readers read the card out when the song changes.
 
-### The nine styles
+### Style
+
+The **Style** group, under the card, has a tile for each style and one for **Auto**. With **Auto** (the default), Undertone picks a style for each song. Choose a style's tile to show every song in it; Undertone still picks the font for each song, and the card above says **Your style for every song**. Choose **Auto** to go back. The overlays on every display and the preview change at once, and the choice is kept when Undertone restarts. [Reset to defaults](#reset-to-defaults) goes back to Auto.
+
+### The thirteen styles
 
 In every style the words of the current line change color as they're sung (see [Color](#color)).
 
@@ -68,14 +72,18 @@ In every style the words of the current line change color as they're sung (see [
 - **Wave.** One line at a time, riding a wave whose crest follows the voice: the word being sung rides up on the crest, a little larger, and the words beside it tilt along the slopes. Picked for dance, electronic and upbeat songs. The next line waits underneath in small type.
 - **Reveal.** One line at a time, appearing as it's sung: the words not reached yet wait as faint ghosts, a little low, and each comes up into its place as the voice reaches it. Picked for rap, spoken and story songs, fast and wordy, timed word by word. The next line waits underneath in small type.
 - **Collage.** One line at a time, as words cut out of different magazines: each word its own size and tilt, a little off its row, in one to three rows. Words not sung yet wait dim, and pop as they're sung. Picked for rock, punk and shouted songs. The next line waits underneath in small type.
+- **Slant.** Kinetic type. The line builds up word by word in a column turned to climb to the right: each word slides in large, on a strip of marker color, as it's sung, then shrinks up into the stack as the next word lands under it. The last few words stay above, smaller and fainter, before they fade. The marker is the cover's highlight color, made dark enough for the words to read on it (a black and white cover gets a red marker). Picked for rap and fast, punchy hooks. There's no next line underneath.
+- **Pop.** One word at a time, huge in the middle of the screen. Each word rises in, slightly turned, and is flung up and out of the way as the next one arrives. Picked for chants, shouted hooks and lines that repeat. There's no next line underneath.
+- **Cascade.** The line steps down the screen like a staircase, each word a step lower than the one before and tilted. The view follows the voice down the stairs, so the word being sung stays in the middle: sung words stay solid, and the ones ahead wait faint. Picked for flowing, mid-tempo songs and held notes. The next line waits underneath in small type.
+- **Tape.** The line as cut-out words, like Collage, each stuck onto its own strip of tape the moment it's sung. The strips stay until the line ends. Picked for indie, punk-pop and live songs under bright covers. The next line waits underneath in small type.
 
 The current line comes alive as it's sung: each word fills with the highlight color behind a soft edge, syllable by syllable, and rises and swells a little; its letters hop as the color reaches them, and the word glows (see [Glow](#glow)). Most songs' lyrics are timed by line, not by word: then Undertone works out when each word is sung, at the pace the song is being sung (see [Lyrics timed by line only](#loading-missing-and-unsynced-lyrics)). A word held for a second or more lights letter by letter, each letter rising and glowing until the note ends. How much all this moves depends on the song (a fast song moves more and settles quickly, a ballad floats) and on [Effects](#effects). Lines further from the current one are fainter and softer.
 
-Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens, Wave and Reveal shrink a long line until it fits the width of the screen, Poster and Collage until their block fits, and Spotlight until its largest word does. Arc shrinks a line until it fits its curve, so the whole line stays on screen at any [Size](#size). Undertone doesn't pick Arc, Lens, Poster, Wave or Collage for a song with very long lines.
+Long lines wrap onto more rows in Drift and Stack, and a line that would wrap taller than about half the screen is set smaller. Lens, Wave and Reveal shrink a long line until it fits the width of the screen, Poster, Collage and Tape until their block fits, Spotlight and Pop until their largest word does, and Slant until its column does. Cascade lets a long line run off the edges, since only the words around the one being sung are shown. Arc shrinks a line until it fits its curve, so the whole line stays on screen at any [Size](#size). Undertone doesn't pick Arc, Lens, Poster, Wave or Collage for a song with very long lines.
 
 ### Fonts
 
-Undertone picks one of fifteen fonts built into it, so they work offline. Each suits a kind of song, and Undertone reaches for it where the song has that vibe:
+Undertone picks one of twenty-seven fonts built into it, so they work offline. Each suits a kind of song, and Undertone reaches for it where the song has that vibe:
 
 | Font | Look | Picked for |
 |---|---|---|
@@ -93,9 +101,21 @@ Undertone picks one of fifteen fonts built into it, so they work offline. Each s
 | **Caveat** | Handwriting | Diary songs and acoustic takes |
 | **Pirata One** | Blackletter | Dark, heavy, shouted songs with short lines |
 | **JetBrains Mono** | Monospace | Cold neon covers, a steady electronic pulse |
+| **Archivo Black** | A heavy grotesque | Rap, drill and punchy hooks under dark covers; Slant's usual font |
+| **Bebas Neue** | Tall, condensed capitals | Anthems and festival dance tracks, cool covers |
+| **Oswald** | A condensed sans | Rock and dense, fast verses |
+| **DM Serif** | DM Serif Display, a soft display serif | R&B, soul and folk, warm and unhurried |
+| **Abril Fatface** | A fat, high-contrast serif | Glam and diva pop, big held notes |
+| **Sedgwick Ave** | Sedgwick Ave Display, a graffiti hand | Hip-hop and street songs, fast and loud |
+| **Bungee** | Block signage capitals | Chants and shouted short lines, bright covers |
+| **Silkscreen** | Pixel type | Chiptune, game and glitchy electronic songs |
+| **Bodoni Moda** | A fashion serif | Elegant, slow songs, grey and muted covers |
+| **Shrikhand** | A retro bold italic | Seventies funk and summer grooves, warm covers |
+| **Chakra Petch** | A squared techno sans | Synthwave and neon on dark covers |
+| **Lilita One** | A chunky, friendly display font | Bubblegum pop and sing-along hooks |
 | **System** | Your computer's own interface font | Scripts the others don't have |
 
-It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts aren't picked for long lines, and the scripts (Pacifico, Caveat) and blackletter aren't picked for fast or long ones. In Syne, Unbounded or Anton, shouted lyrics may be set in capitals.
+It never picks a font that lacks the song's letters: Vietnamese, Cyrillic or Greek lyrics only get fonts that have them, and right-to-left and other scripts get the system font. Wide fonts (Unbounded, Bungee, Silkscreen, Shrikhand) aren't picked for long lines, the scripts (Pacifico, Caveat) and blackletter aren't picked for fast or long ones, and the hairline serifs (Playfair, Bodoni Moda, Abril Fatface) aren't picked for fast ones. In Syne, Unbounded or Anton, shouted lyrics may be set in capitals.
 
 Each font comes in one weight. Characters a font doesn't have, such as Chinese, Japanese or Korean, are drawn with your system's fonts. Undertone reads each song's lyrics once to tell whether they're Japanese, Chinese (Simplified or Traditional) or Korean, and draws them in that language's own system fonts, serif or sans to match the font: on a Mac, for example, Hiragino for Japanese and Songti or PingFang for Chinese; on Windows, Yu Mincho or Yu Gothic for Japanese and Microsoft YaHei for Simplified Chinese. So Japanese lyrics never show the Chinese forms of the characters the two languages share.
 
@@ -287,7 +307,7 @@ If either gets in your way, record another combination, or remove the shortcut y
 
 At the bottom of the settings window. Click **Reset to defaults…**, then **Reset** to confirm, or **Cancel** (or press Esc) to keep your settings.
 
-Reset puts Text effects, Graphics, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges, and what Undertone learned from them, are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
+Reset puts the Style (back to Auto), Text effects, Graphics, Effects, the colors, the size, glow and opacity, behavior, the **All songs** sync and the shortcuts back to how Undertone started. **Lyrics on the desktop** and **Launch at login** stay as they are. Per-song nudges, and what Undertone learned from them, are kept unless you tick **Also clear sync for N songs**, which appears when any song has a nudge.
 
 ## Licenses
 
@@ -343,7 +363,8 @@ If you've asked your system to reduce motion (macOS: System Settings → Accessi
 - With [Graphics](#graphics) on, words still get their scenes and pictures, but each one only fades in and out where it stands, the words don't move with it, and nothing splashes.
 - **Drift and Stack** keep their layout but don't scroll; the list moves to the next line with a crossfade.
 - **Lens** doesn't magnify, **Wave** doesn't ripple, and **Reveal** shows the whole line from the start. The line stays flat, and words still light up as they're sung.
-- **Collage** sets the line as one level row.
+- **Collage** and **Tape** set the line as one level row, and Tape's strips don't appear.
+- **Slant**, **Pop** and **Cascade** set the line as one level row, with no column, stairs or single words.
 - **Arc** lines don't glide between their places; they crossfade.
 - The break dots don't move; they brighten one after another.
 - The loading dots fade in once and then stay still instead of pulsing.

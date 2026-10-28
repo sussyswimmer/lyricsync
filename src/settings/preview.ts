@@ -2,9 +2,10 @@ import type { Lyrics, NowPlaying, Settings } from "../../contract/contract";
 import type { Bridge, Unlisten } from "../bridge/types";
 import type { MockBridge } from "../bridge/mock";
 import { hexToHsl, hslToHex, type CoverStats, type Palette, type PaletteCache } from "../core/palette";
-import { pickLook, songFeatures, timingOf, type SongLook } from "../core/songlook";
+import { pickLook, songFeatures, timingOf, type SongLook, type Style } from "../core/songlook";
 import { OverlayController } from "../overlay/controller";
 import { h } from "../overlay/dom";
+import { pinOverride, readStylePin } from "../overlay/pin";
 import { LyricStage, type StageView } from "../overlay/stage";
 import { sameLyrics, viewFor } from "../overlay/view";
 import { icon, setText } from "./controls";
@@ -81,6 +82,8 @@ export class SettingsPreview {
   private readonly offPill: HTMLElement;
   private readonly wallpaper: HTMLElement;
   private settings: Settings;
+  /** the style pinned in Settings, or null for each song's own pick */
+  private pin: Style | null = readStylePin();
   private controller: OverlayController | null = null;
   private demo: MockBridge | null = null;
   private sourceKind: SourceKind | null = null;
@@ -190,6 +193,13 @@ export class SettingsPreview {
     return this.info;
   }
 
+  /** The style pinned in Settings (pin.ts), or null for the song's own pick: the preview draws its song in it. */
+  setPin(style: Style | null): void {
+    if (this.pin === style) return;
+    this.pin = style;
+    this.controller?.forceLook(pinOverride(style));
+  }
+
   /**
    * The look the preview's controller draws its song with (`ControllerOptions.onLook`, given to the
    * controller where `attach` builds it), so the card and the preview always agree. Null: no look
@@ -231,6 +241,7 @@ export class SettingsPreview {
       onLook: (look) => this.reportLook(look),
     });
     controller.setSettings(this.settings);
+    if (this.pin) controller.forceLook(pinOverride(this.pin));
     this.controller = controller;
     // Before the controller's own listeners: the card hears of a new song, or its lyrics, first.
     this.unlistenSource.push(await bridge.listen("now-playing", (np) => this.onTrack(np)));

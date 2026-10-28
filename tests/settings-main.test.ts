@@ -25,6 +25,7 @@ vi.mock("../src/settings/preview", () => ({
     }
     setSettings(): void {}
     setMainTrack(): void {}
+    setPin(): void {}
   },
 }));
 
@@ -413,7 +414,7 @@ describe("settings window: the look picked for the preview's song", () => {
     expect(card.one("picked-message").textContent).toBe("No lyrics for this song");
   });
 
-  it("has no style or font picker; Reset to defaults sends Effects back to 50, and the stored look fields too", async () => {
+  it("has a Style picker but no font picker; Reset to defaults sends Effects back to 50, and the stored look fields too", async () => {
     const core = scriptedBridge({
       get_settings: () =>
         Promise.resolve({
@@ -426,7 +427,7 @@ describe("settings window: the look picked for the preview's song", () => {
         }),
     });
     const root = await boot(core);
-    expect(root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
+    expect(root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["Style", "General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
     root.withText("Reset to defaults…").click();
     root.withText("Reset").click();
     await settle();

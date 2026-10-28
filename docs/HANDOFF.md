@@ -579,3 +579,17 @@ Tests: `scenes.test.ts` (the vocabulary, matching, the plan's spacing, every sce
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · Kinetic type: Slant, Pop, Cascade, Tape, twelve more faces, and a Style picker
+Done: Maxwell shared a reel of lyrics as kinetic type and asked for "the lyrics to be like this or have a toggle to switch like this like slanted ... be more animated ... add more fonts and styles because now it feels like its recycling the same 5 styles".
+- **Four more styles** on Lens's engine (`slot-layouts.ts`), picked per song like the others (`songlook.ts` scores, glyphs on the card): **Slant** (the reel's look: the line built up word by word in a column turned −6°, each word sliding in large on a tag of marker color as it's sung, then shrinking into the stack above as the next lands), **Pop** (one huge word at a time, rising in and flung up out of the way), **Cascade** (the line stepping down the screen like stairs, the view panning with the voice) and **Tape** (Collage's cut-out words, each stuck on a strip of tape as it's sung). Slant and Pop hide the next line.
+- **Tags**: a new optional pose channel (`LensPose.tag`, `LensPlan.tagTracks`) planned with the slot tracks and played on the compositor as `scaleX` and opacity on a `.lens-tag` behind each word. `palette.ts` `tagFor` takes the highlight's hue and darkens (or lightens) it until the lyric color reads on it at 3.4:1; a grey highlight gets a red marker. On tagged rows the lit text takes the lyric color.
+- **Twelve more faces** (OFL, `@fontsource`): Archivo Black, Bebas Neue, Oswald, DM Serif Display, Abril Fatface, Sedgwick Ave Display, Bungee, Silkscreen, Bodoni Moda, Shrikhand, Chakra Petch, Lilita One, each with its vibe in `fontScore`, vetoes, metrics and style harmony (27 in all). Permanent Marker was left out: it is Apache-2.0, not OFL. Notices regenerated.
+- **Style picker** (Settings › Style, under the card): Auto or one style for every song. The pin is kept in the windows' shared web storage (`overlay/pin.ts`, key `undertone.style-pin`), applied through `OverlayController.forceLook` under the QA overrides, and reaches every overlay through the `storage` event. Reset to defaults goes back to Auto. The card's intro says when a style is pinned.
+- **Checked** in Chromium with the mock bridge: Slant, Pop, Cascade and Tape on the demo songs over the dusk and light wallpapers; pinning Slant in Settings changes the preview and the card at once. Pop's hand-off was reworked after the first look (the old and new words overlapped in the middle).
+Tests: 1272+ vitest in 37 files (new: the four layouts' poses, tags, Pop's hand-off, Cascade's stairs, `tagFor`'s contrast and red marker, the Style group and its pin). The feature grid and the Lens plan continuity test now have 30 s timeouts: both already timed out at 5 s before this change.
+Not verified: on a real Mac or PC, in particular that WKWebView and WebView2 deliver the `storage` event across the overlay and Settings windows (same origin, same data store, so they should).
+Needs from Codex: a contract field for the pin, so the tray can show it and it survives a cleared web storage: `Settings.style: "auto" | Style` (default "auto"), stored and validated like `graphics`. Until then the pin lives in web storage only.
+Contract: unchanged (v8).
+

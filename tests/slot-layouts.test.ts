@@ -8,9 +8,22 @@ import {
   POSTER_LAYOUT,
   POSTER_MAX_ROW,
   posterRows,
+  CASCADE_GHOST,
+  CASCADE_LAYOUT,
+  POP_BIG,
+  POP_LAYOUT,
+  popPhase,
   REVEAL_GHOST,
   REVEAL_LAYOUT,
+  SLANT_BIG,
+  SLANT_KEEP,
+  SLANT_LAYOUT,
+  slantOpacity,
+  slantScale,
+  slantTag,
   SLOT_LAYOUTS,
+  TAPE_LAYOUT,
+  tapeTag,
   SPOT_BIG,
   SPOT_FAINT,
   SPOTLIGHT_LAYOUT,
@@ -232,5 +245,102 @@ describe("every layout", () => {
         }
       }
     }
+  });
+});
+
+describe("Slant", () => {
+  const fit = SLANT_LAYOUT.fit(LINE, SIZE, STAGE, true, 2, 0.8);
+
+  it("slides a word in big, holds it while it's sung, then shrinks it into the stack, without a jump", () => {
+    expect(slantScale(-0.5)).toBeCloseTo(slantScale(-0.2), 6); // waiting off to the side, already set
+    expect(slantScale(0)).toBe(SLANT_BIG);
+    expect(slantScale(0.5)).toBe(SLANT_BIG);
+    expect(slantScale(1)).toBe(SLANT_BIG);
+    let last = slantScale(1);
+    for (let u = 1; u < 6; u += 0.01) {
+      const s = slantScale(u);
+      expect(s).toBeLessThanOrEqual(last + 1e-9);
+      expect(Math.abs(s - last)).toBeLessThan(0.08);
+      last = s;
+    }
+  });
+
+  it("shows a word only from its arrival until it has climbed SLANT_KEEP words up", () => {
+    expect(slantOpacity(-0.5)).toBe(0);
+    expect(slantOpacity(0.5)).toBe(1);
+    expect(slantOpacity(2)).toBeGreaterThan(0.5);
+    expect(slantOpacity(SLANT_KEEP + 0.5)).toBe(0);
+  });
+
+  it("puts the word being sung on its tag, and only that one", () => {
+    expect(slantTag(-0.3)).toBe(0);
+    expect(slantTag(0.5)).toBe(1);
+    expect(slantTag(1.5)).toBe(0);
+    const pose = SLANT_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    expect(pose.tag?.map((v) => Math.round(v))).toEqual([0, 0, 0, 1, 0, 0, 0]);
+  });
+
+  it("stacks the sung words above the one being sung, the column turned to climb to the right", () => {
+    const pose = SLANT_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    const ys = pose.y.slice(0, 4);
+    ys.slice(1).forEach((y, k) => expect(y).toBeGreaterThan(ys[k] ?? 0)); // older words sit higher
+    expect(pose.scale[3]).toBeGreaterThan(pose.scale[2] ?? 0);
+    expect(pose.rotate.slice(0, 4).every((r) => r < 0)).toBe(true);
+  });
+
+  it("rests as one plain row with no tags without motion (reduced motion, plain lyrics)", () => {
+    const rest = SLANT_LAYOUT.fit(LINE, SIZE, STAGE, false, 2, 0.8);
+    const pose = SLANT_LAYOUT.pose(LINE, rest, STAGE.width, 1, 0, 3.5);
+    expect(new Set(pose.y)).toEqual(new Set([0]));
+    expect(pose.tag?.every((v) => v === 0)).toBe(true);
+    expect(pose.opacity.every((o) => o === 1)).toBe(true);
+  });
+});
+
+describe("Pop", () => {
+  const fit = POP_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, 0.8);
+
+  it("shows one word at a time, huge, and fits the longest word to the stage", () => {
+    const pose = POP_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 2.5);
+    expect(pose.opacity.filter((o) => o > 0.5)).toHaveLength(1);
+    expect(pose.opacity[2]).toBe(1);
+    expect((pose.scale[2] ?? 0) / fit.fit).toBeCloseTo(POP_BIG, 6);
+    expect(POP_BIG * Math.max(...LINE.widths) * fit.fit).toBeLessThanOrEqual(STAGE.width * 0.82 + 1e-6);
+  });
+
+  it("never draws two words strongly at once through a hand-off", () => {
+    for (let a = 1.8; a < 2.2; a += 0.01) {
+      const pose = POP_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, a);
+      expect((pose.opacity[1] ?? 0) + (pose.opacity[2] ?? 0)).toBeLessThanOrEqual(1.05);
+    }
+    expect(popPhase(-1).into).toBe(0);
+    expect(popPhase(0.5)).toEqual({ into: 1, away: 0 });
+    expect(popPhase(2).away).toBe(1);
+  });
+});
+
+describe("Cascade", () => {
+  const fit = CASCADE_LAYOUT.fit(LINE, SIZE, STAGE, true, 0, 0.8);
+
+  it("steps each word lower than the one before, keeps the one being sung in the middle, and the ones ahead faint", () => {
+    const pose = CASCADE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    pose.y.slice(1).forEach((y, k) => expect(y).toBeGreaterThan(pose.y[k] ?? 0));
+    const w = (LINE.widths[3] ?? 0) * (pose.scale[3] ?? 1);
+    expect(Math.abs((pose.x[3] ?? 0) + w / 2 - STAGE.width / 2)).toBeLessThan(w);
+    expect(pose.opacity[3]).toBeCloseTo(1, 6);
+    expect(pose.opacity[4]).toBeCloseTo(CASCADE_GHOST, 6);
+  });
+});
+
+describe("Tape", () => {
+  it("is the collage's layout, with each word's tape on as it's sung and staying", () => {
+    const fit = TAPE_LAYOUT.fit(LINE, SIZE, STAGE, true, 1, 0.8);
+    const pose = TAPE_LAYOUT.pose(LINE, fit, STAGE.width, 1, 1, 3.5);
+    expect(pose.tag?.slice(0, 3).every((v) => v === 1)).toBe(true);
+    expect(pose.tag?.slice(4).every((v) => v === 0)).toBe(true);
+    expect(tapeTag(-0.5)).toBe(0);
+    expect(tapeTag(5)).toBe(1);
+    expect(TAPE_LAYOUT.tags).toBe(true);
+    expect(COLLAGE_LAYOUT.tags).toBeUndefined();
   });
 });

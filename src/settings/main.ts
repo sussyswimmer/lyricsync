@@ -5,7 +5,9 @@ import "../styles/settings.css";
 import { DEFAULT_SETTINGS, type MediaStatus, type NowPlaying, type Settings, type ShortcutsStatus } from "../../contract/contract";
 import { connect } from "../bridge";
 import { PaletteCache } from "../core/palette";
+import type { Style } from "../core/songlook";
 import { h } from "../overlay/dom";
+import { readStylePin, writeStylePin } from "../overlay/pin";
 import { isBrowserKey } from "./browser-keys";
 import { TrackHold } from "./hold";
 import { SettingsPanel, type PanelState } from "./panel";
@@ -63,6 +65,8 @@ async function boot(host: HTMLElement): Promise<void> {
   let media: MediaStatus | null = early.media ?? fetchedMedia;
   let shortcuts: ShortcutsStatus | null = early.shortcuts ?? fetchedShortcuts;
   let loginError = false;
+  /** the style pinned for every song (overlay/pin.ts), or null when Undertone picks per song */
+  let stylePin: Style | null = readStylePin();
   /** The value a refused Launch at login change asked for: once the settings reach it (from the menu, or the
    * core taking the login item's real state), the note under the switch no longer applies. */
   let loginErrorFor: boolean | null = null;
@@ -99,6 +103,7 @@ async function boot(host: HTMLElement): Promise<void> {
       loginError,
       // the preview's song and the look the preview draws it with
       look: info.look,
+      stylePin,
     };
     if (!panel || (shown && samePanelState(shown, state))) return;
     shown = state;
@@ -129,6 +134,13 @@ async function boot(host: HTMLElement): Promise<void> {
     },
   });
 
+  // Every overlay hears a new pin through the storage event; this window's preview is told directly.
+  const pinStyle = (style: Style | null): void => {
+    stylePin = style;
+    writeStylePin(style);
+    preview?.setPin(style);
+    render();
+  };
   // In order, so a quick start and stop of the key recorder can't reach the core the other way round.
   let suspending: Promise<void> = Promise.resolve();
   const suspendShortcuts = (suspended: boolean): void => {
@@ -150,8 +162,10 @@ async function boot(host: HTMLElement): Promise<void> {
     reset: (forgetSongs) => {
       sync.edit(forgetSongs ? { ...defaultsPatch(), trackOffsetsMs: {}, nudgedTracks: [] } : defaultsPatch());
       sync.flush();
+      pinStyle(null);
     },
     suspendShortcuts,
+    pinStyle: (style) => pinStyle(style),
   });
 
   preview = new SettingsPreview({
@@ -245,6 +259,7 @@ function samePanelState(a: PanelState, b: PanelState): boolean {
     a.shortcuts?.nudgeEarlier === b.shortcuts?.nudgeEarlier &&
     a.shortcuts?.nudgeLater === b.shortcuts?.nudgeLater &&
     a.loginError === b.loginError &&
+    a.stylePin === b.stylePin &&
     // the preview hands over a new card state only when it changed
     a.look === b.look
   );

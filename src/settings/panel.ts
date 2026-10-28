@@ -9,10 +9,11 @@ import {
 } from "../../contract/contract";
 import { detectPlatform, displayAccelerator, SHORTCUT_ACTIONS, type KeyLayout, type Platform } from "../core/accelerator";
 import type { Palette } from "../core/palette";
+import { STYLES, styleLabel, type Style } from "../core/songlook";
 import { hasOwnOffset, learnedOffsetMs, songOffsetMs } from "../core/sync";
 import { h } from "../overlay/dom";
-import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle } from "./controls";
-import { LookCard, type LookCardState } from "./look-card";
+import { group, hint, icon, nextId, radios, setAttr, setText, slider, toggle, type Option } from "./controls";
+import { LookCard, STYLE_GLYPHS, type LookCardState } from "./look-card";
 import { currentLayout, ShortcutRecorder } from "./recorder";
 import { clampTrackOffset, TRACK_OFFSET_LIMIT_MS } from "./store";
 
@@ -36,6 +37,8 @@ export interface PanelState {
   loginError: boolean;
   /** what the "Picked for this song" card shows: the look Undertone picked for the preview's song */
   look: LookCardState;
+  /** the style every song is drawn in (overlay/pin.ts), or null when Undertone picks one per song */
+  stylePin: Style | null;
 }
 
 /** What the panel asks for. */
@@ -49,6 +52,8 @@ export interface PanelActions {
   reset(forgetSongs: boolean): void;
   /** true while a shortcut row listens for keys, so the current global shortcuts don't take them */
   suspendShortcuts(suspended: boolean): void;
+  /** draw every song in `style`, or null to let Undertone pick per song again */
+  pinStyle(style: Style | null): void;
 }
 
 export interface PanelOptions {
@@ -125,7 +130,13 @@ export function effectsWord(level: number): "Calm" | "Balanced" | "Lively" {
   return level < 66.5 ? "Balanced" : "Lively";
 }
 
-export const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
+export /** Auto's tile: a spark, Undertone choosing. */
+const AUTO_GLYPH: readonly [string, number, number][] = [
+  ["M12 2.2 V13.8 M6.2 8 H17.8", 1.6, 1],
+  ["M8.2 4.2 L15.8 11.8 M15.8 4.2 L8.2 11.8", 1.2, 0.45],
+];
+const STYLE_AUTO_HINT = "Undertone picks a style for each song. Choose one to use it for every song.";
+const EFFECTS_HINT = "How much words rise, swell and ripple as they're sung.";
 export const EFFECTS_MODE_ON = "Each song's words move their own way: they bounce, sway, pulse or drop.";
 export const EFFECTS_MODE_OFF = "Off: every word rises the same way.";
 export const GRAPHICS_ON = "Words like “rain” or “rocket” come to life in the line, and big moments splash.";
@@ -167,10 +178,14 @@ export class SettingsPanel {
     this.el = h("div", "panel");
     this.status = h("p", "sr-only");
     this.status.setAttribute("role", "status");
-    this.renderers.push((s) => this.card.render(s.look));
+    this.renderers.push((s) => {
+      this.card.setPinned(s.stylePin !== null);
+      this.card.render(s.look);
+    });
     this.el.append(
       this.mediaNotice(),
       this.card.el,
+      this.styleGroup(),
       this.generalGroup(),
       this.colorGroup(),
       this.lookGroup(),
@@ -222,6 +237,37 @@ export class SettingsPanel {
   /** The colors the overlay uses right now. */
   private shownColors(state: PanelState): Palette {
     return state.settings.autoColor && state.palette ? state.palette : state.settings.colors;
+  }
+
+  // ---------- style ----------
+
+  /**
+   * Which style the lyrics are drawn in: Auto (Undertone picks per song, as the card above says) or one
+   * style pinned for every song. A tile per style, each with its glyph, in the order Undertone ranks
+   * them on equal scores.
+   */
+  private styleGroup(): HTMLElement {
+    const options: Option<Style | "auto">[] = [
+      { value: "auto", label: "Auto", art: icon(AUTO_GLYPH), description: "Auto, a style picked for each song" },
+      ...STYLES.map((style): Option<Style> => ({ value: style, label: styleLabel(style), art: icon(STYLE_GLYPHS[style]) })),
+    ];
+    const captionId = nextId("style-caption");
+    const tiles = radios<Style | "auto">({
+      name: nextId("style"),
+      label: "Style",
+      options,
+      className: "style-tiles",
+      onChange: (value) => this.actions.pinStyle(value === "auto" ? null : value),
+    });
+    tiles.el.setAttribute("aria-describedby", captionId);
+    const caption = hint("", "toggle-hint");
+    caption.id = captionId;
+    const { el } = group("Style", tiles.el, caption);
+    this.renderers.push(({ stylePin }) => {
+      tiles.set(stylePin ?? "auto");
+      setText(caption, stylePin ? `Every song in ${styleLabel(stylePin)}. Choose Auto to let Undertone pick for each song again.` : STYLE_AUTO_HINT);
+    });
+    return el;
   }
 
   // ---------- media notice ----------

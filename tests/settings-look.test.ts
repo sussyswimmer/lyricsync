@@ -4,6 +4,7 @@ import { createMockBridge, MOCK_TRACKS, trackKeyOf, type MockBridge } from "../s
 import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
+import { STYLES, styleLabel, type Style } from "../src/core/songlook";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
 import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, GRAPHICS_OFF, GRAPHICS_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
@@ -346,6 +347,7 @@ function motionQuery(matches = false): MotionQuery & { flip(next: boolean): void
 function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | null = motionQuery()) {
   let settings: Settings = { ...structuredClone(DEFAULT_SETTINGS), ...over };
   const edits: Partial<Settings>[] = [];
+  const pins: (Style | null)[] = [];
   let state: PanelState = {
     settings,
     palette: null,
@@ -356,6 +358,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     shortcuts: null,
     loginError: false,
     look: finding(null),
+    stylePin: null,
   };
   const panel = new SettingsPanel(
     {
@@ -368,6 +371,10 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
       setTrackOffset: () => undefined,
       reset: () => undefined,
       suspendShortcuts: () => undefined,
+      pinStyle: (style) => {
+        pins.push(style);
+        panel.render((state = { ...state, stylePin: style }));
+      },
     },
     { platform: "mac", reducedMotion },
   );
@@ -387,6 +394,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     panel,
     root,
     edits,
+    pins,
     group,
     sliderIn,
     setLook(next: LookCardState): void {
@@ -396,13 +404,33 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
 }
 
 describe("the settings panel since contract v4", () => {
-  it("has no Style or Font group and no Curve: the look is picked per song", () => {
+  it("has a Style group first (Auto or one style for every song), and no Font group or Curve: the face is picked per song", () => {
     const p = mountPanel();
-    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
+    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["Style", "General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
     expect(p.root.all("slider").map((r) => r.one("row-label").textContent)).not.toContain("Curve");
-    // the only choices left are Behavior's two segments
+    // the other choices are Behavior's two segments
     expect(p.root.all("seg").map((g) => g.getAttribute("aria-label"))).toEqual(["When to show lyrics", "Where to show lyrics"]);
     for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles"]) expect(p.root.all(gone), gone).toEqual([]);
+  });
+
+  it("pins a style from its tile, shows the pin, and Auto unpins", () => {
+    const p = mountPanel();
+    const tiles = p.group("Style").one("style-tiles");
+    const inputs = tiles.all("opt").map((o) => o.children[0] as FakeElement);
+    const labels = tiles.all("opt-label").map((l) => l.textContent);
+    expect(labels).toEqual(["Auto", ...STYLES.map((s) => styleLabel(s))]);
+    expect(inputs[0]?.checked).toBe(true);
+    const slant = inputs[labels.indexOf("Slant")] as FakeElement;
+    slant.checked = true;
+    slant.dispatch("change");
+    expect(p.pins).toEqual(["slant"]);
+    expect(slant.checked).toBe(true);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Every song in Slant");
+    const auto = inputs[0] as FakeElement;
+    auto.checked = true;
+    auto.dispatch("change");
+    expect(p.pins).toEqual(["slant", null]);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Undertone picks a style for each song");
   });
 
   it("puts the Picked for this song card right under the preview's notice, and shows what the window hands it", () => {

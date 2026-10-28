@@ -394,7 +394,7 @@ function looksOf(builds: readonly Built[]): Map<string, SongLook> {
 }
 
 const face = (family: string) => FONTS.find((x) => x.family === family);
-const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage"];
+const MODES: readonly Style[] = ["arc", "lens", "drift", "stack", "poster", "spotlight", "wave", "reveal", "collage", "slant", "pop", "cascade", "tape"];
 
 // ───────────────────────────── tests ─────────────────────────────
 
@@ -774,9 +774,9 @@ describe("legibility invariants over a feature grid", () => {
       expect(look.glow).toBeGreaterThanOrEqual(0.3);
       expect(look.glow).toBeLessThanOrEqual(1);
     }
-  });
+  }, 30_000); // 16,200 songs × every face and style: well past the 5 s default on a loaded machine
 
-  it("picks only the nine styles: the contract's four modes, Poster, Spotlight, Wave, Reveal and Collage", () => {
+  it("picks only the thirteen styles: the contract's four modes, Poster, Spotlight, Wave, Reveal, Collage, Slant, Pop, Cascade and Tape", () => {
     expect(STYLES).toEqual(MODES);
     expect(STYLES.slice(0, 4)).toEqual(CONTRACT_STYLES);
     const looks = [...grid.map((f) => pickLook(f)), ...looksOf([...SYNTHETIC.map((make) => make()), ...mockInputs()]).values()];
@@ -787,7 +787,7 @@ describe("legibility invariants over a feature grid", () => {
       picked.add(look.style);
     }
     expect([...picked].sort()).toEqual([...MODES].sort()); // and every one of them gets picked somewhere
-  });
+  }, 30_000); // the same grid again, through pickLook
 });
 
 describe("cost", () => {

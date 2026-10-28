@@ -9,14 +9,35 @@ Fonts: SIL Open Font License 1.1
 Undertone bundles these fonts. Each is licensed under the SIL Open Font License,
 Version 1.1, copied once below the list.
 
+abril-fatface 5.3.0 (@fontsource/abril-fatface)
+  Copyright (c) 2011, Copyright (c) 2011, TypeTogether (www.type-together.com info@type-together.com), with Reserved Font Names "Abril" and "Abril Fatface"
+
 anton 5.3.0 (@fontsource/anton)
   Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
+
+archivo-black 5.3.0 (@fontsource/archivo-black)
+  Copyright 2017 The Archivo Black Project Authors (https://github.com/Omnibus-Type/ArchivoBlack)
+
+bebas-neue 5.3.0 (@fontsource/bebas-neue)
+  Copyright 2019 The Bebas Neue Project Authors (https://github.com/dharmatype/Bebas-Neue)
+
+bodoni-moda 5.3.0 (@fontsource/bodoni-moda)
+  Copyright 2020 The Bodoni Moda Project Authors (https://github.com/indestructible-type/Bodoni) BodoniModa-Italic[opsz,wght].ttf: Copyright 2020 The Bodoni Moda Project Authors (https://github.com/indestructible-type/Bodoni)
 
 bricolage-grotesque 5.3.0 (@fontsource/bricolage-grotesque)
   Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage)
 
+bungee 5.3.0 (@fontsource/bungee)
+  Copyright 2023 The Bungee Project Authors (https://github.com/djrrb/Bungee)
+
 caveat 5.3.0 (@fontsource/caveat)
   Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)
+
+chakra-petch 5.3.0 (@fontsource/chakra-petch)
+  Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-LightItalic.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-Regular.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-Italic.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-Medium.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-MediumItalic.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-SemiBold.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-SemiBoldItalic.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-Bold.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git) ChakraPetch-BoldItalic.ttf: Copyright 2018 The Chakra Petch Project Authors (https://github.com/m4rc1e/Chakra-Petch.git)
+
+dm-serif-display 5.3.0 (@fontsource/dm-serif-display)
+  Copyright 2014 - 2017 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name 'Source'. Copyright 2019 Google LLC. DMSerifDisplay-Italic.ttf: Copyright 2014 - 2017 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name 'Source'. Copyright 2019 Google LLC.
 
 figtree 5.3.0 (@fontsource/figtree)
   Copyright 2022 The Figtree Project Authors (https://github.com/erikdkennedy/figtree) Figtree-Italic[wght].ttf: Copyright 2022 The Figtree Project Authors (https://github.com/erikdkennedy/figtree)
@@ -29,6 +50,12 @@ instrument-serif 5.3.0 (@fontsource/instrument-serif)
 
 jetbrains-mono 5.3.0 (@fontsource/jetbrains-mono)
   Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) JetBrainsMono-Italic[wght].ttf: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+lilita-one 5.3.0 (@fontsource/lilita-one)
+  Copyright (c) 2011 Juan Montoreano (juan@remolacha.biz), with Reserved Font Names "Lilita One"
+
+oswald 5.3.0 (@fontsource/oswald)
+  Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont)
 
 pacifico 5.3.0 (@fontsource/pacifico)
   Copyright 2018 The Pacifico Project Authors (https://github.com/googlefonts/Pacifico)
@@ -44,6 +71,15 @@ righteous 5.3.0 (@fontsource/righteous)
 
 rubik 5.3.0 (@fontsource/rubik)
   Copyright 2015 The Rubik Project Authors (https://github.com/googlefonts/rubik) Rubik-Italic[wght].ttf: Copyright 2015 The Rubik Project Authors (https://github.com/googlefonts/rubik)
+
+sedgwick-ave-display 5.3.0 (@fontsource/sedgwick-ave-display)
+  Copyright 2017 The Sedgwick Ave Project Authors (https://github.com/googlefonts/sedgwickave)
+
+shrikhand 5.3.0 (@fontsource/shrikhand)
+  Copyright (c) 2015 Jonny Pinhorn (jonpinhorn.typedesign@gmail.com)
+
+silkscreen 5.3.0 (@fontsource/silkscreen)
+  Copyright 2001 The Silkscreen Project Authors (https://github.com/googlefonts/silkscreen) Silkscreen-Bold.ttf: Copyright 2001 The Silkscreen Project Authors (https://github.com/googlefonts/silkscreen)
 
 space-grotesk 5.3.0 (@fontsource/space-grotesk)
   Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk)
