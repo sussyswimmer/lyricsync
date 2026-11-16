@@ -392,6 +392,7 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
   if (typeof p.graphics === "boolean") next.graphics = p.graphics;
   next.style = oneOf(p.style, STYLE_CHOICES) ?? next.style;
+  if (typeof p.karaokeMode === "boolean") next.karaokeMode = p.karaokeMode;
   return next;
 }
 

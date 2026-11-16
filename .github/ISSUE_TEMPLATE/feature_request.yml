@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest an idea or an improvement for Undertone.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Describing the problem you want solved is more useful than a finished design, so start there.
+
+        Undertone only reads what's playing, and its only network requests are the lyrics lookup (and, on a Mac, Spotify's cover art). Ideas that need an account, telemetry, or bundling lyrics with the app don't fit the project.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation and what gets in the way today.
+      placeholder: I keep my desktop icons on the left, and they sit right where the lyrics are.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What should Undertone do?
+      description: Describe the behavior you'd like. Mockups or sketches are welcome.
+      placeholder: A horizontal position setting next to Height, so I can move the lyrics to the right.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Undertone is this about?
+      multiple: true
+      options:
+        - Lyric styles and fonts
+        - Colors
+        - Word timing and sync
+        - Finding lyrics (LRCLIB)
+        - Music apps and now playing
+        - Displays and where the lyrics show
+        - Menu, shortcuts and Settings window
+        - Performance
+        - Install and updates
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Workarounds you use today, or other ways to solve the same problem.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues, and this hasn't been suggested yet.
+          required: true

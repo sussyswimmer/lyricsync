@@ -640,3 +640,44 @@ Tests: 1307 vitest in 39 files (new or changed: the pin migration, Reel among th
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing. The `Settings.style` field 0.3.0 asked for is v9.
 Contract: v9 (`StyleChoice` lists the offered styles: "auto" | "slant" | "pop" | "reel" | "cascade" | "tape" | "spotlight" | "wave" | "reveal" | "collage" | "lens" | "poster").
+
+## 2026-10-20 · Claude Code · GitHub presentation
+Done: the repo now presents itself the way `sussyswimmer/bordervisualizer` does, at Maxwell's request.
+- `README.md` is a landing page: banner, badges, download buttons, a demo GIF, features, the four styles, Settings in light and dark, a three-step install, how it works (with a Mermaid chart), privacy and the Automation permission, an FAQ, build from source, roadmap, contributing, credits and license.
+- The README's troubleshooting moved to `docs/TROUBLESHOOTING.md` and its development notes (mock bridge, URL parameters, debug flags, layout) to `CONTRIBUTING.md`. Links in INSTALL and ACCEPTANCE follow them; `tests/regress-docs.test.ts` now checks the development facts in CONTRIBUTING.md and also checks `href`, `src` and `srcset` in the docs' inline HTML.
+- `assets/`: `banner.svg` and `banner.png` (written by `scripts/banner.py`, lettering outlined from the bundled Fraunces and Figtree), screenshots of the four styles and of Settings in both modes, and `demo.gif`. `scripts/readme-media.mjs` remakes all of them from the real pages on the mock bridge, with the page clock faked so every run draws the same frames.
+- New: `LICENSE` (MIT, as Maxwell chose), `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `SECURITY.md`, `CHANGELOG.md`, `.github/ISSUE_TEMPLATE/` (bug report, feature request, private contact, config), `.github/PULL_REQUEST_TEMPLATE.md` and `.github/release.yml` (release-note sections by label). Workflows unchanged.
+For Maxwell, in the repo's settings (not files): description "Synced lyrics on your desktop for whatever you're playing, colored by the album art. macOS and Windows. Free & open source."; topics `lyrics`, `synced-lyrics`, `lrc`, `desktop-app`, `tauri`, `typescript`, `rust`, `spotify`, `apple-music`, `macos`, `windows`; social preview `assets/banner.png`; turn on private vulnerability reporting (Security tab), which SECURITY.md and the issue forms point to.
+Needs from Codex: nothing.
+Contract: unchanged (v3).
+
+## 2026-10-20 · Claude Code · 0.1.1: the released app on main, with the GitHub presentation
+Done: Maxwell published v0.1.0 from `claude/friendly-mayer-shv80u` while `main` had the GitHub presentation, so each lacked the other's work, and asked for the result as v0.1.1.
+- `main` merges the commit tagged `v0.1.0` (`2ca60a5`), not the branch's newer 0.2.0 work. The app is unchanged; the version is 0.1.1 in `package.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, and in the docs that quote the menu's build line.
+- README: the landing-page layout from the presentation work (badges, features, Settings, install, how it works, privacy, FAQ, roadmap, credits, license) with the released app's content and media: its banner, demo, download buttons, six styles and word pictures from `docs/media/`. Permissions and network details stay in `docs/INSTALL.md`, which the README links.
+- The four-style screenshots and `demo.gif` from `assets/` are gone; the 1280×640 banner is now `docs/media/social-preview.{svg,png}`, for the repository's social preview. `docs/media/settings-{light,dark}.png` are retaken from this version. `scripts/readme-media.mjs` keeps only those two jobs.
+- `CONTRIBUTING.md` points to `docs/DEVELOPMENT.md` instead of repeating it. The released `docs/TROUBLESHOOTING.md` won the add/add conflict, with a link to the bug report form. `CHANGELOG.md` describes 0.1.0 as it shipped and adds 0.1.1.
+Needs from Codex: nothing. Whoever merges `claude/friendly-mayer-shv80u` next: expect conflicts in the README, CHANGELOG and the version lines; keep the 0.2.0 version and content, and the README's layout and links.
+Contract: unchanged (v7).
+
+## 2026-10-20 · Claude Code · Karaoke mode, and Effects mode off by default (contract v8)
+Done: Maxwell asked for "a karaoke mode where a little dot will bounce for the word that you need to sing", switchable, with it and Effects mode both off to start.
+- **Contract v8:** `Settings.karaokeMode` (default `false`; TS, Rust, the mock), and `effectsMode` now defaults to `false`. Settings saved before v8 (no `karaokeMode`) have `effectsMode` turned off once as they load (`settings::migrate`, the mock's `migrateSettings`), since a stored `true` from 0.1.0 was only the old default; the file is rewritten with `karaokeMode`, so a later choice sticks.
+- **The dot:** `routes.ts` `planBall` plans it on the song's clock, and `KaraokeLine` (`motion/line.ts`) plays it as `.kw-ball` in the line's picture layer, on the extras' window, so it stops and fades with the pictures. It drops onto the first word 350 ms before it, lands on each word exactly as it starts and sits there for at least a fifth of the gap, hops in an arc (at most 520 ms), and fades out 450 ms after the last word. Under reduced motion and the lite tier it steps without arcing. Arc, Drift and Stack land it from their word positions; Lens, Poster and Spotlight from `spotAt`, which for the dot is always the word's own row (pictures in Poster still go over the block). No dot for plain lyrics.
+- **Settings:** a Karaoke mode switch under Effects mode in Look, with a caption. Not in the tray menu.
+- **Docs:** SPEC (Contract v8, Karaoke mode), USER_GUIDE (Effects mode off by default; a Karaoke mode section), README, CHANGELOG (0.1.1).
+Tests: 1259 vitest (planBall: landings, rest, arc, reduced motion, in and out, merged landings; the dot in Lens, Poster and Spotlight lines; merge and migration in the mock; look; the panel's two switches), 284 Rust (v8 defaults, the one-time Effects mode migration). Checked in Chromium on the mock bridge in all six styles: the dot sits on the lit word as it's sung.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v8 (adds `Settings.karaokeMode`; `effectsMode` defaults to `false`).
+
+## 2026-11-16 · Claude Code · 0.4.0 merged into main, with Karaoke mode (contract v10)
+Done: Maxwell asked to merge Undertone into main: the 0.4.0 line (`claude/friendly-mayer-shv80u`) with main's karaoke dot, keeping Effects mode on as in the shipped app, and the dot as a setting that is off by default.
+- **Contract v10:** main's v8 (`karaokeMode`) and the release line's v8 (`graphics`) and v9 (`style`) were made in parallel, so `karaokeMode` comes in as v10 (TS, Rust, the mock, the window's `withDefaults`). Settings saved without it read as `false`.
+- **Effects mode stays on by default.** Main's one-time migration that turned it off is dropped; `graphics` still takes a stored `effectsMode` when it's missing.
+- **Settings:** a Karaoke mode switch after Graphics in Look, with a caption. Not in the tray menu. The dot plays in every style when it's on and the line is synced.
+- Versions stay 0.4.0. No tag, no release.
+Tests: vitest, the build and the Rust tests (v10 defaults, a v9 store reading Karaoke mode off and Effects mode as saved).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v10 (adds `Settings.karaokeMode`).

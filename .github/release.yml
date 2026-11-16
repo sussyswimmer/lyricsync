@@ -1,0 +1,27 @@
+# Sections for GitHub's generated release notes (the "Generate release notes" button on a release).
+# A merged pull request is listed once, under the first section whose labels it has; unlabeled ones
+# go under "Other changes". The issue forms add bug and enhancement; label pull requests by hand.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot
+      - dependabot[bot]
+  categories:
+    - title: ✨ Features
+      labels: [feature, enhancement]
+    - title: 🐛 Fixes
+      labels: [fix, bug]
+    - title: ⚡ Performance
+      labels: [performance]
+    - title: 🎤 Lyrics and sync
+      labels: [lyrics, sync]
+    - title: 🎨 Look and settings
+      labels: [ui, overlay, settings]
+    - title: 🏗️ Build and CI
+      labels: [build, ci]
+    - title: 📚 Docs
+      labels: [docs, documentation]
+    - title: 🧹 Other changes
+      labels: ['*']

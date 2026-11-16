@@ -141,6 +141,8 @@ export const EFFECTS_MODE_ON = "Each song's words move their own way: they bounc
 export const EFFECTS_MODE_OFF = "Off: every word rises the same way.";
 export const GRAPHICS_ON = "Words like “rain” or “rocket” come to life in the line, and big moments splash.";
 export const GRAPHICS_OFF = "Off: just the words, no pictures or splashes.";
+export const KARAOKE_MODE_ON = "A dot bounces onto each word as it's sung, so you know what to sing next.";
+export const KARAOKE_MODE_OFF = "Off: no dot. Turn it on for a bouncing dot over the word to sing.";
 export const REDUCED_MOTION_NOTE = "Your system asks for less motion: words fade instead of moving.";
 export const GLOW_HINT = "How much the sung word glows. 0 keeps a faint glow.";
 
@@ -429,11 +431,11 @@ export class SettingsPanel {
   // ---------- look ----------
 
   /**
-   * How the picked look sits on this desktop: Text effects, Graphics, Size, Effects, Glow and
-   * Opacity. Undertone picks the style and the face for each song (the card under the preview says
-   * which) unless Style above fixes one, with Text effects its own motion and with Graphics its word
-   * pictures and splashes; these scale it. The lyrics always sit in the middle of the screen, so
-   * there is no height to set.
+   * How the picked look sits on this desktop: Text effects, Graphics, Karaoke mode, Size, Effects,
+   * Glow and Opacity. Undertone picks the style and the face for each song (the card under the
+   * preview says which) unless Style above fixes one, with Text effects its own motion and with
+   * Graphics its word pictures and splashes; these scale it. Karaoke mode adds a bouncing dot. The
+   * lyrics always sit in the middle of the screen, so there is no height to set.
    */
   private lookGroup(): HTMLElement {
     const edit = (patch: Partial<Settings>): void => this.actions.edit(patch);
@@ -453,6 +455,14 @@ export class SettingsPanel {
     });
     const graphicsCaption = hint("", "toggle-hint");
     graphicsCaption.id = graphicsCaptionId;
+    const karaokeCaptionId = nextId("karaoke-mode-caption");
+    const karaoke = toggle({
+      label: "Karaoke mode",
+      describedBy: karaokeCaptionId,
+      onChange: (on) => this.actions.edit({ karaokeMode: on }),
+    });
+    const karaokeCaption = hint("", "toggle-hint");
+    karaokeCaption.id = karaokeCaptionId;
     const size = slider({ label: "Size", min: 22, max: 140, format: String, speak: (v) => `${v} pixels`, onInput: (v) => edit({ size: v }) });
     const effectsHintId = nextId("effects-hint");
     const effects = slider({
@@ -476,7 +486,7 @@ export class SettingsPanel {
     const glowHint = hint(GLOW_HINT);
     glowHint.id = glowHintId;
     const opacity = slider({ label: "Opacity", min: 20, max: 100, format: (v) => `${v}%`, onInput: (v) => edit({ opacity: v }) });
-    const { el } = group("Look", mode.el, modeCaption, graphics.el, graphicsCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
+    const { el } = group("Look", mode.el, modeCaption, graphics.el, graphicsCaption, karaoke.el, karaokeCaption, size.el, effects.el, effectsHint, glow.el, glowHint, opacity.el);
     this.renderers.push(({ settings: s }) => {
       // Settings without `effectsMode` (a core older than contract v5) have it on; without `graphics`
       // (older than v8), Effects mode turned the pictures and splashes on and off too.
@@ -486,6 +496,10 @@ export class SettingsPanel {
       const pictures = typeof s.graphics === "boolean" ? s.graphics : on;
       graphics.set(pictures);
       setText(graphicsCaption, pictures ? GRAPHICS_ON : GRAPHICS_OFF);
+      // Settings without `karaokeMode` (a core older than contract v10) have it off.
+      const dot = s.karaokeMode === true;
+      karaoke.set(dot);
+      setText(karaokeCaption, dot ? KARAOKE_MODE_ON : KARAOKE_MODE_OFF);
       size.set(s.size);
       // Settings without `effects` (a core older than contract v4) show the level as picked.
       effects.set(s.effects ?? DEFAULT_SETTINGS.effects);

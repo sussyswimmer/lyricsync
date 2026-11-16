@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 9;
+export const CONTRACT_VERSION = 10;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -79,7 +79,7 @@ export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
 export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
-  /** the settings schema, still 1: contracts v3, v4, v5, v7, v8 and v9 only added fields, and stored
+  /** the settings schema, still 1: contracts v3, v4, v5, v7, v8, v9 and v10 only added fields, and stored
    *  settings without them get the defaults; v6 only stopped reading `yPos` */
   version: 1;
   /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
@@ -128,6 +128,9 @@ export interface Settings {
   /** The style every song is drawn in, or "auto" for the one Undertone picks per song. Added in
    *  contract v9: settings saved without it read as "auto". */
   style: StyleChoice;
+  /** Karaoke mode: a dot bounces onto each word of the line as it's sung, to show what to sing next.
+   *  Off by default. Added in contract v10: settings saved before it read as off. */
+  karaokeMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -148,4 +151,5 @@ export const DEFAULT_SETTINGS: Settings = {
   effectsMode: true,
   graphics: true,
   style: "auto",
+  karaokeMode: false,
 };

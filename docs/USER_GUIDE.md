@@ -11,7 +11,7 @@ On a Mac, macOS asks whether Undertone may read Spotify and Music (the Automatio
 ## Contents
 
 - [General](#general): Lyrics on the desktop, Launch at login
-- [Look](#look): the style and font picked for each song, or a style you choose; Text effects, Graphics, Size, Effects, Glow, Opacity
+- [Look](#look): the style and font picked for each song, or a style you choose; Text effects, Graphics, Karaoke mode, Size, Effects, Glow, Opacity
 - [Color](#color)
 - [Behavior](#behavior): When, Where
 - [Sync](#sync): All songs, This song
@@ -49,7 +49,7 @@ Undertone picks how each song looks: its style (one of the eleven below) and its
 
 The same song always gets the same look, on every display and in the preview. The look is picked as the song's lyrics arrive. If its cover art arrives later, or synced lyrics replace plain ones, the look may change once, at a line change or a break, never in the middle of a line.
 
-The settings in the window's **Look** group, below, fix a style for every song or leave it to Undertone ([Style](#style)), turn each song's own motion and its graphics on or off ([Text effects](#text-effects) and [Graphics](#graphics)) and change how big the lyrics are and how much they move and glow, whatever the look.
+The settings in the window's **Look** group, below, fix a style for every song or leave it to Undertone ([Style](#style)), turn each song's own motion and its graphics on or off ([Text effects](#text-effects) and [Graphics](#graphics)), add a dot that bounces from word to word ([Karaoke mode](#karaoke-mode)), and change how big the lyrics are and how much they move and glow, whatever the look.
 
 ### Picked for this song
 
@@ -154,6 +154,12 @@ On by default. Scenes, pictures and splashes join the lyrics:
 Switch it off for just the words, with no pictures or splashes. It doesn't change [Text effects](#text-effects). **Effects ▸ Graphics** in the menu does the same. If you had Effects mode off in an earlier version of Undertone, Graphics starts off too.
 
 The same song always gets the same effects and graphics. With [Effects](#effects) at 0, the words don't move and nothing splashes, but pictures still fade in and out. If you've asked your system to reduce motion, scenes and pictures fade in and out where they stand, the words don't move with them, and there are no splashes (see [Reduced motion](#reduced-motion)). On computers without graphics acceleration, where Undertone draws everything lighter, neither switch adds anything.
+
+### Karaoke mode
+
+Off by default. Turn it on and a small dot in the highlight color bounces along the line, karaoke style: it drops onto the first word just before it's sung, lands on each word right as you should sing it, waits there while the word lasts, and hops to the next one. After the line's last word it fades out, and the next line's dot drops in. It works in every style, with Text effects and Graphics on or off. The dot is on the song's timing like the words, so a [sync nudge](#this-song) moves it too.
+
+If you've asked your system to reduce motion, the dot moves from word to word without bouncing. Plain lyrics without timing (see [Loading, missing and unsynced lyrics](#loading-missing-and-unsynced-lyrics)) get no dot.
 
 ### Size
 

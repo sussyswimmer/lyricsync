@@ -1,0 +1,12 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/sussyswimmer/lyricsync/blob/main/docs/TROUBLESHOOTING.md
+    about: No lyrics, lyrics early or late, nothing on the desktop? The fix is often here.
+  - name: Report a security vulnerability
+    url: https://github.com/sussyswimmer/lyricsync/security/policy
+    about: Please report security problems privately, not in an issue. The security policy explains how.
+  # Once Discussions is enabled for the repository, point questions there:
+  # - name: Ask a question
+  #   url: https://github.com/sussyswimmer/lyricsync/discussions
+  #   about: Questions, ideas in progress and show-and-tell.

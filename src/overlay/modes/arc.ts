@@ -1278,6 +1278,7 @@ export class ArcMode implements ModeRenderer {
         place: arcPlacer(curve, g.shape.words, g.frames, g.shape.total, metrics),
         steps: this.steps,
         ...(decor ? { decor: decor.words } : {}),
+        ball: look.karaokeMode && !look.unsynced,
         // a word's top middle: up from the middle of its baseline (its frame), across the curve
         host: g.el,
         spot: (j) => {

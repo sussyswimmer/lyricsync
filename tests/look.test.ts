@@ -9,6 +9,7 @@ import {
   dropShadow,
   effectsModeOf,
   effectsOf,
+  karaokeModeOf,
   mergeOverrides,
   overrideFromSettings,
   parseLookOverride,
@@ -332,6 +333,17 @@ describe("the picked look", () => {
     expect(effectsModeOf(v4 as unknown as Settings)).toBe(true);
     expect(look({ effectsMode: false }).effectsMode).toBe(false);
     expect(look().effectsMode).toBe(true);
+  });
+
+  it("reads Karaoke mode from a store that has it, and off from one older than contract v10", () => {
+    expect(karaokeModeOf(settings())).toBe(false);
+    expect(karaokeModeOf(settings({ karaokeMode: true }))).toBe(true);
+    const v9: Record<string, unknown> = { ...settings(), karaokeMode: "yes" };
+    expect(karaokeModeOf(v9 as unknown as Settings)).toBe(false);
+    delete v9["karaokeMode"];
+    expect(karaokeModeOf(v9 as unknown as Settings)).toBe(false);
+    expect(look({ karaokeMode: true }).karaokeMode).toBe(true);
+    expect(look().karaokeMode).toBe(false);
   });
 
   it("carries the song's flair to the stage, and makes any flair safe to draw", () => {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v9", () => {
+describe("contract v10", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(9);
+    expect(CONTRACT_VERSION).toBe(10);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
@@ -20,7 +20,14 @@ describe("contract v9", () => {
       effectsMode: true,
       graphics: true,
       style: "auto",
+      karaokeMode: false,
     });
+  });
+
+  it("adds karaokeMode, off by default, and leaves effectsMode on, without touching the settings schema (v10)", () => {
+    expect(DEFAULT_SETTINGS.karaokeMode).toBe(false);
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
+    expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
   it("adds style, auto by default, without touching the settings schema (v9)", () => {

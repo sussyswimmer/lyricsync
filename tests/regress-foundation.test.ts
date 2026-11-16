@@ -113,8 +113,9 @@ describe("lookKeys", () => {
     expect(lookKeys(look({ yPos: 20 }), "drift")).toEqual(base);
   });
 
-  it("rebuilds when Effects mode or the song's flair changes: the lines' moves, splashes and pictures are built in", () => {
-    expect(lookKeys(look({ effectsMode: false }), "drift").shape).not.toBe(base.shape);
+  it("rebuilds when Effects mode, Karaoke mode or the song's flair changes: the lines' moves, splashes, pictures and dot are built in", () => {
+    expect(lookKeys(look({ effectsMode: !look().effectsMode }), "drift").shape).not.toBe(base.shape);
+    expect(lookKeys(look({ karaokeMode: true }), "drift").shape).not.toBe(base.shape);
     expect(lookKeys({ ...look(), flair: { move: "bounce", accent: "pulse", splash: "drops" } }, "drift").shape).not.toBe(base.shape);
   });
 });

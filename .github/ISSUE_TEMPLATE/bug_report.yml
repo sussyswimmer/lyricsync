@@ -1,0 +1,137 @@
+name: Bug report
+description: Something in Undertone doesn't work, shows the wrong lyrics or looks wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The details below help find the problem quickly, and a `--diagnose` report helps most of all.
+
+        **Found a security problem?** Please don't post it here. Follow the [security policy](https://github.com/sussyswimmer/lyricsync/security/policy) to report it privately.
+
+        **Please don't paste song lyrics** into this issue, even to show what went wrong. The song's title and artist are enough.
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+      description: Describe what you saw. Messages like "No lyrics for this song", lyrics that run early or late, and anything else that looked off all help.
+      placeholder: The lyrics run about a second late on every song since I switched to Bluetooth headphones.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: Each word lights up as it's sung.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Start from Undertone running in the menu bar or tray, and be as exact as you can.
+      placeholder: |
+        1. Play a song in Spotify.
+        2. Pause it, then skip to the next song.
+        3. Look at the desktop.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often does it happen?
+      options:
+        - Every time
+        - Often
+        - Rarely
+        - Only once so far
+    validations:
+      required: true
+
+  - type: input
+    id: undertone-version
+    attributes:
+      label: Undertone version
+      description: The first line of a `--diagnose` report, or the version in the name of the file you downloaded. For a build from source or a CI test build, give the commit.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: Operating system and version
+      description: On a Mac, Apple menu > About This Mac. On Windows, press Win+R, type `winver` and press Enter.
+      placeholder: macOS 15.5, or Windows 11 24H2 (OS build 26100.4061)
+    validations:
+      required: true
+
+  - type: input
+    id: player
+    attributes:
+      label: Music app and its version
+      description: Which app was playing, and its version if you can find it.
+      placeholder: Spotify 1.2.60, or Music on macOS
+    validations:
+      required: true
+
+  - type: input
+    id: song
+    attributes:
+      label: Song
+      description: If the problem is about one song's lyrics or sync, its title and artist. No lyrics, please.
+      placeholder: Song title by Artist
+
+  - type: dropdown
+    id: style
+    attributes:
+      label: Style
+      description: Settings > Style. Only if the problem is about how the lyrics look.
+      options:
+        - Arc
+        - Lens
+        - Drift
+        - Stack
+        - Not about the look
+
+  - type: textarea
+    id: displays
+    attributes:
+      label: Displays
+      description: If the problem is about where the lyrics show, list your displays, which one is the main display, and whether you recently connected or rearranged one.
+      placeholder: |
+        2 displays:
+        - Main: built-in, 3024 × 1964
+        - Second (left of main): 2560 × 1440
+
+  - type: textarea
+    id: diagnose
+    attributes:
+      label: Diagnostics report
+      description: |
+        A `--diagnose` report makes most bugs quick to find. It never contains lyric text.
+        - **macOS** (Terminal): `open -n -a Undertone --args --diagnose`. The report opens in TextEdit.
+        - **Windows** (PowerShell, in the folder with `undertone.exe`): `.\undertone.exe --diagnose | Out-Host`.
+
+        The report is also saved to your temp folder as `undertone-diagnose-<date>-<time>.txt`. Drag that file into this box. If you can, attach the log too: `~/Library/Logs/com.undertone.desktop/undertone.log` on macOS, `%LOCALAPPDATA%\com.undertone.desktop\logs\undertone.log` on Windows. The log may name songs but never holds lyric text. [Reporting a bug](https://github.com/sussyswimmer/lyricsync/blob/main/docs/TROUBLESHOOTING.md#reporting-a-bug) has the details.
+      placeholder: Drag the report file here.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots, video or anything else
+      description: A screenshot or short screen recording helps a lot with visual problems.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched the existing issues, and this hasn't been reported yet.
+          required: true
+        - label: I checked [the troubleshooting guide](https://github.com/sussyswimmer/lyricsync/blob/main/docs/TROUBLESHOOTING.md).
+          required: false

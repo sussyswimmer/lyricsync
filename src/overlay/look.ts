@@ -104,6 +104,8 @@ export interface Look {
   effectsMode: boolean;
   /** Settings.graphics (graphicsOf): the word pictures and the splashes. */
   graphics: boolean;
+  /** Settings.karaokeMode (karaokeModeOf): a dot bounces onto each word of the line as it's sung. */
+  karaokeMode: boolean;
 }
 
 export interface Frame {
@@ -156,6 +158,12 @@ export function effectsOf(settings: Settings): number {
 export function effectsModeOf(settings: Settings): boolean {
   const value: unknown = "effectsMode" in settings ? settings.effectsMode : undefined;
   return value !== false;
+}
+
+/** Settings.karaokeMode (contract v10): the bouncing dot. A store from before v10 has none, which counts as off. */
+export function karaokeModeOf(settings: Settings): boolean {
+  const value: unknown = "karaokeMode" in settings ? settings.karaokeMode : undefined;
+  return value === true;
 }
 
 /**
@@ -249,6 +257,7 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
     flair: pick.flair,
     effectsMode: effectsModeOf(settings),
     graphics: graphicsOf(settings),
+    karaokeMode: karaokeModeOf(settings),
   };
   return withBloom(look, bloomOf(pick.glow, settings.glow));
 }

@@ -78,7 +78,7 @@ Since 2026-10-06, Claude Code owns the whole repo at Maxwell's request (`docs/HA
 
 ## Contract v1
 
-The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v9 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5, v7 and v8 below only add to v1, and v6 stops reading one field.
+The only coupling between the two halves. Rust structs use `#[serde(rename_all = "camelCase")]` so JSON matches the TS exactly. The contract is v10 today: `contract/contract.ts` is authoritative, v2, v3, v4, v5, v7, v8, v9 and v10 below only add to v1, and v6 stops reading one field.
 
 ```ts
 // contract/contract.ts
@@ -263,6 +263,16 @@ nudgedTracks: string[];  // default []
 ```
 
 **Learned sync.** A song you nudge keeps its own offset; any other song starts from what the songs you nudged last have in common (`src/core/sync.ts` `learnedOffsetMs`, `settings.rs` `learned_offset_ms`, the same rule): the middle of their own offsets, from two songs on, and with an even number the middle value nearer 0. So a correction you would make for every song (headphones that play late, say) is made once or twice, and one song with badly timed lyrics doesn't pull the others. A song's sync is `globalOffsetMs` plus its own offset or, without one, the learned one. "Reset this song" (`ms: null`) drops its own offset and its place among the nudged songs; Reset to defaults with "Also clear sync" empties both.
+
+**Contract v10 (additive, 2026-11-16).** `CONTRACT_VERSION = 10`. `Settings.version` stays 1; stored settings without `karaokeMode` read as `false`. No event or command changed, and Effects mode keeps its default (on).
+
+```ts
+// Settings gains:
+/** Karaoke mode: a dot bounces onto each word of the line as it's sung. */
+karaokeMode: boolean;    // default false
+```
+
+**Karaoke mode** (Settings › Look, after Graphics). Each sung line's karaoke (`overlay/motion/line.ts`) adds a dot (`.kw-ball`) to the layer over its words. `routes.ts` `planBall` plans it on the song's clock: it drops onto the line's first word just before it's sung, lands on each word exactly as that word starts, waits there while it's sung, and hops to the next in an arc as tall as the hop is long; after the last word it fades out where it is. In every style it lands on the word's own top (Poster's too, where pictures sit over the block). Under reduced motion and the lite tier it moves from word to word without arcing. Plain lyrics without timing get no dot.
 
 **Contract v9 (additive, 2026-10-28).** `CONTRACT_VERSION = 9`. `Settings.version` stays 1. No event or command changed.
 

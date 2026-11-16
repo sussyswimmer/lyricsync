@@ -7,9 +7,9 @@
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
 //! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects`, contract
-//! v5 `effectsMode`, contract v7 `nudgedTracks` and contract v8 `graphics`, without a new settings
-//! version: a stored file without them loads with their defaults (`graphics` with its Effects mode,
-//! `migrate`) and is rewritten once with them (`load`).
+//! v5 `effectsMode`, contract v7 `nudgedTracks`, contract v8 `graphics` and contract v10
+//! `karaokeMode`, without a new settings version: a stored file without them loads with their
+//! defaults (`graphics` with its Effects mode, `migrate`) and is rewritten once with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -266,6 +266,7 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
             "graphics" => keep_or_set(&mut next.graphics, value.as_bool()),
             "style" => keep_or_set(&mut next.style, variant(value)),
+            "karaokeMode" => keep_or_set(&mut next.karaoke_mode, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
         }
@@ -929,7 +930,8 @@ mod tests {
             },
             "effects": 80,
             "effectsMode": false,
-            "graphics": false
+            "graphics": false,
+            "karaokeMode": true
         }))
     }
     fn shortcuts(toggle: &str, earlier: &str, later: &str) -> Shortcuts {
@@ -983,6 +985,7 @@ mod tests {
         assert_eq!(s.effects, 80.0);
         assert!(!s.effects_mode);
         assert!(!s.graphics);
+        assert!(s.karaoke_mode);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -1249,7 +1252,7 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 22);
+        assert_eq!(keys.len(), 23);
         assert!(!keys.iter().any(|k| k == "theme"));
     }
 
@@ -1898,6 +1901,27 @@ mod tests {
         assert_eq!(load(Some(&rewritten)), (settings, false));
         assert!(migrate(&json!({ "version": 1 })).effects_mode);
         assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v10_get_karaoke_mode_off_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("karaokeMode");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
+                karaoke_mode: false,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["karaokeMode"], json!(false));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // Effects mode stays as it was saved: Karaoke mode changes nothing else
+        assert!(migrate(&json!({ "effectsMode": true })).effects_mode);
+        assert!(!migrate(&json!({ "version": 1 })).karaoke_mode);
     }
 
     #[test]

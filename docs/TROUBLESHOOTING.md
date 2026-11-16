@@ -36,7 +36,7 @@ Undertone reattaches the lyrics to the desktop by itself when Windows Explorer r
 
 ## A feature is missing after an update
 
-You may still be running the old build. The last line of the menu bar or tray menu, and the bottom of Settings, say which build is running: **Undertone 0.1.0 (build …)**. If it isn't the one you downloaded, quit Undertone from the menu and open it again from Applications (or the Start menu). Opening the new app while an old one runs restarts Undertone into the new one.
+You may still be running the old build. The last line of the menu bar or tray menu, and the bottom of Settings, say which build is running: **Undertone 0.1.1 (build …)**. If it isn't the one you downloaded, quit Undertone from the menu and open it again from Applications (or the Start menu). Opening the new app while an old one runs restarts Undertone into the new one.
 
 ## Settings went back to the defaults
 
@@ -44,7 +44,7 @@ Undertone keeps your settings, including each song's sync nudge, in `settings.js
 
 ## Reporting a bug
 
-Run Undertone with `--diagnose`. It reports what Undertone sees right now: the media sources it found and which one it picked, the current track, the LRCLIB match with its length difference, your settings with the login item as your system keeps it, the lyrics cache, your displays and the desktop-layer window handles. It never includes lyric text, and it works while Undertone is running. The report is also saved to your temp folder as `undertone-diagnose-<date>-<time>.txt`, with the path on its last line. Attach that file to your bug report.
+Run Undertone with `--diagnose`. It reports what Undertone sees right now: the media sources it found and which one it picked, the current track, the LRCLIB match with its length difference, your settings with the login item as your system keeps it, the lyrics cache, your displays and the desktop-layer window handles. It never includes lyric text, and it works while Undertone is running. The report is also saved to your temp folder as `undertone-diagnose-<date>-<time>.txt`, with the path on its last line. Attach that file to your [bug report](https://github.com/sussyswimmer/lyricsync/issues/new?template=bug_report.yml).
 
 - **macOS** (Terminal): `open -n -a Undertone --args --diagnose`. The report opens in TextEdit. Running `/Applications/Undertone.app/Contents/MacOS/undertone --diagnose` prints it in Terminal instead, but then macOS checks Terminal's Automation permission rather than Undertone's, so the Automation lines may not match what the app sees.
 - **Windows** (PowerShell): find the folder with `undertone.exe` (right-click Undertone in the Start menu and choose **Open file location**; if that opens a folder of shortcuts, do it again on the Undertone shortcut), open PowerShell there and run `.\undertone.exe --diagnose | Out-Host`, so PowerShell waits for the report. In Command Prompt, use `undertone.exe --diagnose | more`. Started from a shortcut, the report opens in your default text editor.

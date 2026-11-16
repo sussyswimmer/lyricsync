@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 9;
+pub const CONTRACT_VERSION: u8 = 10;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
 /// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
 /// v6 only stopped reading `yPos`.
@@ -226,6 +226,10 @@ pub struct Settings {
     /// in contract v9: settings saved without it read as `Auto`.
     #[serde(default)]
     pub style: StyleChoice,
+    /// Karaoke mode: a dot bounces onto each word of the line as it's sung, to show what to sing
+    /// next. Added in contract v10: settings saved without it read as false.
+    #[serde(default)]
+    pub karaoke_mode: bool,
 }
 /// `Settings.effects` when it is missing (settings saved before contract v4).
 fn default_effects() -> f64 {
@@ -277,6 +281,7 @@ impl Default for Settings {
             effects_mode: default_effects_mode(),
             graphics: default_graphics(),
             style: StyleChoice::Auto,
+            karaoke_mode: false,
         }
     }
 }
@@ -582,14 +587,17 @@ mod tests {
                 "effects": 50.0,
                 "effectsMode": true,
                 "graphics": true,
-                "style": "auto"
+                "style": "auto",
+                "karaokeMode": false
             })
         );
-        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Text effects and Graphics.
+        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Text effects, Graphics and
+        // Karaoke mode.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
         assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
         assert!(CONTRACT_TS.contains(&format!("graphics: {},", DEFAULT_SETTINGS.graphics)));
         assert!(CONTRACT_TS.contains("style: \"auto\","));
+        assert!(CONTRACT_TS.contains(&format!("karaokeMode: {},", DEFAULT_SETTINGS.karaoke_mode)));
     }
     #[test]
     fn settings_saved_before_contract_v9_read_as_style_auto() {
@@ -669,6 +677,20 @@ mod tests {
         let v4: Settings = serde_json::from_value(saved).unwrap();
         assert_eq!(v4, *DEFAULT_SETTINGS);
         assert!(v4.effects_mode);
+    }
+    #[test]
+    fn settings_saved_before_contract_v10_read_as_karaoke_mode_off() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["karaokeMode"] = json!(true);
+        assert!(
+            serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .karaoke_mode
+        );
+        saved.as_object_mut().unwrap().remove("karaokeMode");
+        let v9: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v9, *DEFAULT_SETTINGS);
+        assert!(!v9.karaoke_mode);
     }
     #[test]
     fn settings_saved_before_contract_v4_read_as_effects_50() {
@@ -763,7 +785,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 9);
+        assert_eq!(CONTRACT_VERSION, 10);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

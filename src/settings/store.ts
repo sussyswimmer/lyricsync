@@ -22,9 +22,10 @@ export type Write =
 /**
  * Settings from a core older than contract v3 lack `enabled`, `launchAtLogin` and `shortcuts`, from
  * one older than v4, `effects`, from one older than v5, `effectsMode`, from one older than v7,
- * `nudgedTracks`, from one older than v8, `graphics`, and from one older than v9, `style`; the window
- * shows their defaults (`graphics` as its Effects mode, which turned the pictures and splashes on and
- * off then). Complete settings come back as the same object.
+ * `nudgedTracks`, from one older than v8, `graphics`, from one older than v9, `style`, and from one
+ * older than v10, `karaokeMode`; the window shows their defaults (`graphics` as its Effects mode,
+ * which turned the pictures and splashes on and off then). Complete settings come back as the same
+ * object.
  */
 export function withDefaults(settings: Settings): Settings {
   const s: Partial<Settings> = settings;
@@ -36,7 +37,8 @@ export function withDefaults(settings: Settings): Settings {
     s.effectsMode !== undefined &&
     s.nudgedTracks !== undefined &&
     s.graphics !== undefined &&
-    s.style !== undefined
+    s.style !== undefined &&
+    s.karaokeMode !== undefined
   ) {
     return settings;
   }

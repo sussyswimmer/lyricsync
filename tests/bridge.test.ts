@@ -555,6 +555,7 @@ describe("mergeSettings", () => {
     effects: 80,
     effectsMode: false,
     graphics: false,
+    karaokeMode: false,
   };
 
   it("keeps valid settings as they are and never mutates its input", () => {
@@ -569,10 +570,10 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled, launchAtLogin, effectsMode and graphics; an array a
-      // valid nudgedTracks, its entries that aren't strings dropped.
+      // A boolean is a valid autoColor, enabled, launchAtLogin, effectsMode, graphics and karaokeMode; an
+      // array a valid nudgedTracks, its entries that aren't strings dropped.
       const kept = Array.isArray(junk) ? { ...custom, nudgedTracks: [] } : custom;
-      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true, graphics: true } : kept);
+      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true, graphics: true, karaokeMode: true } : kept);
     }
   });
 
@@ -598,6 +599,13 @@ describe("mergeSettings", () => {
       expect(mergeSettings(custom, { effectsMode: junk }).effectsMode).toBe(false);
     }
     expect(mergeSettings(custom, { effectsMode: true })).toEqual({ ...custom, effectsMode: true });
+  });
+
+  it("takes karaokeMode as a boolean only, as the Rust store does (contract v10)", () => {
+    for (const junk of ["true", 1, 0, null, [true], { on: true }]) {
+      expect(mergeSettings(custom, { karaokeMode: junk }).karaokeMode).toBe(false);
+    }
+    expect(mergeSettings(custom, { karaokeMode: true })).toEqual({ ...custom, karaokeMode: true });
   });
 
   it("changes only the keys a partial colors or font object has", () => {
@@ -721,6 +729,14 @@ describe("migrateSettings", () => {
     delete v4["effectsMode"];
     expect(migrateSettings(v4)).toEqual({ ...DEFAULT_SETTINGS, effects: 30 });
     expect(migrateSettings(v4).effectsMode).toBe(true);
+  });
+
+  it("starts settings saved before contract v10 with Karaoke mode off, and leaves Effects mode as saved", () => {
+    const v9: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode: false, size: 70 };
+    delete v9["karaokeMode"];
+    expect(migrateSettings(v9)).toEqual({ ...DEFAULT_SETTINGS, effectsMode: false, size: 70 });
+    expect(migrateSettings({ ...DEFAULT_SETTINGS, karaokeMode: true })).toMatchObject({ effectsMode: true, karaokeMode: true });
+    expect(mergeSettings(DEFAULT_SETTINGS, { karaokeMode: "yes" }).karaokeMode).toBe(false);
   });
 
   it("gives contract v7 settings Graphics as their Effects mode had it: it turned the pictures off too", () => {
