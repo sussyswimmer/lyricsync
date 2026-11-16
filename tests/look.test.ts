@@ -15,6 +15,8 @@ import {
   parseLookOverride,
   pickedOf,
   resolveLook,
+  styleChoiceOf,
+  withStyleChoice,
   rgba,
   sanePick,
   shadowLayers,
@@ -236,13 +238,13 @@ describe("the picked look", () => {
   const pick = (over: Partial<PickedLook> = {}): PickedLook => ({ ...DEFAULT_PICK, ...over });
   const picked = (p: PickedLook, over: Partial<Settings> = {}, frame: Partial<Frame> = {}): Look => resolveLook(settings(over), null, { ...FRAME, ...frame }, p);
 
-  it("defaults to the house look: Arc in Fraunces 700, curve 38, BL-like motion", () => {
+  it("defaults to the house look: Slant in Fraunces 700, moving as hard as the calmest synced song", () => {
     expect(DEFAULT_PICK).toEqual({
-      style: "arc",
+      style: "slant",
       font: { family: "Fraunces", weight: 700 },
-      curve: 38,
-      energy: 0.45,
-      snap: 0.4,
+      curve: 22,
+      energy: 0.62,
+      snap: 0.55,
       glow: 0.6,
       emphasis: { minMs: 1000, maxChars: 12, lastWordOnly: false },
       scale: 1,
@@ -276,7 +278,7 @@ describe("the picked look", () => {
   it("keeps the stored mode, face and curve for a caller that passes no pick, with the house motion", () => {
     const l = look({ mode: "drift", font: { family: "Caveat", weight: 600 }, curve: 90 });
     expect([l.style, l.family, l.weight, l.curve]).toEqual(["drift", "Caveat", 600, 0.9]);
-    expect([l.energy, l.snap, l.letterSpacing, l.textCase]).toEqual([0.45, 0.4, 0, "as-is"]);
+    expect([l.energy, l.snap, l.letterSpacing, l.textCase]).toEqual([0.62, 0.55, 0, "as-is"]);
     expect(l.bloom).toBeCloseTo(bloomOf(0.6, 40), 12);
   });
 
@@ -292,7 +294,7 @@ describe("the picked look", () => {
 
   it("makes any pick safe to draw", () => {
     const wild = sanePick({ ...pick(), style: "flow" as PickedLook["style"], curve: 400, energy: 7, snap: -1, glow: Number.NaN, scale: 3, letterSpacing: 1, textCase: "loud" as PickedLook["textCase"] });
-    expect(wild).toMatchObject({ style: "arc", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
+    expect(wild).toMatchObject({ style: "slant", curve: 100, energy: 1, snap: 0, glow: 0.6, scale: 1.2, letterSpacing: 0.2, textCase: "as-is" });
     expect(sanePick({ ...pick(), emphasis: null }).emphasis).toBeNull();
     expect(picked(pick({ font: { family: "Nope", weight: 0 } })).family).toBe("Fraunces");
   });
@@ -302,7 +304,7 @@ describe("the picked look", () => {
       ...pick({ style: "lens", font: { family: "Syne", weight: 800 }, curve: -12 }),
       traits: ["big repeating hooks"],
       reason: "big repeating hooks → Lens with Syne",
-      scores: { style: { arc: 0.1, lens: 0.6, drift: 0.2, stack: 0.3, poster: 0.2, spotlight: 0.1 }, font: { Syne: 0.5 } },
+      scores: { style: { lens: 0.6, poster: 0.2, spotlight: 0.1, wave: 0.2, reveal: 0.1, collage: 0.1, slant: 0.1, pop: 0.1, cascade: 0.1, tape: 0.1, reel: 0.1 }, font: { Syne: 0.5 } },
       ties: { style: false, font: false },
     };
     const drawn: PickedLook = pickedOf(song);
@@ -323,23 +325,23 @@ describe("the picked look", () => {
     expect(look({ effects: 20 } as Partial<Settings>).effects).toBe(20);
   });
 
-  it("reads Effects mode from a store that has it (off by default since contract v8), and on from one older than contract v5", () => {
-    expect(effectsModeOf(settings())).toBe(false);
-    expect(effectsModeOf(settings({ effectsMode: true }))).toBe(true);
+  it("reads Effects mode from a store that has it, and on from one older than contract v5", () => {
+    expect(effectsModeOf(settings())).toBe(true);
+    expect(effectsModeOf(settings({ effectsMode: false }))).toBe(false);
     const v4: Record<string, unknown> = { ...settings() };
     delete v4["effectsMode"];
     expect(effectsModeOf(v4 as unknown as Settings)).toBe(true);
-    expect(look({ effectsMode: true }).effectsMode).toBe(true);
-    expect(look().effectsMode).toBe(false);
+    expect(look({ effectsMode: false }).effectsMode).toBe(false);
+    expect(look().effectsMode).toBe(true);
   });
 
-  it("reads Karaoke mode from a store that has it, and off from one older than contract v8", () => {
+  it("reads Karaoke mode from a store that has it, and off from one older than contract v10", () => {
     expect(karaokeModeOf(settings())).toBe(false);
     expect(karaokeModeOf(settings({ karaokeMode: true }))).toBe(true);
-    const v7: Record<string, unknown> = { ...settings(), karaokeMode: "yes" };
-    expect(karaokeModeOf(v7 as unknown as Settings)).toBe(false);
-    delete v7["karaokeMode"];
-    expect(karaokeModeOf(v7 as unknown as Settings)).toBe(false);
+    const v9: Record<string, unknown> = { ...settings(), karaokeMode: "yes" };
+    expect(karaokeModeOf(v9 as unknown as Settings)).toBe(false);
+    delete v9["karaokeMode"];
+    expect(karaokeModeOf(v9 as unknown as Settings)).toBe(false);
     expect(look({ karaokeMode: true }).karaokeMode).toBe(true);
     expect(look().karaokeMode).toBe(false);
   });
@@ -351,6 +353,28 @@ describe("the picked look", () => {
     const wild = sanePick({ ...pick(), flair: { move: "spin", accent: 3, splash: null } as unknown as PickedLook["flair"] });
     expect(wild.flair).toEqual({ move: "rise", accent: "rise", splash: "ripple" });
     expect(pickedOf({ ...pick({ flair }) }).flair).toEqual(flair);
+  });
+});
+
+describe("the Style setting (contract v9)", () => {
+  it("is null for auto, a missing field, a retired style or a name this build doesn't draw, and the style otherwise", () => {
+    expect(styleChoiceOf(settings())).toBeNull();
+    expect(styleChoiceOf(settings({ style: "auto" }))).toBeNull();
+    expect(styleChoiceOf(settings({ style: "reel" }))).toBe("reel");
+    expect(styleChoiceOf(settings({ style: "slant" }))).toBe("slant");
+    const v8 = { ...settings() } as Record<string, unknown>;
+    delete v8["style"];
+    expect(styleChoiceOf(v8 as unknown as Settings)).toBeNull();
+    expect(styleChoiceOf({ ...settings(), style: "spiral" as Settings["style"] })).toBeNull();
+    // Arc, Drift and Stack are retired from Settings › Style: a store naming one reads as auto
+    for (const retired of ["arc", "drift", "stack"]) expect(styleChoiceOf({ ...settings(), style: retired as Settings["style"] }), retired).toBeNull();
+  });
+
+  it("puts its style in place of the song's, and leaves the rest of the pick alone", () => {
+    const song = { ...DEFAULT_PICK, style: "lens" as const, font: { family: "Syne", weight: 800 } };
+    expect(withStyleChoice(song, null)).toBe(song);
+    expect(withStyleChoice(song, "lens")).toBe(song);
+    expect(withStyleChoice(song, "reel")).toEqual({ ...song, style: "reel" });
   });
 });
 

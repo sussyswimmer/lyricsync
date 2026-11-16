@@ -12,6 +12,9 @@ import {
   rgbToHsl,
   type CoverStats,
   type Palette,
+  contrast,
+  tagFor,
+  TAG_CONTRAST,
 } from "../src/core/palette";
 
 type Rgb = [number, number, number];
@@ -445,5 +448,26 @@ describe("readArtwork", () => {
   it("returns null without a 2D context", async () => {
     stubDom({ context: false });
     expect(await readArtwork("data:image/png;base64,AAAA")).toBeNull();
+  });
+});
+
+describe("tagFor", () => {
+  it("keeps the lyric color readable on a word's tag, in the highlight's own hue", () => {
+    for (const [lyric, highlight] of [
+      ["#f1ece3", "#f2a65a"],
+      ["#ffffff", "#ffe066"],
+      ["#eef3ff", "#4cc9f0"],
+      ["#1b1d22", "#3a0ca3"],
+    ] as const) {
+      const tag = tagFor(lyric, highlight);
+      expect(contrast(lyric, tag), `${lyric} on ${tag}`).toBeGreaterThanOrEqual(TAG_CONTRAST);
+      expect(Math.abs(hexToHsl(tag)[0] - hexToHsl(highlight)[0])).toBeLessThan(0.02);
+    }
+  });
+
+  it("gives a grey highlight a red marker, not a grey tag", () => {
+    const [h, s] = hexToHsl(tagFor("#bdbdbd", "#f5f5f5"));
+    expect(s).toBeGreaterThan(0.4);
+    expect(h > 0.94 || h < 0.03).toBe(true);
   });
 });

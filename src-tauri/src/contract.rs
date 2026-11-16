@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const CONTRACT_VERSION: u8 = 8;
+pub const CONTRACT_VERSION: u8 = 10;
 /// `Settings.version`. The settings schema is still v1: contract v2 only added `media-status`,
 /// contracts v3, v4 and v5 only added fields, which stored settings without them get as defaults, and
 /// v6 only stopped reading `yPos`.
@@ -82,6 +82,26 @@ pub enum Mode {
     Lens,
     Drift,
     Stack,
+}
+/// The Style setting (contract v9): `Auto` lets the overlay pick each song's style; any other
+/// draws every song in that style. The names are the styles Settings offers, which only the
+/// overlay draws (the retired Arc, Drift and Stack aren't among them); the core stores them.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StyleChoice {
+    #[default]
+    Auto,
+    Slant,
+    Pop,
+    Reel,
+    Cascade,
+    Tape,
+    Spotlight,
+    Wave,
+    Reveal,
+    Collage,
+    Lens,
+    Poster,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -192,13 +212,22 @@ pub struct Settings {
     /// contract v4: settings saved without it read as 50.
     #[serde(default = "default_effects")]
     pub effects: f64,
-    /// Effects mode: each song moves its own way, big moments splash, and words that name something
-    /// get a tiny picture; false keeps every song's words rising alike. Added in contract v5; off by
-    /// default since contract v8 (`settings::migrate` turns it off once in older files).
+    /// Text effects (called Effects mode before contract v8): each song's words move their own way;
+    /// false keeps every song's words rising alike. Added in contract v5: settings saved without it
+    /// read as true. Until contract v8 it also turned the pictures and splashes on and off.
     #[serde(default = "default_effects_mode")]
     pub effects_mode: bool,
-    /// Karaoke mode: a dot bounces onto each word of the line as it's sung. Added in contract v8:
-    /// settings saved without it read as false.
+    /// Graphics: words that name something take part in the line as a picture, and big moments
+    /// splash. Added in contract v8: settings saved without it read as true (`settings::migrate`
+    /// carries over an Effects mode that was off).
+    #[serde(default = "default_graphics")]
+    pub graphics: bool,
+    /// The style every song is drawn in, or `Auto` for the one the overlay picks per song. Added
+    /// in contract v9: settings saved without it read as `Auto`.
+    #[serde(default)]
+    pub style: StyleChoice,
+    /// Karaoke mode: a dot bounces onto each word of the line as it's sung, to show what to sing
+    /// next. Added in contract v10: settings saved without it read as false.
     #[serde(default)]
     pub karaoke_mode: bool,
 }
@@ -206,10 +235,13 @@ pub struct Settings {
 fn default_effects() -> f64 {
     50.0
 }
-/// `Settings.effectsMode` when it is missing (settings saved before contract v5), and its default
-/// since contract v8.
+/// `Settings.effectsMode` when it is missing (settings saved before contract v5).
 fn default_effects_mode() -> bool {
-    false
+    true
+}
+/// `Settings.graphics` when it is missing (settings saved before contract v8).
+fn default_graphics() -> bool {
+    true
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -247,6 +279,8 @@ impl Default for Settings {
             },
             effects: default_effects(),
             effects_mode: default_effects_mode(),
+            graphics: default_graphics(),
+            style: StyleChoice::Auto,
             karaoke_mode: false,
         }
     }
@@ -551,14 +585,74 @@ mod tests {
                     "nudgeLater": "CmdOrCtrl+Alt+Shift+["
                 },
                 "effects": 50.0,
-                "effectsMode": false,
+                "effectsMode": true,
+                "graphics": true,
+                "style": "auto",
                 "karaokeMode": false
             })
         );
-        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Effects mode and Karaoke mode.
+        // contract.ts's DEFAULT_SETTINGS spells out the same Effects level, Text effects, Graphics and
+        // Karaoke mode.
         assert!(CONTRACT_TS.contains(&format!("effects: {},", DEFAULT_SETTINGS.effects)));
         assert!(CONTRACT_TS.contains(&format!("effectsMode: {},", DEFAULT_SETTINGS.effects_mode)));
+        assert!(CONTRACT_TS.contains(&format!("graphics: {},", DEFAULT_SETTINGS.graphics)));
+        assert!(CONTRACT_TS.contains("style: \"auto\","));
         assert!(CONTRACT_TS.contains(&format!("karaokeMode: {},", DEFAULT_SETTINGS.karaoke_mode)));
+    }
+    #[test]
+    fn settings_saved_before_contract_v9_read_as_style_auto() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["style"] = json!("reel");
+        assert_eq!(
+            serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .style,
+            StyleChoice::Reel
+        );
+        saved.as_object_mut().unwrap().remove("style");
+        let v8: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v8, *DEFAULT_SETTINGS);
+        assert_eq!(v8.style, StyleChoice::Auto);
+        // every style Settings offers, and nothing else: not the retired ones, not a case variant
+        for name in [
+            "auto",
+            "slant",
+            "pop",
+            "reel",
+            "cascade",
+            "tape",
+            "spotlight",
+            "wave",
+            "reveal",
+            "collage",
+            "lens",
+            "poster",
+        ] {
+            assert!(
+                serde_json::from_value::<StyleChoice>(json!(name)).is_ok(),
+                "{name}"
+            );
+        }
+        for name in ["Reel", "spiral", "arc", "drift", "stack"] {
+            assert!(
+                serde_json::from_value::<StyleChoice>(json!(name)).is_err(),
+                "{name}"
+            );
+        }
+    }
+    #[test]
+    fn settings_saved_before_contract_v8_read_as_graphics_on() {
+        let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
+        saved["graphics"] = json!(false);
+        assert!(
+            !serde_json::from_value::<Settings>(saved.clone())
+                .unwrap()
+                .graphics
+        );
+        saved.as_object_mut().unwrap().remove("graphics");
+        let v7: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v7, *DEFAULT_SETTINGS);
+        assert!(v7.graphics);
     }
     #[test]
     fn settings_saved_before_contract_v7_have_no_nudged_tracks() {
@@ -571,21 +665,21 @@ mod tests {
         assert!(CONTRACT_TS.contains("nudgedTracks: [],"));
     }
     #[test]
-    fn settings_saved_before_contract_v5_read_as_effects_mode_off() {
+    fn settings_saved_before_contract_v5_read_as_effects_mode_on() {
         let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
-        saved["effectsMode"] = json!(true);
+        saved["effectsMode"] = json!(false);
         assert!(
-            serde_json::from_value::<Settings>(saved.clone())
+            !serde_json::from_value::<Settings>(saved.clone())
                 .unwrap()
                 .effects_mode
         );
         saved.as_object_mut().unwrap().remove("effectsMode");
         let v4: Settings = serde_json::from_value(saved).unwrap();
         assert_eq!(v4, *DEFAULT_SETTINGS);
-        assert!(!v4.effects_mode);
+        assert!(v4.effects_mode);
     }
     #[test]
-    fn settings_saved_before_contract_v8_read_as_karaoke_mode_off() {
+    fn settings_saved_before_contract_v10_read_as_karaoke_mode_off() {
         let mut saved = serde_json::to_value(&*DEFAULT_SETTINGS).unwrap();
         saved["karaokeMode"] = json!(true);
         assert!(
@@ -594,9 +688,9 @@ mod tests {
                 .karaoke_mode
         );
         saved.as_object_mut().unwrap().remove("karaokeMode");
-        let v7: Settings = serde_json::from_value(saved).unwrap();
-        assert_eq!(v7, *DEFAULT_SETTINGS);
-        assert!(!v7.karaoke_mode);
+        let v9: Settings = serde_json::from_value(saved).unwrap();
+        assert_eq!(v9, *DEFAULT_SETTINGS);
+        assert!(!v9.karaoke_mode);
     }
     #[test]
     fn settings_saved_before_contract_v4_read_as_effects_50() {
@@ -691,7 +785,7 @@ mod tests {
     }
     #[test]
     fn contract_v4_keeps_the_v1_settings_schema() {
-        assert_eq!(CONTRACT_VERSION, 8);
+        assert_eq!(CONTRACT_VERSION, 10);
         assert!(
             CONTRACT_TS.contains(&format!(
                 "export const CONTRACT_VERSION = {CONTRACT_VERSION};"

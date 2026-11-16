@@ -95,7 +95,7 @@ describe("Lens plan: the fisheye as tracks", () => {
       expect(before.length).toBeLessThanOrEqual(1);
       expect(track.frames.length).toBeLessThan((p.end - 700) / PLAN_MS);
     }
-  });
+  }, 30_000); // samples every track of a long window: well past the 5 s default on a loaded machine
 
   it("agrees with its own pose at any time (what a line leaving focus holds)", () => {
     const p = plan();

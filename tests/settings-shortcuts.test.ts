@@ -57,7 +57,7 @@ function mount(platform: Platform = "mac", over: Partial<Settings> = {}, status:
   const edits: Partial<Settings>[] = [];
   const now: Partial<Settings>[] = [];
   const suspends: boolean[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: status, loginError: false, look: { kind: "finding", key: null, demo: false } };
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: status, loginError: false, look: { kind: "finding", key: null, demo: false }, stylePin: null };
   const apply = (patch: Partial<Settings>): void => {
     settings = { ...settings, ...patch };
     panel.render((state = { ...state, settings }));
@@ -75,6 +75,7 @@ function mount(platform: Platform = "mac", over: Partial<Settings> = {}, status:
       setTrackOffset: () => undefined,
       reset: () => undefined,
       suspendShortcuts: (s) => suspends.push(s),
+      pinStyle: () => undefined,
     },
     { platform, keyLayout },
   );
@@ -130,11 +131,12 @@ function flip(input: FakeElement, on: boolean): void {
 }
 
 describe("General: lyrics on the desktop and Launch at login", () => {
-  it("is the first group, under the media notice and the look picked for the song", () => {
+  it("comes right after Style, under the media notice and the look picked for the song", () => {
     const p = mount();
     expect(p.root.children[0]?.classList.contains("notice")).toBe(true);
     expect(p.root.children[1]?.classList.contains("picked")).toBe(true);
-    expect(p.root.children[2]).toBe(p.group("General"));
+    expect(p.root.children[2]).toBe(p.group("Style"));
+    expect(p.root.children[3]).toBe(p.group("General"));
   });
 
   it("the lyrics switch edits `enabled`; Launch at login saves at once, on its own", () => {
@@ -786,5 +788,17 @@ describe("SettingsSync for contract v3", () => {
     expect(sync.view.shortcuts).toEqual(D);
     sync.receive(old as Settings);
     expect(sync.view.enabled).toBe(true);
+  });
+
+  it("gives settings from a core older than v8 Graphics as their Effects mode has it", () => {
+    for (const effectsMode of [true, false]) {
+      const v7: Partial<Settings> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode };
+      delete v7.graphics;
+      expect(withDefaults(v7 as Settings)).toEqual({ ...structuredClone(DEFAULT_SETTINGS), effectsMode, graphics: effectsMode });
+    }
+    const v4: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
+    delete v4.effectsMode;
+    delete v4.graphics;
+    expect(withDefaults(v4 as Settings)).toEqual(DEFAULT_SETTINGS);
   });
 });

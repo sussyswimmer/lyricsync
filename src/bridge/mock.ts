@@ -18,6 +18,7 @@ import glassHarbor from "../../tests/fixtures/glass-harbor.lrc?raw";
 import ledgerLines from "../../tests/fixtures/demo-ledger-lines.lrc?raw";
 import strobeHearts from "../../tests/fixtures/demo-strobe-hearts.lrc?raw";
 import glacierNocturne from "../../tests/fixtures/demo-glacier-nocturne.lrc?raw";
+import dialToneAvenue from "../../tests/fixtures/demo-dial-tone-avenue.lrc?raw";
 import { demoCover } from "./covers";
 import type { ArgsOf, Bridge, Command, Commands, Event, Events, ResultOf, Unlisten } from "./types";
 
@@ -99,6 +100,9 @@ export const MOCK_TRACKS: readonly MockTrack[] = [
   track("Strobe Hearts (Club Mix)", 66_000, 4, "found", { synced: strobeHearts }),
   // Sparse, slow lines with long instrumental gaps under a cold, dark cover: Drift, in Instrument Serif.
   track("Glacier Nocturne", 118_000, 5, "found", { synced: glacierNocturne }),
+  // A mid-tempo late-night song, word-timed, full of words that carry a sign, under the cold, dark
+  // cover again (?track=10): Reel, one word at a time with its glyphs.
+  track("Dial Tone Avenue", 120_000, 5, "found", { synced: dialToneAvenue }),
 ];
 
 /** Built exactly as SPEC defines it. */
@@ -316,6 +320,7 @@ function normalize(s: PlayerState, now: number): PlayerState {
 const OFFSET_LIMIT_MS = 2000;
 const FONT_FAMILY_MAX_CHARS = 64;
 const MODES = ["arc", "lens", "drift", "stack"] as const satisfies readonly Settings["mode"][];
+const STYLE_CHOICES = ["auto", "slant", "pop", "reel", "cascade", "tape", "spotlight", "wave", "reveal", "collage", "lens", "poster"] as const satisfies readonly Settings["style"][];
 const SHOW_WHEN = ["playing", "always"] as const satisfies readonly Settings["showWhen"][];
 const DISPLAYS = ["primary", "all"] as const satisfies readonly Settings["displays"][];
 const MEDIA_PROBLEMS = ["automation-denied", "no-player"] as const satisfies readonly MediaProblem[];
@@ -385,21 +390,21 @@ export function mergeSettings(current: Settings, patch: unknown): Settings {
   next.shortcuts = mergeShortcuts(next.shortcuts, p.shortcuts);
   next.effects = clamp(p.effects, 0, 100) ?? next.effects;
   if (typeof p.effectsMode === "boolean") next.effectsMode = p.effectsMode;
+  if (typeof p.graphics === "boolean") next.graphics = p.graphics;
+  next.style = oneOf(p.style, STYLE_CHOICES) ?? next.style;
   if (typeof p.karaokeMode === "boolean") next.karaokeMode = p.karaokeMode;
   return next;
 }
 
 /**
- * Stored settings of any shape made valid by the same rules, starting from the defaults (`settings::migrate`).
- * Effects mode was on by default until contract v8, so settings saved before it (no `karaokeMode`) start
- * with it off, as on a new install.
+ * Stored settings of any shape made valid by the same rules, starting from the defaults
+ * (`settings::migrate`). Saved without `graphics` (before contract v8), they keep the pictures and
+ * splashes as their Effects mode had them.
  */
 export function migrateSettings(stored: unknown): Settings {
-  const next = mergeSettings(DEFAULT_SETTINGS, stored);
-  if (stored !== null && typeof stored === "object" && !Array.isArray(stored) && !("karaokeMode" in stored)) {
-    next.effectsMode = DEFAULT_SETTINGS.effectsMode;
-  }
-  return next;
+  const settings = mergeSettings(DEFAULT_SETTINGS, stored);
+  if (!isObject(stored) || !("graphics" in stored)) settings.graphics = settings.effectsMode;
+  return settings;
 }
 
 /**

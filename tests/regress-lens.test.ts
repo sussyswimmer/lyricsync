@@ -389,6 +389,8 @@ function teardown(): void {
 }
 
 const LINES: Line[] = parseLrc(paperLanterns, 24_000).filter((l) => l.words.length > 0);
+/** The same lines, the first one's "river" (a word that becomes its water scene, which outdoes a picture) a harbor: its lantern picture shows. */
+const LANTERN_LINES: Line[] = LINES.map((l, i) => (i === 0 ? { ...l, text: l.text.replace("river", "harbor"), words: l.words.map((w) => (w.text.startsWith("river") ? { ...w, text: w.text.replace("river", "harbor") } : w)) } : l));
 const LEADS = leadTimes(LINES);
 const BREAK = findInterludes(LINES)[0];
 const cue = (line: number, t: number, running = true, waiting = false): Cue => ({ line, t, waiting, running });
@@ -476,8 +478,10 @@ describe("Lens on the motion engine: sleeping between line changes", () => {
       expect(a?.currentTime).toBeCloseTo(2000 - (LINES[0]?.words[0]?.start ?? 0), 6);
       expect(Object.keys(a?.keyframes[0] ?? {})).toEqual(expect.arrayContaining(["transform", "opacity"]));
     }
-    // the karaoke shares it: every word box pops in the same window
-    for (const w of wordsOf(row())) for (const a of w.getAnimations()) expect(a.duration).toBe(span);
+    // the karaoke shares it: every word box pops in the same window (a word's answer to the line's
+    // picture, on its translate, rotate and scale, keeps its own: routes.ts reactions)
+    const reacting = (a: { keyframes: Keyframe[] }): boolean => a.keyframes.some((f) => "translate" in f);
+    for (const w of wordsOf(row())) for (const a of w.getAnimations()) if (!reacting(a)) expect(a.duration).toBe(span);
     // each word box sits in its slot, which carries the lens around it
     for (const s of slots) expect(s.children[0]?.classList.contains("kw")).toBe(true);
   });
@@ -660,7 +664,7 @@ describe("Lens on the motion engine: line changes", () => {
   });
 
   it("holds every animation at its song time while paused, and plays on from there", () => {
-    const { mode, row } = lens();
+    const { mode, row } = lens(look(), LANTERN_LINES);
     mode.paint(cue(0, 2000));
     frames();
     clock += 100;
@@ -673,18 +677,44 @@ describe("Lens on the motion engine: line changes", () => {
     const origin = LINES[0]?.words[0]?.start ?? 0;
     const pictured = LINES[0]?.words.find((w) => w.text.startsWith("lanterns"))?.start ?? NaN;
     const ownWindow = (e: FakeElement): boolean => ["kw-route", "kw-pic", "kw-aura", "kw-aura-glow"].some((c) => e.classList.contains(c));
+    // the words' answers to the picture run on windows of their own, paused alike
+    const reacting = (a: { keyframes: Keyframe[] }): boolean => a.keyframes.some((f) => "translate" in f);
+    let answers = 0;
     for (const e of els) {
       for (const a of e.getAnimations()) {
         expect(a.paused).toBe(true);
+        if (reacting(a)) {
+          answers++;
+          continue;
+        }
         expect(a.currentTime).toBeCloseTo(2100 - (ownWindow(e) ? pictured : origin), 6);
       }
     }
+    expect(answers).toBeGreaterThan(0);
     expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(true);
     expect(els.some((e) => e.classList.contains("kw-route"))).toBe(true);
     expect(els.some((e) => e.classList.contains("kw-aura"))).toBe(true);
     clock += 5000;
     mode.paint(cue(0, 2100, true));
     for (const a of all) expect(a.paused).toBe(false);
+  });
+
+  it("draws a word's scene in its own overlay instead of a picture, in the scene's colors (the river's water)", () => {
+    const { mode, row } = lens();
+    mode.paint(cue(0, 3200));
+    frames();
+    const els = everything(row());
+    expect(els.some((e) => e.classList.contains("kw-pic"))).toBe(false);
+    const scenes = els.filter((e) => e.classList.contains("kw-scene"));
+    expect(scenes.map((e) => e.classList.contains("is-back"))).toEqual([true, false]);
+    const river = wordsOf(row()).find((w) => w.textContent?.startsWith("river"));
+    expect(river?.style.getPropertyValue("--ut-hl2")).toBe("#1e9bd7");
+    const water = els.find((e) => e.classList.contains("sc-water"));
+    const clip = els.find((e) => e.classList.contains("sc-clip"));
+    expect(clip?.children.some((c) => c === water)).toBe(true);
+    expect(water?.getAnimations()).toHaveLength(1);
+    // the word bobs in it, on its own window
+    expect(river?.getAnimations().some((a) => a.keyframes.some((f) => "translate" in f))).toBe(true);
   });
 
   it("commits what is on screen for the stage's still copy, and starts again on the next paint", () => {
@@ -912,7 +942,7 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
   it("Poster sends a word's picture over its block, not onto the row above its word", () => {
     // "lanterns" opens the block's second row ("Paper / lanterns over / the river")
     const routeY = (layout: SlotLayout): number => {
-      const { mode, row } = lens(look(), LINES, layout);
+      const { mode, row } = lens(look(), LANTERN_LINES, layout);
       mode.paint(cue(0, 2000));
       frames();
       const route = everything(row()).find((e) => e.classList.contains("kw-route"));
@@ -937,10 +967,10 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
       expect(dots).toHaveLength(1);
       expect(dots[0]?.getAnimations()).toHaveLength(1);
     }
-    // in Poster it goes down the block, row by row, where a picture stays over the block's top row
+    // in Poster it goes down the block, row by row, where a picture stays over the block's top row (the lantern picture: LINES's river is a scene)
     const ysOf = (el: FakeElement | undefined): number[] =>
       (el?.getAnimations()[0]?.keyframes ?? []).map((f: Keyframe) => Number(/translate\(-?[\d.]+px, (-?[\d.]+)px\)/u.exec(String(f.transform))?.[1])).filter(Number.isFinite);
-    const { mode, row } = lens(look({ karaokeMode: true }), LINES, POSTER_LAYOUT);
+    const { mode, row } = lens(look({ karaokeMode: true }), LANTERN_LINES, POSTER_LAYOUT);
     mode.paint(cue(0, 2000));
     frames();
     const els = everything(row());
@@ -952,7 +982,7 @@ describe("Poster and Spotlight on Lens's engine (slot-layouts.ts)", () => {
 
   it("Spotlight draws a word's picture as big as its word is once the light is on it", () => {
     const l = look();
-    const { mode, row } = lens(l, LINES, SPOTLIGHT_LAYOUT);
+    const { mode, row } = lens(l, LANTERN_LINES, SPOTLIGHT_LAYOUT);
     mode.paint(cue(0, 2000));
     frames();
     const pic = everything(row()).find((e) => e.classList.contains("kw-pic"));

@@ -71,7 +71,7 @@ function mountPanel(offsetMs: number | null = null, track: PanelState["track"] =
   const fresh = structuredClone(start);
   let settings: Settings = offsetMs === null ? fresh : applyWrite(fresh, { kind: "track", trackKey: KEY, ms: offsetMs });
   const writes: { key: string; ms: number | null }[] = [];
-  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } };
+  let state: PanelState = { settings, palette: null, paletteFor: null, artPending: false, track, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false }, stylePin: null };
   const edit = (patch: Partial<Settings>): void => {
     settings = { ...settings, ...patch };
     panel.render((state = { ...state, settings }));
@@ -86,6 +86,7 @@ function mountPanel(offsetMs: number | null = null, track: PanelState["track"] =
     },
     reset: () => undefined,
     suspendShortcuts: () => undefined,
+    pinStyle: () => undefined,
   });
   panel.render(state);
   const root = panel.el as unknown as FakeElement;
@@ -207,6 +208,7 @@ describe("settings-song-aria-live: nudges are announced once, with context", () 
       shortcuts: null,
       loginError: false,
       look: { kind: "finding", key: null, demo: false },
+      stylePin: null,
     });
     expect(p.value.textWrites).toBe(before);
     expect(p.value.textContent).toBe("+50 ms");

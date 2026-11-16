@@ -1,7 +1,7 @@
 import type { Settings } from "../../contract/contract";
 import { isMove, isSplash, PLAIN_FLAIR, saneFlair, type Flair } from "../core/flair";
 import type { Palette } from "../core/palette";
-import { STYLES, type Style } from "../core/songlook";
+import { ALL_STYLES, STYLES, type PickStyle, type Style } from "../core/songlook";
 import { FONTS, fontFor, stackFor, type CjkLang } from "./fonts";
 import type { TextCase } from "./motion/letters";
 import { bloomOf, type EmphasisRule } from "./motion/params";
@@ -40,11 +40,11 @@ export interface PickedLook {
 
 /** The house look, for a song nothing is known about yet (SPEC §2.2). */
 export const DEFAULT_PICK: PickedLook = Object.freeze({
-  style: "arc" as const,
+  style: "slant" as const,
   font: Object.freeze({ family: "Fraunces", weight: 700 }),
-  curve: 38,
-  energy: 0.45,
-  snap: 0.4,
+  curve: 22,
+  energy: 0.62,
+  snap: 0.55,
   glow: 0.6,
   emphasis: Object.freeze({ minMs: 1000, maxChars: 12, lastWordOnly: false }),
   scale: 1,
@@ -100,11 +100,10 @@ export interface Look {
   textCase: TextCase;
   /** the song's flair (PickedLook.flair) */
   flair: Flair;
-  /**
-   * Settings.effectsMode (effectsModeOf): the song's flair, splashes and word pictures. Off, every word
-   * rises and nothing else is added.
-   */
+  /** Settings.effectsMode, Text effects (effectsModeOf): the song's own moves. Off, every word rises. */
   effectsMode: boolean;
+  /** Settings.graphics (graphicsOf): the word pictures and the splashes. */
+  graphics: boolean;
   /** Settings.karaokeMode (karaokeModeOf): a dot bounces onto each word of the line as it's sung. */
   karaokeMode: boolean;
 }
@@ -136,8 +135,8 @@ export function workAreaReference(stageHeight: number, screenHeight: number): nu
 const clamp = (x: number, lo: number, hi: number): number => (x <= lo ? lo : x >= hi ? hi : x);
 const finiteOr = (x: unknown, fallback: number): number => (typeof x === "number" && Number.isFinite(x) ? x : fallback);
 
-/** Every style a look can be drawn in (core/songlook.ts STYLES). */
-export const MODES: readonly Style[] = STYLES;
+/** Every style a look can be drawn in (core/songlook.ts ALL_STYLES), the retired ones included. */
+export const MODES: readonly Style[] = ALL_STYLES;
 
 export function isMode(value: unknown): value is Style {
   return typeof value === "string" && (MODES as readonly string[]).includes(value);
@@ -153,18 +152,42 @@ export function effectsOf(settings: Settings): number {
 }
 
 /**
- * Settings.effectsMode (contract v5): each song's own motion, its splashes and the tiny pictures beside
- * words. A store from before v5 has none, which counts as on.
+ * Settings.effectsMode (contract v5), Text effects since v8: each song's own motion. A store from before
+ * v5 has none, which counts as on.
  */
 export function effectsModeOf(settings: Settings): boolean {
   const value: unknown = "effectsMode" in settings ? settings.effectsMode : undefined;
   return value !== false;
 }
 
-/** Settings.karaokeMode (contract v8): the bouncing dot. A store from before v8 has none, which counts as off. */
+/** Settings.karaokeMode (contract v10): the bouncing dot. A store from before v10 has none, which counts as off. */
 export function karaokeModeOf(settings: Settings): boolean {
   const value: unknown = "karaokeMode" in settings ? settings.karaokeMode : undefined;
   return value === true;
+}
+
+/**
+ * Settings.graphics (contract v8): the word pictures and the splashes. A store from before v8 has none,
+ * and its Effects mode turned them on and off.
+ */
+export function graphicsOf(settings: Settings): boolean {
+  const value: unknown = "graphics" in settings ? settings.graphics : undefined;
+  return typeof value === "boolean" ? value : effectsModeOf(settings);
+}
+
+/**
+ * Settings.style (contract v9), the Style setting: the style every song is drawn in, or null for
+ * "auto" (Undertone picks one per song). A store from before v9 has none, which counts as auto; so
+ * does a name Settings › Style doesn't offer (a retired style, or one this build doesn't draw).
+ */
+export function styleChoiceOf(settings: Settings): PickStyle | null {
+  const value: unknown = "style" in settings ? settings.style : undefined;
+  return typeof value === "string" && (STYLES as readonly string[]).includes(value) ? (value as PickStyle) : null;
+}
+
+/** A song's look with the Style setting's style in place of its own (`chosen` null: as picked). */
+export function withStyleChoice<T extends PickedLook>(look: T, chosen: Style | null): T {
+  return chosen && look.style !== chosen ? { ...look, style: chosen } : look;
 }
 
 /**
@@ -233,6 +256,7 @@ export function resolveLook(settings: Settings, palette: Palette | null, frame: 
     textCase: pick.textCase,
     flair: pick.flair,
     effectsMode: effectsModeOf(settings),
+    graphics: graphicsOf(settings),
     karaokeMode: karaokeModeOf(settings),
   };
   return withBloom(look, bloomOf(pick.glow, settings.glow));

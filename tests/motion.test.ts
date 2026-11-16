@@ -1862,6 +1862,7 @@ describe("a karaoke line", () => {
     const [anim] = route.getAnimations();
     const plan = planPictureRoute({
       id: "wine",
+      word: 0,
       at: 10_000,
       until: k.sungBy,
       side: PICTURE_EM * 58,
@@ -1870,9 +1871,10 @@ describe("a karaoke line", () => {
       seed: seedOf(`0|wine|10000`),
       home: { x: 40, y: 0, w: 80 },
       stops: [
-        { x: 140, y: 0, w: 80, t: 10_400 },
-        { x: 240, y: 0, w: 80, t: 10_800 },
+        { x: 140, y: 0, w: 80, t: 10_400, word: 1 },
+        { x: 240, y: 0, w: 80, t: 10_800, word: 2 },
       ],
+      prev: null,
       left: 0,
       right: 280,
     });

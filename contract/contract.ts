@@ -1,5 +1,5 @@
 // contract/contract.ts
-export const CONTRACT_VERSION = 8;
+export const CONTRACT_VERSION = 10;
 
 export type Source = "spotify" | "apple-music" | "system";
 
@@ -43,6 +43,14 @@ export interface Lyrics {
 
 export type Mode = "arc" | "lens" | "drift" | "stack";
 
+/**
+ * The Style setting (contract v9): "auto" lets Undertone pick each song's style; any other name
+ * draws every song in that style (its face, curve and motion stay the song's own). The names are
+ * the styles Settings › Style offers (src/core/songlook.ts STYLES, the retired Arc, Drift and Stack
+ * not among them); the core only stores them.
+ */
+export type StyleChoice = "auto" | "slant" | "pop" | "reel" | "cascade" | "tape" | "spotlight" | "wave" | "reveal" | "collage" | "lens" | "poster";
+
 /** A global shortcut's action. Added in contract v3. */
 export type ShortcutAction = "toggleLyrics" | "nudgeEarlier" | "nudgeLater";
 
@@ -71,8 +79,8 @@ export type ShortcutState = "ok" | "off" | "unavailable" | "invalid";
 export type ShortcutsStatus = Record<ShortcutAction, ShortcutState>;
 
 export interface Settings {
-  /** the settings schema, still 1: contracts v3, v4, v5 and v7 only added fields, and stored settings
-   *  without them get the defaults; v6 only stopped reading `yPos` */
+  /** the settings schema, still 1: contracts v3, v4, v5, v7, v8, v9 and v10 only added fields, and stored
+   *  settings without them get the defaults; v6 only stopped reading `yPos` */
   version: 1;
   /** Not read since v4: Undertone picks the style per song. Still validated and stored. */
   mode: Mode;
@@ -110,13 +118,18 @@ export interface Settings {
   shortcuts: Shortcuts;
   /** How much lyrics move as they're sung, 0..100; 50 is as picked for the song. Added in contract v4. */
   effects: number;
-  /** Effects mode: each song moves its own way (not every word floats up), big moments splash, and
-   *  words that name something get a tiny picture. false: every word rises, nothing else is added.
-   *  Added in contract v5; off by default since v8. */
+  /** Text effects (called Effects mode before contract v8): each song's words move their own way
+   *  (not every word floats up). false: every word rises. Added in contract v5; until v8 it also
+   *  turned the pictures and splashes on and off, which `graphics` does now. */
   effectsMode: boolean;
+  /** Graphics: words that name something take part in the line as a picture, and big moments
+   *  splash. Added in contract v8: settings saved without it keep their `effectsMode`'s value. */
+  graphics: boolean;
+  /** The style every song is drawn in, or "auto" for the one Undertone picks per song. Added in
+   *  contract v9: settings saved without it read as "auto". */
+  style: StyleChoice;
   /** Karaoke mode: a dot bounces onto each word of the line as it's sung, to show what to sing next.
-   *  Off by default. Added in contract v8: settings saved before it read as off, and have
-   *  `effectsMode` turned off once (it was on by default until v8). */
+   *  Off by default. Added in contract v10: settings saved before it read as off. */
   karaokeMode: boolean;
 }
 
@@ -135,6 +148,8 @@ export const DEFAULT_SETTINGS: Settings = {
     nudgeLater: "CmdOrCtrl+Alt+Shift+[",
   },
   effects: 50,
-  effectsMode: false,
+  effectsMode: true,
+  graphics: true,
+  style: "auto",
   karaokeMode: false,
 };

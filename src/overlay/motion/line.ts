@@ -75,6 +75,8 @@ import { compositorSteps } from "./keyframes";
 import { canvasInk, canvasMeasure, isRtl, measureLetters, roughMeasure, type InkMeasure, type Measure } from "./letters";
 import { LEAD_MS, LEAVE_MS, SETTLE_IN_MS, type MotionParams } from "./params";
 import { BALL_EM, planBall, planPictureRoute, type Spot, type Stop } from "./routes";
+import { planScene, type Scene, type ScenePiece } from "./scenes";
+import { bloomShadow } from "./bloom";
 import { commit, type SongTimeline } from "./timeline";
 
 export { LEAVE_MS, SETTLE_IN_MS };
@@ -198,6 +200,9 @@ interface Extras {
   embers: { el: HTMLElement; track: Track }[];
   pieces: HTMLElement[];
   particles: Particle[];
+  /** the word's scene (scenes.ts): its pieces in the word's overlay, behind and in front of its letters */
+  scene: Scene | null;
+  scenePieces: { el: HTMLElement; track: Track }[];
 }
 
 interface WordView {
@@ -252,6 +257,8 @@ export class KaraokeLine {
   private readonly group: string;
   /** the extras' animations: each on its own window, kept apart from the line's shared one */
   private readonly extrasGroup: string;
+  /** The words' answers to the line's picture (routes.ts reactions): cancelled, never frozen, as a sung line leaves focus. */
+  private readonly reactGroup: string;
   private readonly look: KaraokeLook;
   private readonly steps: boolean;
   private measure: Measure | null = null;
@@ -276,6 +283,7 @@ export class KaraokeLine {
     this.timeline = timeline;
     this.group = group;
     this.extrasGroup = `${group}+fx`;
+    this.reactGroup = `${group}+react`;
     this.look = look;
     this.steps = look.steps ?? compositorSteps();
     const last = words.length - 1;
@@ -366,6 +374,7 @@ export class KaraokeLine {
     this.stopSlices();
     this.timeline.cancel(this.group);
     this.timeline.cancel(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     this.mountedAt = t;
     const { params } = this.look;
     const origin = Math.min(t, this.views[0]?.word.start ?? t);
@@ -397,8 +406,10 @@ export class KaraokeLine {
    */
   finish(): void {
     this.stopSlices();
-    // the extras stop where they are, and fade out with the overlay
+    // the extras stop where they are, and fade out with the overlay; the words straighten up, since a
+    // sung line may stay on screen (Stack and Drift's past lines)
     this.timeline.freeze(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     this.timeline.cancel(this.group);
     for (const v of this.views) {
       if (v.ov) this.finalStyle(v, v.ov);
@@ -428,6 +439,7 @@ export class KaraokeLine {
     this.stopSlices();
     this.timeline.freeze(this.group);
     this.timeline.freeze(this.extrasGroup);
+    this.timeline.freeze(this.reactGroup);
     for (const f of this.fades.splice(0)) commit(f.anim, f.el);
   }
 
@@ -437,6 +449,7 @@ export class KaraokeLine {
     this.destroyed = true;
     this.timeline.cancel(this.group);
     this.timeline.cancel(this.extrasGroup);
+    this.timeline.cancel(this.reactGroup);
     for (const f of this.fades.splice(0)) {
       try {
         f.anim.cancel();
@@ -578,6 +591,11 @@ export class KaraokeLine {
           const copy = plan.copies[i];
           if (copy) start(el, copy.track);
         });
+        // the words the picture touches answer it, on their boxes' own translate, rotate and scale
+        for (const r of plan.reactions) {
+          const el = this.views[r.word]?.el;
+          if (el && r.track.t0 + r.track.duration > this.mountedAt) this.timeline.play(el, r.track.frames, r.track.t0, r.track.duration, this.reactGroup);
+        }
       }
     }
     if (x.pic && x.picLife) start(x.pic, x.picLife);
@@ -587,6 +605,10 @@ export class KaraokeLine {
       const p = x.particles[i];
       if (p) start(el, p.track);
     });
+    for (const p of x.scenePieces) start(p.el, p.track);
+    // the word's own answer to its scene (a shiver, a beat, a jolt, a bob), like a picture's reactions
+    const answer = x.scene?.word;
+    if (answer && answer.t0 + answer.duration > this.mountedAt) this.timeline.play(v.el, answer.frames, answer.t0, answer.duration, this.reactGroup);
   }
 
   /**
@@ -598,7 +620,7 @@ export class KaraokeLine {
     const words: Stop[] = [];
     for (const v of this.views) {
       const spot = this.look.ballSpot ? this.look.ballSpot(v.index, v.word.start) : this.spotOf(v.index, v.word.start);
-      if (spot) words.push({ ...spot, t: v.word.start });
+      if (spot) words.push({ ...spot, t: v.word.start, word: v.index });
     }
     const track = planBall({ words, until: this.sungBy, size: this.look.size, bounce: this.look.params.karaoke === "full" });
     if (!track || track.t0 + track.duration <= this.mountedAt) return;
@@ -753,9 +775,10 @@ export class KaraokeLine {
     const base = (held && moves) || placed ? letterSpans(baseBox) : whole(baseBox);
     const lit = moves || placed ? letterSpans(litBox) : whole(litBox);
     track.append(bwin, win);
-    // a splash goes under every copy (it never covers the word); a picture and its light travel the line, in its layers
-    const splash = this.extrasOf(v, shape);
-    fx.append(...(splash ? [splash] : []), dark, ...letterGlows, glow, track);
+    // a splash goes under every copy (it never covers the word); a picture and its light travel the line, in its
+    // layers; a scene is drawn in the word's own overlay, behind its letters and in front of them
+    const extras = this.extrasOf(v, shape);
+    fx.append(...extras.under, dark, ...letterGlows, glow, track, ...extras.over);
     v.el.append(fx);
     v.el.classList.add("kw-on");
     const ov: Overlay = {
@@ -783,15 +806,35 @@ export class KaraokeLine {
    * light and copies. The picture's route is planned when it starts (playExtras), where the words are.
    * Placed letters (Arc) carry the splash along with the word's middle letter.
    */
-  private extrasOf(v: WordView, shape: WordShape): HTMLElement | null {
+  private extrasOf(v: WordView, shape: WordShape): { under: HTMLElement[]; over: HTMLElement[] } {
     const decor = v.decor;
-    if (!decor || (!decor.picture && !decor.splash)) return null;
+    const none = { under: [], over: [] };
+    if (!decor || (!decor.picture && !decor.splash && !decor.scene)) return none;
     const { size, params, place } = this.look;
     const seed = seedOf(`${v.index}|${v.text}|${Math.round(v.word.start)}`);
     const mid = shape.letters[Math.floor(shape.letters.length / 2)];
     const anchor = place && mid ? place(v.index, shape.letters.indexOf(mid), mid) : null;
-    const x: Extras = { pic: null, route: null, copies: [], picLife: null, aura: null, auraRoute: null, glow: null, embers: [], pieces: [], particles: [] };
-    let splash: HTMLElement | null = null;
+    const x: Extras = {
+      pic: null,
+      route: null,
+      copies: [],
+      picLife: null,
+      aura: null,
+      auraRoute: null,
+      glow: null,
+      embers: [],
+      pieces: [],
+      particles: [],
+      scene: null,
+      scenePieces: [],
+    };
+    const out = { under: [] as HTMLElement[], over: [] as HTMLElement[] };
+    if (decor.scene) {
+      const scene = planScene(decor.scene, v.word.start, this.sungBy, { w: shape.width, size, baseline: this.baselineOf(shape) }, params.karaoke === "full" ? params.amp : 0, seed);
+      const built = this.sceneOf(v, scene, x);
+      out.under.push(built.back);
+      out.over.push(built.front);
+    }
     if (decor.splash && params.karaoke === "full") {
       x.particles = planSplash(decor.splash, v.word.start, size, shape.width, params.amp, seed);
       if (x.particles.length > 0) {
@@ -808,7 +851,7 @@ export class KaraokeLine {
           box.append(piece);
           x.pieces.push(piece);
         }
-        splash = box;
+        out.under.unshift(box);
       }
     }
     const url = decor.picture ? pictureUrl(decor.picture) : null;
@@ -865,8 +908,65 @@ export class KaraokeLine {
         x.auraRoute = auraRoute;
       }
     }
-    v.extras = x.pic || x.pieces.length > 0 ? x : null;
-    return splash;
+    v.extras = x.pic || x.pieces.length > 0 || x.scene ? x : null;
+    return out;
+  }
+
+  /**
+   * Word `v`'s scene: its two layers in the word's overlay, each piece placed at its anchor (inside a
+   * clipping window where it has one: a horizon, a pool), resting invisible until its track plays;
+   * and the scene's colors on the word box, for its lit letters and its bloom.
+   */
+  private sceneOf(v: WordView, scene: Scene, x: Extras): { back: HTMLElement; front: HTMLElement } {
+    const back = h("span", "kw-scene is-back");
+    const front = h("span", "kw-scene is-front");
+    for (const el of [back, front]) el.setAttribute("aria-hidden", "true");
+    back.style.setProperty("--sc-glow", scene.colors.glow);
+    const clips = new Map<ScenePiece["clip"], HTMLElement>();
+    for (const piece of scene.pieces) {
+      const layer = piece.layer === "back" ? back : front;
+      let parent: HTMLElement = layer;
+      let dx = 0;
+      let dy = 0;
+      if (piece.clip) {
+        let win = clips.get(piece.clip);
+        if (!win) {
+          win = h("span", "sc-clip");
+          win.style.left = px(piece.clip.x);
+          win.style.top = px(piece.clip.y);
+          win.style.width = px(piece.clip.w);
+          win.style.height = px(piece.clip.h);
+          layer.append(win);
+          clips.set(piece.clip, win);
+        }
+        parent = win;
+        dx = piece.clip.x;
+        dy = piece.clip.y;
+      }
+      const el = h("span", `sc ${piece.cls}`);
+      el.style.left = px(piece.x - dx - piece.ox * piece.w);
+      el.style.top = px(piece.y - dy - piece.oy * piece.h);
+      el.style.width = px(piece.w);
+      el.style.height = px(piece.h);
+      el.style.transformOrigin = `${(piece.ox * 100).toFixed(1)}% ${(piece.oy * 100).toFixed(1)}%`;
+      parent.append(el);
+      x.scenePieces.push({ el, track: piece.track });
+    }
+    // the lit letters and the bloom in the scene's colors
+    put(v.el, "--ut-hl", scene.colors.hl);
+    put(v.el, "--ut-hl2", scene.colors.hl2);
+    put(v.el, "--ut-bloom", bloomShadow(scene.colors.hl2, 0.9));
+    put(v.el, "--ut-bloom-strong", bloomShadow(scene.colors.hl2, 0.9, true));
+    x.scene = scene;
+    return { back, front };
+  }
+
+  /** Where a word's baseline is in its box, px: half the leading, then the font's ascent (measured, or about 0.8 em). */
+  private baselineOf(shape: WordShape): number {
+    const { size, lineHeight = 1 } = this.look;
+    const ink = shape.ink;
+    if (!ink) return 0.8 * size * lineHeight;
+    return (lineHeight * size - (ink.ascent + ink.descent)) / 2 + ink.ascent;
   }
 
   /** The line's picture layers in its host: under the words (lights) and over them (pictures). Null without a host. */
@@ -933,6 +1033,7 @@ export class KaraokeLine {
     const home = layoutless ? { x: 0, y: 0, w: 0 } : this.spotOf(v.index, at);
     if (!home) return null;
     const stops: Stop[] = [];
+    let prev: Stop | null = null;
     let left = home.x - home.w / 2;
     let right = home.x + home.w / 2;
     if (!layoutless) {
@@ -941,11 +1042,13 @@ export class KaraokeLine {
         if (!spot) continue;
         left = Math.min(left, spot.x - spot.w / 2);
         right = Math.max(right, spot.x + spot.w / 2);
-        if (other.index > v.index) stops.push({ ...spot, t: other.word.start });
+        if (other.index > v.index) stops.push({ ...spot, t: other.word.start, word: other.index });
+        if (other.index === v.index - 1) prev = { ...spot, t: other.word.start, word: other.index };
       }
     }
     return planPictureRoute({
       id,
+      word: v.index,
       at,
       until: this.sungBy,
       side: this.sideOf(v),
@@ -954,6 +1057,7 @@ export class KaraokeLine {
       seed: seedOf(`${v.index}|${v.text}|${Math.round(at)}`),
       home,
       stops,
+      prev,
       left,
       right,
     });

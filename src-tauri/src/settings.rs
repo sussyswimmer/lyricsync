@@ -7,10 +7,9 @@
 //! (`src/bridge/mock.ts`) implements the same rules for `pnpm dev`.
 //!
 //! Contract v3 added `enabled`, `launchAtLogin` and `shortcuts`, contract v4 `effects`, contract
-//! v5 `effectsMode`, contract v7 `nudgedTracks` and contract v8 `karaokeMode`, without a new settings
-//! version: a stored file without them loads with their defaults and is rewritten once with them
-//! (`load`). Contract v8 also turned Effects mode off by default; `migrate` turns it off once in a
-//! file saved before v8.
+//! v5 `effectsMode`, contract v7 `nudgedTracks`, contract v8 `graphics` and contract v10
+//! `karaokeMode`, without a new settings version: a stored file without them loads with their
+//! defaults (`graphics` with its Effects mode, `migrate`) and is rewritten once with them (`load`).
 use crate::contract::{Colors, Font, Settings, Shortcuts, SETTINGS_VERSION};
 use crate::shortcuts::{field as shortcut_field, normalize as accelerator, ACTIONS};
 use serde::de::DeserializeOwned;
@@ -265,6 +264,8 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
             "shortcuts" => next.shortcuts = merge_shortcuts(&next.shortcuts, value),
             "effects" => keep_or_set(&mut next.effects, clamp_number(value, &EFFECTS)),
             "effectsMode" => keep_or_set(&mut next.effects_mode, value.as_bool()),
+            "graphics" => keep_or_set(&mut next.graphics, value.as_bool()),
+            "style" => keep_or_set(&mut next.style, variant(value)),
             "karaokeMode" => keep_or_set(&mut next.karaoke_mode, value.as_bool()),
             // `version` is always SETTINGS_VERSION; anything else is unknown and dropped.
             _ => {}
@@ -278,11 +279,10 @@ pub fn merge_patch(current: &Settings, patch: &Value) -> Settings {
 /// Settings v1 has no renamed fields to carry over; a future version adds its steps here.
 pub fn migrate(stored: &Value) -> Settings {
     let mut settings = merge_patch(&Settings::default(), stored);
-    // Effects mode was on by default until contract v8, so a file saved before it (no `karaokeMode`)
-    // says `effectsMode: true` whether or not anyone chose it: it starts off, as on a new install.
-    // `load` then rewrites the file with `karaokeMode`, so a choice made after that sticks.
-    if stored.is_object() && stored.get("karaokeMode").is_none() {
-        settings.effects_mode = Settings::default().effects_mode;
+    // Before contract v8 Effects mode also turned the pictures and splashes on and off: settings
+    // saved without `graphics` keep them as their Effects mode had them.
+    if stored.get("graphics").is_none() {
+        settings.graphics = settings.effects_mode;
     }
     settings
 }
@@ -929,7 +929,8 @@ mod tests {
                 "nudgeLater": "Control+Shift+K"
             },
             "effects": 80,
-            "effectsMode": true,
+            "effectsMode": false,
+            "graphics": false,
             "karaokeMode": true
         }))
     }
@@ -982,7 +983,9 @@ mod tests {
             }
         );
         assert_eq!(s.effects, 80.0);
-        assert!(s.effects_mode && s.karaoke_mode);
+        assert!(!s.effects_mode);
+        assert!(!s.graphics);
+        assert!(s.karaoke_mode);
         assert_eq!(s.version, SETTINGS_VERSION);
     }
 
@@ -1057,7 +1060,7 @@ mod tests {
                 "curve": junk, "yPos": junk, "glow": junk, "opacity": junk, "showWhen": junk,
                 "displays": junk, "globalOffsetMs": junk, "trackOffsetsMs": junk,
                 "enabled": junk, "launchAtLogin": junk, "shortcuts": junk, "effects": junk,
-                "effectsMode": junk
+                "effectsMode": junk, "graphics": junk, "style": junk
             });
             let next = merge_patch(&current, &patch);
             if junk.is_object() {
@@ -1078,7 +1081,7 @@ mod tests {
         // Numbers where a boolean or a string belongs, booleans where a number or a string does.
         let next = merge_patch(
             &current,
-            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0 }),
+            &json!({ "autoColor": 1, "mode": 2, "font": { "family": 3, "weight": "700" }, "effectsMode": 0, "graphics": "on", "style": 4 }),
         );
         assert_eq!(next, current);
         let next = merge_patch(
@@ -1249,8 +1252,58 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys.len(), 21);
+        assert_eq!(keys.len(), 23);
         assert!(!keys.iter().any(|k| k == "theme"));
+    }
+
+    #[test]
+    fn style_takes_any_style_the_overlay_draws_and_nothing_else() {
+        use crate::contract::StyleChoice;
+        for (name, expected) in [
+            ("auto", StyleChoice::Auto),
+            ("slant", StyleChoice::Slant),
+            ("pop", StyleChoice::Pop),
+            ("reel", StyleChoice::Reel),
+            ("cascade", StyleChoice::Cascade),
+            ("tape", StyleChoice::Tape),
+            ("spotlight", StyleChoice::Spotlight),
+            ("wave", StyleChoice::Wave),
+            ("reveal", StyleChoice::Reveal),
+            ("collage", StyleChoice::Collage),
+            ("lens", StyleChoice::Lens),
+            ("poster", StyleChoice::Poster),
+        ] {
+            assert_eq!(patched(json!({ "style": name })).style, expected, "{name}");
+        }
+        let reel = patched(json!({ "style": "reel" }));
+        // the retired styles (Arc, Drift, Stack) are junk too: Settings doesn't offer them
+        for junk in [
+            json!("Reel"),
+            json!("spiral"),
+            json!("arc"),
+            json!("drift"),
+            json!("stack"),
+            json!(""),
+            json!(3),
+            json!(null),
+            json!(true),
+        ] {
+            assert_eq!(
+                merge_patch(&reel, &json!({ "style": junk })).style,
+                StyleChoice::Reel,
+                "{junk}"
+            );
+        }
+        // saved before contract v9: Auto, and the file is rewritten with it
+        let mut saved = serde_json::to_value(&reel).unwrap();
+        saved.as_object_mut().unwrap().remove("style");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(settings.style, StyleChoice::Auto);
+        assert!(rewrite);
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap()["style"],
+            json!("auto")
+        );
     }
 
     #[test]
@@ -1831,16 +1884,33 @@ mod tests {
     }
 
     #[test]
-    fn settings_saved_before_contract_v8_start_with_effects_mode_off_and_are_rewritten_once() {
-        // a file from 0.1.0 (contract v7): Effects mode on, its default then, and no karaokeMode
+    fn settings_saved_before_contract_v5_get_effects_mode_on_and_are_rewritten_once() {
         let mut saved = serde_json::to_value(custom()).unwrap();
-        saved.as_object_mut().unwrap().remove("karaokeMode");
-        assert_eq!(saved["effectsMode"], json!(true));
+        saved.as_object_mut().unwrap().remove("effectsMode");
         let (settings, rewrite) = load(Some(&saved));
         assert_eq!(
             settings,
             Settings {
-                effects_mode: false,
+                effects_mode: true,
+                ..custom()
+            }
+        );
+        assert!(rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["effectsMode"], json!(true));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        assert!(migrate(&json!({ "version": 1 })).effects_mode);
+        assert!(!migrate(&json!({ "effectsMode": false })).effects_mode);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v10_get_karaoke_mode_off_and_are_rewritten_once() {
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("karaokeMode");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(
+            settings,
+            Settings {
                 karaoke_mode: false,
                 ..custom()
             }
@@ -1848,16 +1918,36 @@ mod tests {
         assert!(rewrite);
         let rewritten = serde_json::to_value(&settings).unwrap();
         assert_eq!(rewritten["karaokeMode"], json!(false));
-        assert_eq!(load(Some(&rewritten)), (settings.clone(), false));
-        // once rewritten, turning Effects mode back on sticks
-        let chosen = merge_patch(&settings, &json!({ "effectsMode": true }));
-        let stored = serde_json::to_value(&chosen).unwrap();
-        assert_eq!(load(Some(&stored)), (chosen, false));
-        // a file from before contract v5 has no effectsMode at all: off too
-        saved.as_object_mut().unwrap().remove("effectsMode");
-        assert!(!load(Some(&saved)).0.effects_mode);
-        assert!(!migrate(&json!({ "version": 1 })).effects_mode);
-        assert!(migrate(&json!({ "effectsMode": true, "karaokeMode": false })).effects_mode);
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // Effects mode stays as it was saved: Karaoke mode changes nothing else
+        assert!(migrate(&json!({ "effectsMode": true })).effects_mode);
+        assert!(!migrate(&json!({ "version": 1 })).karaoke_mode);
+    }
+
+    #[test]
+    fn settings_saved_before_contract_v8_keep_graphics_as_their_effects_mode_had_them() {
+        // Effects mode turned the pictures and splashes off too: they stay off.
+        let mut saved = serde_json::to_value(custom()).unwrap();
+        saved.as_object_mut().unwrap().remove("graphics");
+        let (settings, rewrite) = load(Some(&saved));
+        assert_eq!(settings, custom());
+        assert!(!settings.graphics && rewrite);
+        let rewritten = serde_json::to_value(&settings).unwrap();
+        assert_eq!(rewritten["graphics"], json!(false));
+        assert_eq!(load(Some(&rewritten)), (settings, false));
+        // Effects mode on, or none saved: on.
+        assert!(migrate(&json!({ "version": 1 })).graphics);
+        assert!(migrate(&json!({ "effectsMode": true })).graphics);
+        assert!(!migrate(&json!({ "effectsMode": false })).graphics);
+        // Saved since v8: each its own.
+        let text_only = migrate(&json!({ "effectsMode": true, "graphics": false }));
+        assert!(text_only.effects_mode && !text_only.graphics);
+        let graphics_only = migrate(&json!({ "effectsMode": false, "graphics": true }));
+        assert!(!graphics_only.effects_mode && graphics_only.graphics);
+        // A patch changes one, never the other.
+        assert!(!merge_patch(&defaults(), &json!({ "effectsMode": false })).effects_mode);
+        assert!(merge_patch(&defaults(), &json!({ "effectsMode": false })).graphics);
+        assert!(merge_patch(&defaults(), &json!({ "graphics": false })).effects_mode);
     }
 
     #[test]

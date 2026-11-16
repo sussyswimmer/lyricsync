@@ -4,8 +4,9 @@ import { createMockBridge, MOCK_TRACKS, trackKeyOf, type MockBridge } from "../s
 import type { Bridge } from "../src/bridge/types";
 import { FONTS } from "../src/core/faces";
 import { PaletteCache } from "../src/core/palette";
+import { STYLES, styleLabel, type Style } from "../src/core/songlook";
 import { cardState, isProvisional, QUIET_MS, reasonSentence, sameCard, type CardLook, type LookCardState, type LookCard as Card } from "../src/settings/look-card";
-import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, KARAOKE_MODE_OFF, KARAOKE_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
+import { EFFECTS_MODE_OFF, EFFECTS_MODE_ON, GRAPHICS_OFF, GRAPHICS_ON, KARAOKE_MODE_OFF, KARAOKE_MODE_ON, type MotionQuery, type PanelState, type SettingsPanel as Panel } from "../src/settings/panel";
 import { DEMO_START_MS, DEMO_TRACKS, SettingsPreview } from "../src/settings/preview";
 import { resetDom, stubDom, type FakeElement } from "./fake-dom";
 
@@ -346,6 +347,7 @@ function motionQuery(matches = false): MotionQuery & { flip(next: boolean): void
 function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | null = motionQuery()) {
   let settings: Settings = { ...structuredClone(DEFAULT_SETTINGS), ...over };
   const edits: Partial<Settings>[] = [];
+  const pins: (Style | null)[] = [];
   let state: PanelState = {
     settings,
     palette: null,
@@ -356,6 +358,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     shortcuts: null,
     loginError: false,
     look: finding(null),
+    stylePin: null,
   };
   const panel = new SettingsPanel(
     {
@@ -368,6 +371,10 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
       setTrackOffset: () => undefined,
       reset: () => undefined,
       suspendShortcuts: () => undefined,
+      pinStyle: (style) => {
+        pins.push(style);
+        panel.render((state = { ...state, stylePin: style }));
+      },
     },
     { platform: "mac", reducedMotion },
   );
@@ -387,6 +394,7 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
     panel,
     root,
     edits,
+    pins,
     group,
     sliderIn,
     setLook(next: LookCardState): void {
@@ -396,13 +404,35 @@ function mountPanel(over: Partial<Settings> = {}, reducedMotion: MotionQuery | n
 }
 
 describe("the settings panel since contract v4", () => {
-  it("has no Style or Font group and no Curve: the look is picked per song", () => {
+  it("has a Style group first (Auto or one style for every song), and no Font group or Curve: the face is picked per song", () => {
     const p = mountPanel();
-    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
+    expect(p.root.all("group").map((g) => g.one("group-title").textContent)).toEqual(["Style", "General", "Color", "Look", "Behavior", "Sync", "Shortcuts"]);
     expect(p.root.all("slider").map((r) => r.one("row-label").textContent)).not.toContain("Curve");
-    // the only choices left are Behavior's two segments
+    // the other choices are Behavior's two segments
     expect(p.root.all("seg").map((g) => g.getAttribute("aria-label"))).toEqual(["When to show lyrics", "Where to show lyrics"]);
-    for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles"]) expect(p.root.all(gone), gone).toEqual([]);
+    for (const gone of ["modes", "fonts", "font-note", "mode-blurb", "tiles", "chips"]) expect(p.root.all(gone), gone).toEqual([]);
+  });
+
+  it("chooses a style from its tile (saved as the Style setting, contract v9), shows the choice, and Auto lets Undertone pick again", () => {
+    const p = mountPanel();
+    const tiles = p.group("Style").one("style-tiles");
+    const inputs = tiles.all("opt").map((o) => o.children[0] as FakeElement);
+    const labels = tiles.all("opt-label").map((l) => l.textContent);
+    expect(labels).toEqual(["Auto", ...STYLES.map((s) => styleLabel(s))]);
+    // Arc, Drift and Stack are retired: no tile for them
+    expect(labels).toEqual(["Auto", "Slant", "Pop", "Reel", "Cascade", "Tape", "Spotlight", "Wave", "Reveal", "Collage", "Lens", "Poster"]);
+    expect(inputs[0]?.checked).toBe(true);
+    const slant = inputs[labels.indexOf("Slant")] as FakeElement;
+    slant.checked = true;
+    slant.dispatch("change");
+    expect(p.pins).toEqual(["slant"]);
+    expect(slant.checked).toBe(true);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Every song in Slant");
+    const auto = inputs[0] as FakeElement;
+    auto.checked = true;
+    auto.dispatch("change");
+    expect(p.pins).toEqual(["slant", null]);
+    expect(p.group("Style").one("toggle-hint").textContent).toContain("Undertone picks a style for each song");
   });
 
   it("puts the Picked for this song card right under the preview's notice, and shows what the window hands it", () => {
@@ -473,37 +503,51 @@ describe("the settings panel since contract v4", () => {
     expect(none.root.all("hint").some((h) => h.textContent === "How much words rise, swell and ripple as they're sung.")).toBe(true);
   });
 
-  it("Effects mode: a switch at the top of Look, off by default, saved as `effectsMode`, saying what it does", () => {
+  it("Text effects and Graphics: two switches at the top of Look, on by default, each saved apart, saying what they do", () => {
     const p = mountPanel();
     const look = p.group("Look");
-    const row = look.all("toggle")[0] as FakeElement;
-    expect(row.one("row-label").textContent).toBe("Effects mode");
-    const input = row.one("switch");
-    expect(input.getAttribute("role")).toBe("switch");
-    expect(input.checked).toBe(false);
-    const caption = p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
-    expect(caption?.textContent).toBe(EFFECTS_MODE_OFF);
-    input.checked = true;
-    input.dispatch("change");
-    expect(p.edits).toEqual([{ effectsMode: true }]);
-    expect(input.checked).toBe(true);
-    expect(caption?.textContent).toBe(EFFECTS_MODE_ON);
-    // Karaoke mode under it, then the sliders, in the same order as before
-    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Effects mode", "Karaoke mode", "Size", "Effects", "Glow", "Opacity"]);
+    const [textRow, graphicsRow] = look.all("toggle") as FakeElement[];
+    expect(textRow?.one("row-label").textContent).toBe("Text effects");
+    expect(graphicsRow?.one("row-label").textContent).toBe("Graphics");
+    const text = (textRow as FakeElement).one("switch");
+    const graphics = (graphicsRow as FakeElement).one("switch");
+    for (const input of [text, graphics]) {
+      expect(input.getAttribute("role")).toBe("switch");
+      expect(input.checked).toBe(true);
+    }
+    const captionOf = (input: FakeElement): FakeElement | undefined => p.root.all("toggle-hint").find((h) => h.id === input.getAttribute("aria-describedby"));
+    expect(captionOf(text)?.textContent).toBe(EFFECTS_MODE_ON);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_ON);
+    text.checked = false;
+    text.dispatch("change");
+    expect(p.edits).toEqual([{ effectsMode: false }]);
+    expect(captionOf(text)?.textContent).toBe(EFFECTS_MODE_OFF);
+    // Graphics stays as it was
+    expect(graphics.checked).toBe(true);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_ON);
+    graphics.checked = false;
+    graphics.dispatch("change");
+    expect(p.edits).toEqual([{ effectsMode: false }, { graphics: false }]);
+    expect(captionOf(graphics)?.textContent).toBe(GRAPHICS_OFF);
+    // the sliders come after them, in the same order as before (Style is its own group above)
+    expect(look.all("row-label").map((l) => l.textContent)).toEqual(["Text effects", "Graphics", "Karaoke mode", "Size", "Effects", "Glow", "Opacity"]);
   });
 
-  it("Effects mode: shows the saved state, and an older core's settings with the default", () => {
-    const on = mountPanel({ effectsMode: true });
-    expect((on.group("Look").all("switch")[0] as FakeElement).checked).toBe(true);
-    const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
-    delete old.effectsMode;
-    const p = mountPanel(old);
-    expect((p.group("Look").all("switch")[0] as FakeElement).checked).toBe(DEFAULT_SETTINGS.effectsMode);
+  it("Text effects and Graphics: show the saved states, and an older core's Effects mode for both", () => {
+    const switches = (over: Partial<Settings>): boolean[] => (mountPanel(over).group("Look").all("switch") as FakeElement[]).slice(0, 2).map((s) => s.checked);
+    expect(switches({})).toEqual([true, true]);
+    expect(switches({ effectsMode: false })).toEqual([false, true]);
+    expect(switches({ graphics: false })).toEqual([true, false]);
+    // settings without the field, as a core older than v8 (or v5) sends them
+    const missing = undefined as unknown as boolean;
+    expect(switches({ graphics: missing })).toEqual([true, true]);
+    expect(switches({ graphics: missing, effectsMode: false })).toEqual([false, false]);
+    expect(switches({ graphics: missing, effectsMode: missing })).toEqual([true, true]);
   });
 
-  it("Karaoke mode: a switch under Effects mode, off by default, saved as `karaokeMode`, saying what it does", () => {
+  it("Karaoke mode: a switch under Graphics, off by default, saved as `karaokeMode`, saying what it does", () => {
     const p = mountPanel();
-    const row = p.group("Look").all("toggle")[1] as FakeElement;
+    const row = p.group("Look").all("toggle")[2] as FakeElement;
     expect(row.one("row-label").textContent).toBe("Karaoke mode");
     const input = row.one("switch");
     expect(input.getAttribute("role")).toBe("switch");
@@ -515,11 +559,11 @@ describe("the settings panel since contract v4", () => {
     expect(p.edits).toEqual([{ karaokeMode: true }]);
     expect(input.checked).toBe(true);
     expect(caption?.textContent).toBe(KARAOKE_MODE_ON);
-    // saved on, and from a core older than contract v8 (none saved: off)
-    expect((mountPanel({ karaokeMode: true }).group("Look").all("switch")[1] as FakeElement).checked).toBe(true);
+    // saved on, and from a core older than contract v10 (none saved: off)
+    expect((mountPanel({ karaokeMode: true }).group("Look").all("switch")[2] as FakeElement).checked).toBe(true);
     const old: Partial<Settings> = structuredClone(DEFAULT_SETTINGS);
     delete old.karaokeMode;
-    expect((mountPanel(old).group("Look").all("switch")[1] as FakeElement).checked).toBe(false);
+    expect((mountPanel(old).group("Look").all("switch")[2] as FakeElement).checked).toBe(false);
   });
 
   it("Glow says what it does now: the sung word's glow, never quite off", () => {
@@ -589,7 +633,7 @@ describe("the preview hands the card its song's look", () => {
     const state = card();
     expect(state).toMatchObject({ kind: "look", demo: true, key: keyOf(6) });
     if (state.kind !== "look") throw new Error("no look");
-    expect(state.look.style).toBe("arc");
+    expect(state.look.style).toBe("spotlight");
     expect(state.look.font.family).toBe("Fraunces");
     expect(looks.map((l) => l.kind)).toEqual(["finding", "look"]);
   });
@@ -600,7 +644,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(500);
     const strobe = card();
     if (strobe.kind !== "look") throw new Error(`no look: ${strobe.kind}`);
-    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("poster Unbounded");
+    expect(`${strobe.look.style} ${strobe.look.font.family}`).toBe("pop Unbounded");
     bridge.player.select(3);
     await vi.advanceTimersByTimeAsync(100);
     expect(card().kind).toBe("finding");
@@ -621,7 +665,7 @@ describe("the preview hands the card its song's look", () => {
     await vi.advanceTimersByTimeAsync(10);
     const state = preview.current.look;
     if (state.kind !== "look") throw new Error(`no look: ${state.kind}`);
-    expect(`${state.look.style} ${state.look.font.family}`).toBe("stack Bricolage Grotesque");
+    expect(`${state.look.style} ${state.look.font.family}`).toBe("slant Bricolage Grotesque");
   });
 
   it("once the preview's controller reports its look (onLook), the card shows only reported looks", async () => {

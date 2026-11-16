@@ -538,6 +538,7 @@ describe("mergeSettings", () => {
     autoColor: false,
     colors: { lyric: "#ffffff", highlight: "#00ff88", dim: "#202020" },
     font: { family: "Syne", weight: 500 },
+    style: "reel",
     size: 80,
     curve: -20,
     yPos: 70,
@@ -553,6 +554,7 @@ describe("mergeSettings", () => {
     shortcuts: { enabled: false, toggleLyrics: "Control+Alt+K", nudgeEarlier: "", nudgeLater: "CmdOrCtrl+Shift+F9" },
     effects: 80,
     effectsMode: false,
+    graphics: false,
     karaokeMode: false,
   };
 
@@ -568,10 +570,10 @@ describe("mergeSettings", () => {
     for (const junk of ["50", null, [1], true, Number.NaN, Number.NEGATIVE_INFINITY]) {
       const patch = Object.fromEntries(Object.keys(custom).map((k) => [k, junk]));
       const next = mergeSettings(custom, patch);
-      // A boolean is a valid autoColor, enabled, launchAtLogin, effectsMode and karaokeMode; an array a
-      // valid nudgedTracks, its entries that aren't strings dropped.
+      // A boolean is a valid autoColor, enabled, launchAtLogin, effectsMode, graphics and karaokeMode; an
+      // array a valid nudgedTracks, its entries that aren't strings dropped.
       const kept = Array.isArray(junk) ? { ...custom, nudgedTracks: [] } : custom;
-      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true, karaokeMode: true } : kept);
+      expect(next).toEqual(junk === true ? { ...kept, autoColor: true, enabled: true, launchAtLogin: true, effectsMode: true, graphics: true, karaokeMode: true } : kept);
     }
   });
 
@@ -599,7 +601,7 @@ describe("mergeSettings", () => {
     expect(mergeSettings(custom, { effectsMode: true })).toEqual({ ...custom, effectsMode: true });
   });
 
-  it("takes karaokeMode as a boolean only, as the Rust store does (contract v8)", () => {
+  it("takes karaokeMode as a boolean only, as the Rust store does (contract v10)", () => {
     for (const junk of ["true", 1, 0, null, [true], { on: true }]) {
       expect(mergeSettings(custom, { karaokeMode: junk }).karaokeMode).toBe(false);
     }
@@ -722,23 +724,48 @@ describe("migrateSettings", () => {
     expect(migrateSettings(v3).effects).toBe(50);
   });
 
-  it("gives contract v4 settings the default: Effects mode off", () => {
+  it("gives contract v4 settings the v5 default: Effects mode on", () => {
     const v4: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effects: 30 };
     delete v4["effectsMode"];
-    delete v4["karaokeMode"];
     expect(migrateSettings(v4)).toEqual({ ...DEFAULT_SETTINGS, effects: 30 });
-    expect(migrateSettings(v4).effectsMode).toBe(false);
+    expect(migrateSettings(v4).effectsMode).toBe(true);
   });
 
-  // Effects mode was on by default until contract v8: a store from 0.1.0 says so whether or not anyone chose it.
-  it("starts settings saved before contract v8 with Effects mode off, once, and Karaoke mode off", () => {
-    const v7: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode: true, size: 70 };
-    delete v7["karaokeMode"];
-    expect(migrateSettings(v7)).toEqual({ ...DEFAULT_SETTINGS, size: 70 });
-    // saved again (with karaokeMode), a choice sticks
-    expect(migrateSettings({ ...DEFAULT_SETTINGS, effectsMode: true, karaokeMode: true })).toMatchObject({ effectsMode: true, karaokeMode: true });
-    expect(migrateSettings({ karaokeMode: false, effectsMode: true }).effectsMode).toBe(true);
+  it("starts settings saved before contract v10 with Karaoke mode off, and leaves Effects mode as saved", () => {
+    const v9: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode: false, size: 70 };
+    delete v9["karaokeMode"];
+    expect(migrateSettings(v9)).toEqual({ ...DEFAULT_SETTINGS, effectsMode: false, size: 70 });
+    expect(migrateSettings({ ...DEFAULT_SETTINGS, karaokeMode: true })).toMatchObject({ effectsMode: true, karaokeMode: true });
     expect(mergeSettings(DEFAULT_SETTINGS, { karaokeMode: "yes" }).karaokeMode).toBe(false);
+  });
+
+  it("gives contract v7 settings Graphics as their Effects mode had it: it turned the pictures off too", () => {
+    for (const effectsMode of [true, false]) {
+      const v7: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS), effectsMode };
+      delete v7["graphics"];
+      expect(migrateSettings(v7)).toEqual({ ...DEFAULT_SETTINGS, effectsMode, graphics: effectsMode });
+    }
+    // saved since v8, each its own; and nothing saved: on
+    expect(migrateSettings({ effectsMode: false, graphics: true })).toMatchObject({ effectsMode: false, graphics: true });
+    expect(migrateSettings({ effectsMode: true, graphics: false })).toMatchObject({ effectsMode: true, graphics: false });
+    expect(migrateSettings(null).graphics).toBe(true);
+    // a patch changes one, never the other
+    expect(mergeSettings(DEFAULT_SETTINGS, { graphics: false })).toMatchObject({ effectsMode: true, graphics: false });
+    expect(mergeSettings(DEFAULT_SETTINGS, { graphics: "off" })).toMatchObject({ graphics: true });
+  });
+
+  it("takes any style the overlay draws as the Style setting (contract v9), and reads settings saved without one as auto", () => {
+    for (const style of ["auto", "slant", "pop", "reel", "cascade", "tape", "spotlight", "wave", "reveal", "collage", "lens", "poster"] as const) {
+      expect(mergeSettings(DEFAULT_SETTINGS, { style }).style).toBe(style);
+    }
+    const reel = mergeSettings(DEFAULT_SETTINGS, { style: "reel" });
+    // the retired styles (Arc, Drift, Stack) are junk too: Settings doesn't offer them
+    for (const junk of ["Reel", "spiral", "arc", "drift", "stack", "", 3, null, true]) expect(mergeSettings(reel, { style: junk }).style, String(junk)).toBe("reel");
+    const v8: Record<string, unknown> = { ...structuredClone(DEFAULT_SETTINGS) };
+    delete v8["style"];
+    expect(migrateSettings(v8)).toEqual(DEFAULT_SETTINGS);
+    expect(migrateSettings(null).style).toBe("auto");
+    expect(migrateSettings({ style: "reel" }).style).toBe("reel");
   });
 
   it("keeps what it knows from a newer version", () => {
@@ -1604,10 +1631,10 @@ describe("demo covers with a canvas", () => {
     expect(calls).toHaveLength(drawn);
   });
 
-  it("has a cover for every demo track that names one, each used once from track 7 on", async () => {
+  it("has a cover for every demo track that names one, the look demos each their own from track 7 on (the Reel demo shares the cold one)", async () => {
     const { covers } = await withCanvas(true);
     for (const t of MOCK_TRACKS) if (t.cover !== null) expect(t.cover, t.title).toBeLessThan(covers.COVER_COUNT);
-    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5]);
+    expect(MOCK_TRACKS.slice(7).map((t) => t.cover)).toEqual([3, 4, 5, 5]);
   });
 
   it("returns null for an unknown cover or when there is no 2D context", async () => {

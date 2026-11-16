@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **main now carries 0.4.0**, the released line: its styles, fonts, Graphics and Style settings, with Karaoke mode added as a setting.
+- **Karaoke mode** is in **Settings › Look**, after Graphics, and is off by default.
+- **Effects mode is on by default again**, as in 0.2.0 and later. Settings from 0.1.1 keep what they saved.
+
 ## [0.1.1] - 2026-10-20
 
 Karaoke mode, Effects mode off until you turn it on, and the repository's license and documentation.

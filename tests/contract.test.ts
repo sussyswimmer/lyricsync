@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONTRACT_VERSION, DEFAULT_SETTINGS, type MediaStatus, type ShortcutAction, type ShortcutsStatus } from "../contract/contract";
-describe("contract v8", () => {
+describe("contract v10", () => {
   it("exports the complete initial settings payload", () => {
-    expect(CONTRACT_VERSION).toBe(8);
+    expect(CONTRACT_VERSION).toBe(10);
     expect(DEFAULT_SETTINGS).toEqual({
       version: 1, mode: "arc", autoColor: true,
       colors: { lyric: "#f1ece3", highlight: "#f2a65a", dim: "#8d93a0" },
@@ -17,14 +17,27 @@ describe("contract v8", () => {
         nudgeLater: "CmdOrCtrl+Alt+Shift+[",
       },
       effects: 50,
-      effectsMode: false,
+      effectsMode: true,
+      graphics: true,
+      style: "auto",
       karaokeMode: false,
     });
   });
 
-  it("adds karaokeMode, off by default, and turns effectsMode off by default, without touching the settings schema (v8)", () => {
+  it("adds karaokeMode, off by default, and leaves effectsMode on, without touching the settings schema (v10)", () => {
     expect(DEFAULT_SETTINGS.karaokeMode).toBe(false);
-    expect(DEFAULT_SETTINGS.effectsMode).toBe(false);
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
+    expect(DEFAULT_SETTINGS.version).toBe(1);
+  });
+
+  it("adds style, auto by default, without touching the settings schema (v9)", () => {
+    expect(DEFAULT_SETTINGS.style).toBe("auto");
+    expect(DEFAULT_SETTINGS.version).toBe(1);
+  });
+
+  it("adds graphics, on by default, apart from effectsMode, without touching the settings schema (v8)", () => {
+    expect(DEFAULT_SETTINGS.graphics).toBe(true);
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
     expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
@@ -33,8 +46,8 @@ describe("contract v8", () => {
     expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 
-  it("adds effectsMode without touching the settings schema (v5)", () => {
-    expect(typeof DEFAULT_SETTINGS.effectsMode).toBe("boolean");
+  it("adds effectsMode, on by default, without touching the settings schema (v5)", () => {
+    expect(DEFAULT_SETTINGS.effectsMode).toBe(true);
     expect(DEFAULT_SETTINGS.version).toBe(1);
   });
 

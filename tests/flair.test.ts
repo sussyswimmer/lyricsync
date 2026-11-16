@@ -49,12 +49,34 @@ describe("a song's hooks", () => {
 });
 
 describe("a song's decor, line by line", () => {
-  it("is nothing with Effects mode off: every line rises", () => {
-    const decor = planDecor([line("rain rain rain"), line("fire")], null, RULE);
-    expect(decor.map((d) => [d.move, d.hook, d.words.size])).toEqual([
-      ["rise", false, 0],
-      ["rise", false, 0],
-    ]);
+  it("is nothing without a flair, or with Text effects and Graphics both off: every line rises", () => {
+    for (const decor of [planDecor([line("rain rain rain"), line("fire")], null, RULE), planDecor([line("rain rain rain"), line("fire")], FLAIR, RULE, { text: false, graphics: false })]) {
+      expect(decor.map((d) => [d.move, d.hook, d.words.size])).toEqual([
+        ["rise", false, 0],
+        ["rise", false, 0],
+      ]);
+    }
+  });
+
+  it("moves without pictures or splashes with Graphics off, and shows them on rising words with Text effects off", () => {
+    const lines = [line("roses on the roof", 0), line("a verse goes by", 5000), line("roses on the roof", 10_000)];
+    const text = planDecor(lines, FLAIR, RULE, { text: true, graphics: false });
+    expect(text.map((d) => d.move)).toEqual(["pulse", "bounce", "pulse"]);
+    expect(text.every((d) => d.words.size === 0)).toBe(true);
+    const graphics = planDecor(lines, FLAIR, RULE, { text: false, graphics: true });
+    expect(graphics.map((d) => d.move)).toEqual(["rise", "rise", "rise"]);
+    expect(graphics[0]?.words.get(0)?.picture).toBe("rose");
+    expect(graphics.some((d) => [...d.words.values()].some((w) => w.splash))).toBe(true);
+  });
+
+  it("keeps the splashes and the scenes but no pictures for a style whose words are stacked (pictures: false)", () => {
+    const lines = [line("roses on the roof", 0), line("a verse goes by", 5000), line("roses on the roof", 10_000), line("set the night on fire", 15_000)];
+    const stacked = planDecor(lines, FLAIR, RULE, { text: true, graphics: true, pictures: false });
+    expect(stacked.map((d) => d.move)).toEqual(["pulse", "bounce", "pulse", "bounce"]);
+    expect(stacked.every((d) => [...d.words.values()].every((w) => !w.picture))).toBe(true);
+    expect(stacked.some((d) => [...d.words.values()].some((w) => w.splash))).toBe(true);
+    expect(stacked[3]?.words.get(4)?.scene).toBe("fire");
+    expect(planDecor(lines, FLAIR, RULE, { text: true, graphics: true, pictures: true })[0]?.words.get(0)?.picture).toBe("rose");
   });
 
   it("moves hooks with the accent and the rest with the move", () => {
@@ -83,9 +105,12 @@ describe("a song's decor, line by line", () => {
   });
 
   it("puts the planned pictures on their words, next to any splash", () => {
+    const roses = line("Here come the roses!", 0);
+    const decor = planDecor([roses], { ...FLAIR, splash: "sparks" }, RULE);
+    expect(decor[0]?.words.get(3)).toEqual({ picture: "rose", splash: "sparks" });
+    // a word of rain becomes its scene instead, next to its splash
     const rain = line("Here comes the rain!", 0);
-    const decor = planDecor([rain], { ...FLAIR, splash: "sparks" }, RULE);
-    expect(decor[0]?.words.get(3)).toEqual({ picture: "rain", splash: "sparks" });
+    expect(planDecor([rain], { ...FLAIR, splash: "sparks" }, RULE)[0]?.words.get(3)).toEqual({ scene: "rain", splash: "sparks" });
   });
 });
 
@@ -237,17 +262,21 @@ describe("a splash", () => {
 });
 
 describe("a mode's decor for a song", () => {
-  const lines = [line("rain on the roof", 0), line("rain again later", 30_000)];
-  const look = (over: Partial<Parameters<typeof songDecor>[1]> = {}): Parameters<typeof songDecor>[1] => ({ effectsMode: true, flair: FLAIR, unsynced: false, power: "full", emphasis: RULE, ...over });
+  const lines = [line("roses on the roof", 0), line("roses again later", 30_000)];
+  const look = (over: Partial<Parameters<typeof songDecor>[1]> = {}): Parameters<typeof songDecor>[1] => ({ effectsMode: true, graphics: true, flair: FLAIR, unsynced: false, power: "full", emphasis: RULE, ...over });
 
-  it("plans pictures and splashes with Effects mode on, and fetches the pictures ahead", () => {
+  it("plans pictures and splashes with Graphics on, and fetches the pictures ahead", () => {
     const decor = songDecor(lines, look());
-    expect(decor.map((d) => d.words.get(0)?.picture)).toEqual(["rain", "rain"]);
-    expect(picturesOf(decor)).toEqual(["rain"]);
+    expect(decor.map((d) => d.words.get(0)?.picture)).toEqual(["rose", "rose"]);
+    expect(picturesOf(decor)).toEqual(["rose"]);
   });
 
-  it("plans nothing with Effects mode off, for plain lyrics, or in the lite tier", () => {
-    for (const over of [{ effectsMode: false }, { unsynced: true }, { power: "lite" as const }]) {
+  it("plans no pictures with Graphics off or for a mode whose words are stacked, and nothing for plain lyrics or in the lite tier", () => {
+    expect(picturesOf(songDecor(lines, look({ graphics: false })))).toEqual([]);
+    expect(picturesOf(songDecor(lines, look({ pictures: false })))).toEqual([]);
+    expect(songDecor(lines, look({ pictures: false })).map((d) => d.move)).toEqual(songDecor(lines, look()).map((d) => d.move));
+    expect(picturesOf(songDecor(lines, look({ effectsMode: false })))).toEqual(["rose"]);
+    for (const over of [{ effectsMode: false, graphics: false }, { unsynced: true }, { power: "lite" as const }]) {
       const decor = songDecor(lines, look(over));
       expect(decor.every((d) => d.move === "rise" && d.words.size === 0)).toBe(true);
       expect(picturesOf(decor)).toEqual([]);

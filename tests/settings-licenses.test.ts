@@ -44,10 +44,10 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 
 function mount(licenses: () => Promise<string>) {
   const panel = new SettingsPanel(
-    { edit: () => undefined, editNow: () => undefined, setTrackOffset: () => undefined, reset: () => undefined, suspendShortcuts: () => undefined },
+    { edit: () => undefined, editNow: () => undefined, setTrackOffset: () => undefined, reset: () => undefined, suspendShortcuts: () => undefined, pinStyle: () => undefined },
     { platform: "mac", licenses },
   );
-  panel.render({ settings: structuredClone(DEFAULT_SETTINGS), palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false } });
+  panel.render({ settings: structuredClone(DEFAULT_SETTINGS), palette: null, paletteFor: null, artPending: false, track: null, media: null, shortcuts: null, loginError: false, look: { kind: "finding", key: null, demo: false }, stylePin: null });
   const root = panel.el as unknown as FakeElement;
   const button = root.all("foot-link")[0] as FakeElement;
   return { root, button };

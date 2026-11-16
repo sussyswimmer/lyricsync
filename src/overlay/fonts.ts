@@ -5,6 +5,25 @@ import "@fontsource/unbounded/700.css";
 import "@fontsource/bricolage-grotesque/700.css";
 import "@fontsource/caveat/600.css";
 import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource/anton/400.css";
+import "@fontsource/playfair-display/700.css";
+import "@fontsource/space-grotesk/700.css";
+import "@fontsource/righteous/400.css";
+import "@fontsource/pacifico/400.css";
+import "@fontsource/rubik/700.css";
+import "@fontsource/pirata-one/400.css";
+import "@fontsource/archivo-black/400.css";
+import "@fontsource/bebas-neue/400.css";
+import "@fontsource/oswald/700.css";
+import "@fontsource/dm-serif-display/400.css";
+import "@fontsource/abril-fatface/400.css";
+import "@fontsource/sedgwick-ave-display/400.css";
+import "@fontsource/bungee/400.css";
+import "@fontsource/silkscreen/700.css";
+import "@fontsource/bodoni-moda/700.css";
+import "@fontsource/shrikhand/400.css";
+import "@fontsource/chakra-petch/700.css";
+import "@fontsource/lilita-one/400.css";
 
 import { FONTS, type FontChoice } from "../core/faces";
 

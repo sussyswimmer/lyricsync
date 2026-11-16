@@ -555,6 +555,92 @@ Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: unchanged (v7).
 
+
+## 2026-10-20 · Claude Code · Nine styles, fifteen faces, words that answer their pictures, Graphics apart (contract v8)
+Done: Maxwell: "add some more styles … for different types of songs", "the graphics are still too basic they are just graphics floating around I want it to be more incorporated in the lyrics", "I want the text effects to be its own switch … the graphics and the text effects should be different", "add more font options make sure they match the vibe of the song", and "make the curve … not be so strong".
+- **Graphics apart from Text effects** (contract v8): `Settings.graphics` (default true) turns the pictures and the splashes on and off; `effectsMode` is now Text effects, the song's own moves, alone. Two switches in Settings › Look and two items in the tray's **Effects ▸**. `planDecor` takes `DecorParts`. Settings saved before v8 take `graphics` from `effectsMode` (`settings.rs` `migrate`, the mock's `migrateSettings`, `withDefaults`).
+- **Three more styles** on Lens's engine (`slot-layouts.ts`): **Wave** (the crest follows the voice, words tilt along its slopes), **Reveal** (words wait as ghosts and come up as they're sung) and **Collage** (cut-out words, each its own size and tilt, in rows). Scored for dance and electronic songs, rap and story songs with word timing, and shouted rock songs; glyphs on the Settings card.
+- **Seven more faces** (OFL, `@fontsource`): Anton, Playfair Display, Space Grotesk, Righteous, Pacifico, Rubik, Pirata One, each with its vibe in `fontScore`, vetoes (scripts and blackletter not for fast or long lines), metrics and style harmony. Their notices are in `THIRD_PARTY_NOTICES.txt`.
+- **A gentler Arc**: the picked curve is 8 to 32, the house look's 22 (was 12 to 60, and 38).
+- **Words answer their pictures** (`routes.ts` `reactions`, played by `KaraokeLine` in its own group): a hop squashes each word it lands on, a bird ducks them, a car dips them, a rocket shakes and kicks its word, a balloon or a heart lifts it, rain hits the words, a burst pops its word and shoves its neighbors, the moon tilts its word, a ball knocks the words, a flame's word sways and shimmers. On the word box's `translate`, `rotate` and `scale`, composing with its pop; at rest at both ends; cancelled, not frozen, as a sung line leaves focus.
+- **Checked** in Chromium with the mock bridge (`?power=full`: headless Chromium is the lite tier, which draws no pictures): every new style on three demo songs, the heart lifting "HEARTS", gold shoving "slow" aside.
+Tests: 1260 vitest in 36 files (new: Wave, Reveal and Collage layouts; every layout's pose finite; reactions for every picture, at rest at both ends, bounded; Graphics apart from Text effects in `planDecor`, the mock, `withDefaults` and the panel) and the Rust tests (v8 default, `migrate` carrying Effects mode into Graphics, the tray's Graphics item).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v8 (adds `Settings.graphics`).
+
+
+## 2026-10-20 · Claude Code · Words that become what they say
+Done: Maxwell: "instead of there just being an emoji that pops up how about the words like fire … actually catches on fire so for moonlight or sun there is a half cut sun behind it like a horizon … same with a snowflake".
+- **Word scenes** (Graphics): `core/wordscenes.ts` lists the words of ten scenes (fire, sun, moon, snow, rain, electric, love, gold, water, stars) and plans one a line, 2.5 s apart, the same one 9 s apart. `planDecor` gives a line's scene word `WordDecor.scene`; a line with a scene shows no picture.
+- **Drawn in the word** (`overlay/motion/scenes.ts`, `KaraokeLine.sceneOf`, `stage.css` `.kw-scene` and `.sc-*`): pieces in two layers of the word's own overlay, behind its letters (under the dark legibility copy) and in front, so the scene moves with the word in every style; clipping windows for a horizon and a pool. Fire catches left to right with flame tongues behind the letters and embers; the sun and the moon rise as half discs out of a horizon at the word's baseline (`baselineOf`, from the measured ascent and descent) and set as the line ends; snow falls and drifts; rain streaks and drips; bolts flash; hearts rise as the word beats; sparkles wink; water rises with bubbles; stars twinkle. The word's lit letters and bloom take the scene's colors (`--ut-hl`, `--ut-hl2`, `--ut-bloom`). Some scenes move the word itself (shiver, heartbeat, jolt, bob) on its box's translate, rotate and scale, in the reactions' group. Every piece fades out with its scene; without motion a scene only fades in and out.
+- **Checked** in Chromium with the mock bridge (`?power=full`) on the demo songs and a scene test song of placeholder lines, in Lens, Arc, Stack, Drift and Poster: the sun and the moon read as half discs on a horizon behind the word, fire licks up behind the letters, snow drifts at the word's feet; the sun's and the moon's letters were made lighter for contrast over their discs.
+Tests: `scenes.test.ts` (the vocabulary, matching, the plan's spacing, every scene's tracks unseen at both ends and seeded, fire catching left to right, the sun rising out of the horizon and setting, the drift, the word's own motion, no motion); a Lens test for the river's water drawn in its word instead of the lantern; picture tests moved to words without a scene.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · Kinetic type: Slant, Pop, Cascade, Tape, twelve more faces, and a Style picker
+Done: Maxwell shared a reel of lyrics as kinetic type and asked for "the lyrics to be like this or have a toggle to switch like this like slanted ... be more animated ... add more fonts and styles because now it feels like its recycling the same 5 styles".
+- **Four more styles** on Lens's engine (`slot-layouts.ts`), picked per song like the others (`songlook.ts` scores, glyphs on the card): **Slant** (the reel's look: the line built up word by word in a column turned −6°, each word sliding in large on a tag of marker color as it's sung, then shrinking into the stack above as the next lands), **Pop** (one huge word at a time, rising in and flung up out of the way), **Cascade** (the line stepping down the screen like stairs, the view panning with the voice) and **Tape** (Collage's cut-out words, each stuck on a strip of tape as it's sung). Slant and Pop hide the next line.
+- **Tags**: a new optional pose channel (`LensPose.tag`, `LensPlan.tagTracks`) planned with the slot tracks and played on the compositor as `scaleX` and opacity on a `.lens-tag` behind each word. `palette.ts` `tagFor` takes the highlight's hue and darkens (or lightens) it until the lyric color reads on it at 3.4:1; a grey highlight gets a red marker. On tagged rows the lit text takes the lyric color.
+- **Twelve more faces** (OFL, `@fontsource`): Archivo Black, Bebas Neue, Oswald, DM Serif Display, Abril Fatface, Sedgwick Ave Display, Bungee, Silkscreen, Bodoni Moda, Shrikhand, Chakra Petch, Lilita One, each with its vibe in `fontScore`, vetoes, metrics and style harmony (27 in all). Permanent Marker was left out: it is Apache-2.0, not OFL. Notices regenerated.
+- **Style picker** (Settings › Style, under the card): Auto or one style for every song. The pin is kept in the windows' shared web storage (`overlay/pin.ts`, key `undertone.style-pin`), applied through `OverlayController.forceLook` under the QA overrides, and reaches every overlay through the `storage` event. Reset to defaults goes back to Auto. The card's intro says when a style is pinned.
+- **Checked** in Chromium with the mock bridge: Slant, Pop, Cascade and Tape on the demo songs over the dusk and light wallpapers; pinning Slant in Settings changes the preview and the card at once. Pop's hand-off was reworked after the first look (the old and new words overlapped in the middle).
+Tests: 1272+ vitest in 37 files (new: the four layouts' poses, tags, Pop's hand-off, Cascade's stairs, `tagFor`'s contrast and red marker, the Style group and its pin). The feature grid and the Lens plan continuity test now have 30 s timeouts: both already timed out at 5 s before this change.
+Not verified: on a real Mac or PC, in particular that WKWebView and WebView2 deliver the `storage` event across the overlay and Settings windows (same origin, same data store, so they should).
+Needs from Codex: a contract field for the pin, so the tray can show it and it survives a cleared web storage: `Settings.style: "auto" | Style` (default "auto"), stored and validated like `graphics`. Until then the pin lives in web storage only.
+Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · Auto picks livelier: Arc, Drift and Stack retired
+Done: Maxwell, after trying the kinetic build: "this is better but I want it to choose better, remove some of the original styles they are just lame and always go for high reactivity". He picked Arc, Drift and Stack to go.
+- **Retired** (`songlook.ts` `RETIRED_STYLES`): Arc, Drift and Stack are out of Auto and Settings › Style. `STYLES` is now the ten live styles, most reactive first (Slant, Pop, Cascade, Tape, Spotlight, Wave, Reveal, Collage, Lens, Poster); `ALL_STYLES` keeps all thirteen drawable, so the contract's `Mode`, forced QA looks (`--look`) and plain lyrics still work. Stack stays only as plain lyrics' list. A saved pin of a retired style reads as Auto (`parseStylePin`, now typed `PickStyle`). `DEFAULT_PICK` is Slant at energy 0.62, snap 0.55.
+- **Reactivity in the pick**: each live style has a `REACTIVITY` (Pop and Slant 1 … Poster 0.55), added at `REACTIVITY_WEIGHT` 0.5 to its fit score: enough to beat most edges in fit, less than the legibility penalties. The trackKey variety pool is tighter (0.04, was 0.1) and never trades a pick for a style more than 0.2 calmer. Over a 5,760-song synthetic feature grid the kinetic six now take 89% of synced songs, Slant alone 46% (Arc and Stack took ~60% before; Spotlight, Cascade and Tape were never picked).
+- **Motion**: synced songs' energy is 0.62–1 (floor 0.55 line-timed, was 0.35–1), about twice BL's amplitude at the least; snap 0.5–1 (was 0.2–1), so words land on the voice instead of floating in. Flair moves lean to bounce, pulse and drop over sway and rise (`MOVE_PUNCH`).
+- Demo picks now: Ledger Lines Slant · Bricolage, Strobe Hearts Pop · Unbounded, Glacier Nocturne Spotlight · Instrument Serif, Neon Monsoon Cascade → Slant with its cover, Glass Harbor Spotlight, Script Sampler Slant.
+Tests: 1287 vitest in 38 files (new: `pin.test.ts`; the grid asserts every synced song gets a live style at energy ≥ 0.55, that kinetic styles take > 60% and Lens + Poster < 20%, and that a near-tie never swaps a kinetic best for Lens or Poster). Expectations for the old picks updated.
+Not verified: on a real Mac, with real songs.
+Needs from Codex: nothing new (the `Settings.style` field asked for above should accept only the live styles plus "auto").
+Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · Reel: one word at a time, with a sign beside it
+Done: Maxwell sent an Instagram reel of Verci for Mac ("I want the lyrics to look like this"): one big word in the middle of the screen, the word just sung small above it and the next one small below, each word rolling up with a bounce as it's sung, with small line icons beside the words (a building for "city", an arrow for "left", a play sign for "Started", glasses, a dancer), over a dark cover.
+- **Reel**, a tenth style on Lens's engine (`slot-layouts.ts` `REEL_LAYOUT`): the word being sung 2.2 line sizes tall in the middle, the one just sung at line size and half faint above, the next below, nothing else (no next line). Its singing position is its own: `reelAt` steps to each word 80 ms early and the step rolls on a bouncy spring (`REEL_SPRING`), so the word lands in the middle with a little bounce as the voice reaches it; the last word holds the middle to the line's end. `SlotLayout` gained `alone`, `along` and `spring`; `planLens` takes `target` and `spring`. Scored (`songlook.ts`) for mid-tempo R&B, hip-hop and pop with real timing under dark covers, and it is the one one-line style that likes long lines; in the one-line variety window with the rest. Glyph on the Settings card; `?look=reel` and `--look=reel`.
+- **Word glyphs** (Graphics, in Reel): `core/wordglyphs.ts` maps about 1,900 words to a hundred signs, `overlay/glyphs.ts` draws them by hand as SVG paths (24 × 24, a round 2 px stroke in the lyric color), and `LensMode` puts a word's glyph in its slot after the word's box, counted in the word's width, so it rolls with the word. A word that becomes a scene carries none. Reel shows no pictures (`DecorParts.pictures: false`, its words aren't in a row); scenes and splashes stay.
+- **Dial Tone Avenue** (`?track=10`, `tests/fixtures/demo-dial-tone-avenue.lrc`, original placeholder lyrics): a mid-tempo late-night song full of words that carry a sign, under the cold dark cover, which Undertone draws as Reel in Space Grotesk.
+- **Checked** in Chromium with the mock bridge (`?power=full`): Glass Harbor, Paper Lanterns and Dial Tone Avenue in Reel on the dusk and the light wallpapers: the stack reads prev / sung / next, each word rolls in with a bounce, the glyphs sit beside their words ("city" with a building, "Phone" with a phone, "floor" with a dancer, "Started" with a play sign, "driving" with a car) and read on both wallpapers; the line change crossfades the stacks. README gets `docs/media/style-reel.webp`.
+Tests: 1282 vitest in 38 files (new: `wordglyphs.test.ts`, the vocabulary once over and matching the reel's lines, the plan, every drawing's path data; Reel's layout, fit, rest, `reelAt` and its planned roll with the spring's overshoot in `slot-layouts.test.ts`; `pictures: false` in `flair.test.ts`; the demo's pick in `demo-looks.test.ts`).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: unchanged (v8).
+
+
+## 2026-10-28 · Claude Code · The Style setting (contract v9)
+Done: so the reel's look can be had for every song, not only the ones the picker gives it to: **Style** in Settings › Look, a row of chips (Auto and the ten styles, each with its glyph), saved as `Settings.style` (`"auto"` by default). Any other name draws every song in that style; the font, the curve and the motion stay the song's own.
+- `contract.ts` / `contract.rs`: `StyleChoice`, `Settings.style`, v9; settings saved without it read as `"auto"` (serde's default, the mock's `mergeSettings`, the window's `withDefaults`); `merge_patch` validates it like `showWhen`. The tray has no Style menu.
+- `overlay/look.ts` `styleChoiceOf` (tolerant: missing, `"auto"` or an unknown name is null) and `withStyleChoice`; the controller puts the chosen style between the song's pick and the QA override, so `?look=` and `--look` still win, reports the look as drawn, and redraws at once when the setting changes. The preview's card says **Your style, the font picked for this song** (`kickerOf`, `CardLook.chosen`).
+- Docs: USER_GUIDE (Style), SPEC (v9), ACCEPTANCE §11.6, README.
+Tests: 1288 vitest in 38 files (new: the mock's merge and migration of `style`; `styleChoiceOf` and `withStyleChoice`; the panel's chips, their edits, the hint and an older core's missing field; the wiring: the setting draws every song in its style, a forced look outranks it, Auto brings the song's own back at once) and the Rust tests (v9, every name and nothing else, saved before v9 as Auto, 22 keys).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v9 (adds `Settings.style`).
+
+
+## 2026-10-28 · Claude Code · Undertone 0.4.0: the kinetic styles and Reel together
+Done: two lines of work had grown from 0.2.0 in parallel. One (released as 0.3.0) added Slant, Pop, Cascade and Tape, twelve faces, a livelier Auto with Arc, Drift and Stack retired, and a Style picker kept in web storage. The other added Reel with its word signs and the Style setting in the contract (v9). This merges both.
+- **Styles**: eleven live ones, most reactive first: Slant, Pop, Reel, Cascade, Tape, Spotlight, Wave, Reveal, Collage, Lens, Poster (`songlook.ts` `STYLES`). `ALL_STYLES` keeps all fourteen drawable for `--look` and the contract's `Mode`. Reel's `REACTIVITY` is 0.85.
+- **Reel's score, re-tuned** for the livelier picker, which otherwise gave Reel half of all songs. It now wants real word timing (line timing counts 0.15), hooks that come back, no held notes and a muted cover, and gives way to Pop on shouted chants and to bright acoustic songs. Over the feature grid's 10,800 synced songs Reel takes about a fifth, and every 0.3.0 demo and synthetic pick is unchanged. Dial Tone Avenue is still Reel · Space Grotesk.
+- **Style setting**: 0.3.0's tiles (the Style group under the card) now save `Settings.style` instead of web storage. `StyleChoice` names only the styles Settings offers plus `"auto"`, so a stored `"arc"`, `"drift"` or `"stack"` reads as auto in the core (`merge_patch`), the mock and the window (`styleChoiceOf`). 0.4.0's v9 chips in Look are gone. A pin left in web storage by 0.3.0 is moved into the setting once, by the first window to start (`overlay/pin.ts` `migrateStylePin`); an older core that refuses the field just loses it.
+- **Signs stay Reel's**: `SlotLayout.alone` is true for Reel only. Slant and Pop hide their next line in `lens.css` as in 0.3.0 and keep their word pictures.
+- **Docs**: README grid shows the eleven live styles (new tiles for Slant, Pop, Cascade and Tape; Arc, Drift and Stack removed), USER_GUIDE (eleven styles, Style), SPEC (kinetic type, faces, Auto leaning lively, v9 names), ACCEPTANCE §11, DEVELOPMENT (demo picks, `--look` names). Version 0.4.0.
+Tests: 1307 vitest in 39 files (new or changed: the pin migration, Reel among the live styles, only Reel stands alone, `styleChoiceOf` reading retired styles as auto, the Style tiles saving the setting, the bridge and Rust tests taking only the offered names) and 287 Rust tests.
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing. The `Settings.style` field 0.3.0 asked for is v9.
+Contract: v9 (`StyleChoice` lists the offered styles: "auto" | "slant" | "pop" | "reel" | "cascade" | "tape" | "spotlight" | "wave" | "reveal" | "collage" | "lens" | "poster").
+
 ## 2026-10-20 · Claude Code · GitHub presentation
 Done: the repo now presents itself the way `sussyswimmer/bordervisualizer` does, at Maxwell's request.
 - `README.md` is a landing page: banner, badges, download buttons, a demo GIF, features, the four styles, Settings in light and dark, a three-step install, how it works (with a Mermaid chart), privacy and the Automation permission, an FAQ, build from source, roadmap, contributing, credits and license.
@@ -584,3 +670,14 @@ Tests: 1259 vitest (planBall: landings, rest, arc, reduced motion, in and out, m
 Not verified: on a real Mac or PC.
 Needs from Codex: nothing.
 Contract: v8 (adds `Settings.karaokeMode`; `effectsMode` defaults to `false`).
+
+## 2026-11-16 · Claude Code · 0.4.0 merged into main, with Karaoke mode (contract v10)
+Done: Maxwell asked to merge Undertone into main: the 0.4.0 line (`claude/friendly-mayer-shv80u`) with main's karaoke dot, keeping Effects mode on as in the shipped app, and the dot as a setting that is off by default.
+- **Contract v10:** main's v8 (`karaokeMode`) and the release line's v8 (`graphics`) and v9 (`style`) were made in parallel, so `karaokeMode` comes in as v10 (TS, Rust, the mock, the window's `withDefaults`). Settings saved without it read as `false`.
+- **Effects mode stays on by default.** Main's one-time migration that turned it off is dropped; `graphics` still takes a stored `effectsMode` when it's missing.
+- **Settings:** a Karaoke mode switch after Graphics in Look, with a caption. Not in the tray menu. The dot plays in every style when it's on and the line is synced.
+- Versions stay 0.4.0. No tag, no release.
+Tests: vitest, the build and the Rust tests (v10 defaults, a v9 store reading Karaoke mode off and Effects mode as saved).
+Not verified: on a real Mac or PC.
+Needs from Codex: nothing.
+Contract: v10 (adds `Settings.karaokeMode`).

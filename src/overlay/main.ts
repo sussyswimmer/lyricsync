@@ -4,6 +4,7 @@ import { connect, type Bridge } from "../bridge";
 import { OverlayController } from "./controller";
 import { mergeOverrides, overrideFromSettings, parseFlairOverride, parseLookOverride, workAreaReference } from "./look";
 import { detectPower } from "./motion/power";
+import { migrateStylePin } from "./pin";
 import { LyricStage } from "./stage";
 
 /** What this page puts on `window`: the app's `--look` hand-off in, the overlay's parts out (mock and dev). */
@@ -47,6 +48,8 @@ if (host) {
     fromApp = parseLookOverride(win.__UNDERTONE_LOOK__);
     controller?.forceLook(mergeOverrides(fromUrl, fromApp));
   });
+  // A style chosen in Undertone 0.3.0 (kept in web storage then) becomes the Style setting (pin.ts).
+  void migrateStylePin(bridge);
   await controller.start();
   if (bridge.kind === "mock" || import.meta.env.DEV) win.undertone = { bridge, stage, controller };
 }
